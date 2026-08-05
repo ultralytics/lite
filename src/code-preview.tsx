@@ -1,3 +1,5 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 import { useMemo } from "react";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
@@ -42,9 +44,7 @@ const languages = {
   xml,
   yaml,
 };
-Object.entries(languages).forEach(([name, language]) =>
-  hljs.registerLanguage(name, language),
-);
+Object.entries(languages).forEach(([name, language]) => hljs.registerLanguage(name, language));
 
 const extensionLanguages: Record<string, string> = {
   bash: "bash",
@@ -80,30 +80,15 @@ const extensionLanguages: Record<string, string> = {
 function highlighted(source: string, language?: string) {
   if (source.length <= 200_000 && language && hljs.getLanguage(language))
     return hljs.highlight(source, { language }).value;
-  return source.replace(
-    /[&<>]/g,
-    (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]!,
-  );
+  return source.replace(/[&<>]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]!);
 }
 
-function HighlightedCode({
-  source,
-  language,
-}: {
-  source: string;
-  language?: string;
-}) {
+function HighlightedCode({ source, language }: { source: string; language?: string }) {
   const html = useMemo(() => highlighted(source, language), [source, language]);
   return <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-export default function CodePreview({
-  path,
-  source,
-}: {
-  path: string;
-  source: string;
-}) {
+export default function CodePreview({ path, source }: { path: string; source: string }) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (extension === "md" || extension === "mdx") {
     return (
@@ -112,9 +97,7 @@ export default function CodePreview({
           remarkPlugins={[remarkGfm]}
           components={{
             a({ children }) {
-              return (
-                <span className="text-foreground underline">{children}</span>
-              );
+              return <span className="text-foreground underline">{children}</span>;
             },
             code({ className, children, ...props }) {
               const language = /language-([\w-]+)/.exec(className ?? "")?.[1];
@@ -126,9 +109,7 @@ export default function CodePreview({
               );
             },
             img({ alt }) {
-              return (
-                <span className="text-muted-foreground">[Image: {alt}]</span>
-              );
+              return <span className="text-muted-foreground">[Image: {alt}]</span>;
             },
           }}
         >
@@ -139,10 +120,7 @@ export default function CodePreview({
   }
   return (
     <pre className="min-h-full overflow-auto bg-[#0d0d0d] p-5 text-[13px] leading-5 text-zinc-200">
-      <HighlightedCode
-        source={source}
-        language={extensionLanguages[extension]}
-      />
+      <HighlightedCode source={source} language={extensionLanguages[extension]} />
     </pre>
   );
 }

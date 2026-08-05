@@ -1,3 +1,5 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 const MAX_BYTES = 1_000_000;
 
 interface Buffer {
@@ -20,17 +22,11 @@ export function appendOutput(sessionId: string, data: number[]) {
   listeners.get(sessionId)?.forEach((listener) => listener(bytes));
 }
 
-export function replayOutput(
-  sessionId: string,
-  write: (data: Uint8Array) => void,
-) {
+export function replayOutput(sessionId: string, write: (data: Uint8Array) => void) {
   buffers.get(sessionId)?.chunks.forEach(write);
 }
 
-export function subscribeOutput(
-  sessionId: string,
-  listener: (data: Uint8Array) => void,
-) {
+export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) => void) {
   const sessionListeners = listeners.get(sessionId) ?? new Set();
   sessionListeners.add(listener);
   listeners.set(sessionId, sessionListeners);

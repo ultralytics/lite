@@ -1,3 +1,5 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
@@ -15,8 +17,7 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
 
     const terminal = new Terminal({
       cursorBlink: true,
-      fontFamily:
-        "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: 13,
       lineHeight: 1.25,
       scrollback: 5000,
@@ -31,9 +32,7 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     terminal.loadAddon(fit);
     terminal.open(container);
     replayOutput(sessionId, (data) => terminal.write(data));
-    const unsubscribe = subscribeOutput(sessionId, (data) =>
-      terminal.write(data),
-    );
+    const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     const input = terminal.onData((data) => {
       void invoke("write_session", {
         sessionId,

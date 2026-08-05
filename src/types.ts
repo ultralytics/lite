@@ -1,3 +1,5 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 export type Agent = "claude" | "codex" | "shell";
 
 export interface Session {

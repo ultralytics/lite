@@ -1,13 +1,9 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import {
-  MoreHorizontal,
-  Plus,
-  RotateCcw,
-  SquareTerminal,
-  X,
-} from "lucide-react";
+import { MoreHorizontal, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
 
 import { ClaudeLogomark, LiteLogomark, OpenAILogomark } from "@/brand-icons";
 import { Button } from "@/components/ui/button";
@@ -18,11 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
@@ -31,18 +23,12 @@ import type { Session } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
-const TerminalView = lazy(() =>
-  import("@/terminal").then((module) => ({ default: module.TerminalView })),
-);
+const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
 
 function loadSessions(): Session[] {
   try {
-    const stored = JSON.parse(
-      localStorage.getItem(STORAGE_KEY) ?? "[]",
-    ) as Session[];
-    return stored
-      .filter((session) => session.rootId)
-      .map((session) => ({ ...session, running: false }));
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Session[];
+    return stored.filter((session) => session.rootId).map((session) => ({ ...session, running: false }));
   } catch {
     return [];
   }
@@ -101,9 +87,7 @@ function SessionRow({
                 if (event.key === "Enter") saveName();
               }}
             />
-            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-              {session.cwd}
-            </span>
+            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{session.cwd}</span>
           </span>
         </div>
       ) : (
@@ -119,12 +103,8 @@ function SessionRow({
             />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium">
-              {session.name}
-            </span>
-            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-              {session.cwd}
-            </span>
+            <span className="block truncate text-xs font-medium">{session.name}</span>
+            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{session.cwd}</span>
           </span>
         </button>
       )}
@@ -143,9 +123,7 @@ function SessionRow({
           <MoreHorizontal />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-36">
-          <DropdownMenuItem onClick={() => setRenaming(true)}>
-            Rename
-          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setRenaming(true)}>Rename</DropdownMenuItem>
           <DropdownMenuItem onClick={onRestart}>
             <RotateCcw />
             Restart
@@ -167,27 +145,18 @@ function App() {
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   const runs = useRef(new Map<string, string>());
-  const selected = useMemo(
-    () => sessions.find((session) => session.id === selectedId),
-    [sessions, selectedId],
-  );
+  const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const update = () =>
-      document.documentElement.classList.toggle("dark", media.matches);
+    const update = () => document.documentElement.classList.toggle("dark", media.matches);
     update();
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(
-        sessions.map((session) => ({ ...session, running: false })),
-      ),
-    );
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.map((session) => ({ ...session, running: false }))));
   }, [sessions]);
 
   useEffect(() => {
@@ -196,27 +165,16 @@ function App() {
     let unlistenExit: (() => void) | undefined;
     let unlistenProvider: (() => void) | undefined;
     void Promise.all([
-      listen<{ sessionId: string; runId: string; data: number[] }>(
-        "pty-output",
-        ({ payload }) => {
-          if (runs.current.get(payload.sessionId) === payload.runId)
-            appendOutput(payload.sessionId, payload.data);
-        },
-      ),
-      listen<{ sessionId: string; runId: string }>(
-        "pty-exit",
-        ({ payload }) => {
-          if (runs.current.get(payload.sessionId) !== payload.runId) return;
-          runs.current.delete(payload.sessionId);
-          setSessions((current) =>
-            current.map((session) =>
-              session.id === payload.sessionId
-                ? { ...session, running: false }
-                : session,
-            ),
-          );
-        },
-      ),
+      listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
+        if (runs.current.get(payload.sessionId) === payload.runId) appendOutput(payload.sessionId, payload.data);
+      }),
+      listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
+        if (runs.current.get(payload.sessionId) !== payload.runId) return;
+        runs.current.delete(payload.sessionId);
+        setSessions((current) =>
+          current.map((session) => (session.id === payload.sessionId ? { ...session, running: false } : session)),
+        );
+      }),
       listen<{
         sessionId: string;
         runId: string;
@@ -225,9 +183,7 @@ function App() {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         setSessions((current) =>
           current.map((session) =>
-            session.id === payload.sessionId
-              ? { ...session, providerSessionId: payload.providerSessionId }
-              : session,
+            session.id === payload.sessionId ? { ...session, providerSessionId: payload.providerSessionId } : session,
           ),
         );
       }),
@@ -286,18 +242,13 @@ function App() {
         ),
       );
     } catch (reason) {
-      if (runs.current.get(session.id) === runId)
-        runs.current.delete(session.id);
+      if (runs.current.get(session.id) === runId) runs.current.delete(session.id);
       setStartingIds((current) => {
         const next = new Set(current);
         next.delete(session.id);
         return next;
       });
-      setSessions((current) =>
-        current.map((item) =>
-          item.id === session.id ? { ...item, running: false } : item,
-        ),
-      );
+      setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
       setError(String(reason));
     }
   }
@@ -315,11 +266,7 @@ function App() {
 
   async function restartSession(session: Session) {
     runs.current.delete(session.id);
-    setSessions((current) =>
-      current.map((item) =>
-        item.id === session.id ? { ...item, running: false } : item,
-      ),
-    );
+    setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
     await invoke("stop_session", { sessionId: session.id });
     clearOutput(session.id);
     await launch({ ...session, running: false }, true);
@@ -333,8 +280,7 @@ function App() {
     ]);
     clearOutput(session.id);
     setSessions((current) => current.filter((item) => item.id !== session.id));
-    if (selectedId === session.id)
-      setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
+    if (selectedId === session.id) setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
   }
 
   return (
@@ -357,9 +303,7 @@ function App() {
                     onSelect={() => selectSession(session)}
                     onRename={(name) =>
                       setSessions((current) =>
-                        current.map((item) =>
-                          item.id === session.id ? { ...item, name } : item,
-                        ),
+                        current.map((item) => (item.id === session.id ? { ...item, name } : item)),
                       )
                     }
                     onRestart={() => void restartSession(session)}
@@ -369,11 +313,7 @@ function App() {
               </div>
             </ScrollArea>
             <div className="border-t border-sidebar-border p-2">
-              <Button
-                variant="ghost"
-                className="w-full justify-start"
-                onClick={() => setNewSessionOpen(true)}
-              >
+              <Button variant="ghost" className="w-full justify-start" onClick={() => setNewSessionOpen(true)}>
                 <Plus />
                 New session
               </Button>
@@ -387,30 +327,19 @@ function App() {
               <>
                 <header className="flex h-11 shrink-0 items-center gap-3 border-b px-3">
                   <ProviderIcon agent={selected.agent} />
-                  <span className="truncate text-xs font-medium">
-                    {selected.name}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {selected.cwd}
-                  </span>
-                  {selected.agent === "codex" &&
-                  !selected.providerSessionId ? (
-                    <span className="ml-auto shrink-0 text-[11px] text-amber-500">
-                      Resume saves after first prompt
-                    </span>
+                  <span className="truncate text-xs font-medium">{selected.name}</span>
+                  <span className="truncate text-xs text-muted-foreground">{selected.cwd}</span>
+                  {selected.agent === "codex" && !selected.providerSessionId ? (
+                    <span className="ml-auto shrink-0 text-[11px] text-amber-500">Resume saves after first prompt</span>
                   ) : null}
                 </header>
                 <div className="min-h-0 flex-1 bg-[#0d0d0d]">
                   {selected.running ? (
-                    <Suspense
-                      fallback={<div className="h-full bg-[#0d0d0d]" />}
-                    >
+                    <Suspense fallback={<div className="h-full bg-[#0d0d0d]" />}>
                       <TerminalView sessionId={selected.id} />
                     </Suspense>
                   ) : startingIds.has(selected.id) ? (
-                    <div className="flex h-full items-center justify-center text-sm text-zinc-400">
-                      Starting…
-                    </div>
+                    <div className="flex h-full items-center justify-center text-sm text-zinc-400">Starting…</div>
                   ) : (
                     <button
                       type="button"
@@ -430,9 +359,7 @@ function App() {
                 </div>
                 <div>
                   <h1 className="text-sm font-medium">Start light</h1>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Choose a folder and open your first session.
-                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">Choose a folder and open your first session.</p>
                 </div>
                 <Button onClick={() => setNewSessionOpen(true)}>
                   <Plus />
@@ -441,9 +368,7 @@ function App() {
               </div>
             )}
             {error ? (
-              <div className="border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {error}
-              </div>
+              <div className="border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>
             ) : null}
           </section>
         </ResizablePanel>
@@ -458,11 +383,7 @@ function App() {
           </>
         ) : null}
       </ResizablePanelGroup>
-      <NewSessionDialog
-        open={newSessionOpen}
-        onOpenChange={setNewSessionOpen}
-        onCreate={createSession}
-      />
+      <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
     </main>
   );
 }

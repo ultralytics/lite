@@ -1,3 +1,5 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FolderOpen, TerminalSquare } from "lucide-react";
@@ -64,8 +66,7 @@ export function NewSessionDialog({
     try {
       const selected = await invoke<DirectoryGrant | null>("choose_directory");
       if (selected) {
-        if (directory)
-          void invoke("revoke_directory", { rootId: directory.id });
+        if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setDirectory(selected);
       }
     } catch (reason) {
@@ -83,8 +84,7 @@ export function NewSessionDialog({
 
   function create() {
     if (!directory) return;
-    const project =
-      directory.path.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
+    const project = directory.path.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
     onCreate({
       id: crypto.randomUUID(),
       agent,
@@ -102,9 +102,7 @@ export function NewSessionDialog({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>New session</DialogTitle>
-          <DialogDescription>
-            Choose an agent and the folder it should work in.
-          </DialogDescription>
+          <DialogDescription>Choose an agent and the folder it should work in.</DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-3 gap-2">
           {agents.map((option) => (
@@ -116,9 +114,7 @@ export function NewSessionDialog({
             >
               {option.icon}
               <span className="text-sm font-medium">{option.label}</span>
-              <span className="text-xs leading-4 text-muted-foreground">
-                {option.description}
-              </span>
+              <span className="text-xs leading-4 text-muted-foreground">{option.description}</span>
             </button>
           ))}
         </div>

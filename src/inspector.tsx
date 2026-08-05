@@ -1,14 +1,8 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  ChevronRight,
-  File,
-  FileCode2,
-  Folder,
-  GitBranch,
-  RefreshCw,
-  X,
-} from "lucide-react";
+import { ChevronRight, File, FileCode2, Folder, GitBranch, RefreshCw, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,15 +44,7 @@ function Meter({ value }: { value: number }) {
   );
 }
 
-function FileTree({
-  root,
-  rootId,
-  onOpen,
-}: {
-  root: string;
-  rootId: string;
-  onOpen: (entry: FileEntry) => void;
-}) {
+function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOpen: (entry: FileEntry) => void }) {
   const [children, setChildren] = useState<Record<string, FileEntry[]>>({});
   const [expanded, setExpanded] = useState(() => new Set<string>([root]));
 
@@ -94,9 +80,7 @@ function FileTree({
           type="button"
           className="flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-xs hover:bg-muted"
           style={{ paddingLeft: `${8 + depth * 14}px` }}
-          onClick={() =>
-            entry.isDirectory ? void toggle(entry.path) : onOpen(entry)
-          }
+          onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
         >
           {entry.isDirectory ? (
             <>
@@ -113,9 +97,7 @@ function FileTree({
           )}
           <span className="truncate">{entry.name}</span>
         </button>
-        {entry.isDirectory && expanded.has(entry.path)
-          ? rows(entry.path, depth + 1)
-          : null}
+        {entry.isDirectory && expanded.has(entry.path) ? rows(entry.path, depth + 1) : null}
       </div>
     ));
   }
@@ -132,9 +114,7 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
     setSelected(entry);
     setError("");
     try {
-      setSource(
-        await invoke<string>("read_text_file", { rootId, path: entry.path }),
-      );
+      setSource(await invoke<string>("read_text_file", { rootId, path: entry.path }));
     } catch (reason) {
       setSource("");
       setError(String(reason));
@@ -146,15 +126,8 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex h-10 shrink-0 items-center gap-2 border-b px-2">
           <FileCode2 className="size-4 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">
-            {selected.name}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => setSelected(null)}
-            aria-label="Close file"
-          >
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{selected.name}</span>
+          <Button variant="ghost" size="icon-xs" onClick={() => setSelected(null)} aria-label="Close file">
             <X />
           </Button>
         </div>
@@ -162,13 +135,7 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
           {error ? (
             <div className="p-4 text-xs text-muted-foreground">{error}</div>
           ) : (
-            <Suspense
-              fallback={
-                <div className="p-4 text-xs text-muted-foreground">
-                  Opening file…
-                </div>
-              }
-            >
+            <Suspense fallback={<div className="p-4 text-xs text-muted-foreground">Opening file…</div>}>
               <CodePreview path={selected.path} source={source} />
             </Suspense>
           )}
@@ -178,11 +145,7 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   }
   return (
     <ScrollArea className="h-full">
-      <FileTree
-        root={root}
-        rootId={rootId}
-        onOpen={(entry) => void openFile(entry)}
-      />
+      <FileTree root={root} rootId={rootId} onOpen={(entry) => void openFile(entry)} />
     </ScrollArea>
   );
 }
@@ -208,21 +171,14 @@ function GitPanel({ rootId }: { rootId: string }) {
     <div className="h-full overflow-auto p-3 text-xs">
       <div className="mb-3 flex items-center justify-between">
         <span className="font-medium">Repository</span>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => void refresh()}
-          aria-label="Refresh Git status"
-        >
+        <Button variant="ghost" size="icon-xs" onClick={() => void refresh()} aria-label="Refresh Git status">
           <RefreshCw />
         </Button>
       </div>
       {error ? (
         <p className="text-destructive">{error}</p>
       ) : status === null ? (
-        <p className="text-muted-foreground">
-          This folder is not a Git repository.
-        </p>
+        <p className="text-muted-foreground">This folder is not a Git repository.</p>
       ) : status === undefined ? (
         <p className="text-muted-foreground">Reading Git status…</p>
       ) : (
@@ -232,26 +188,18 @@ function GitPanel({ rootId }: { rootId: string }) {
               <GitBranch className="size-3.5" />
               <span className="truncate font-medium">{status.branch}</span>
             </div>
-            <p
-              className="truncate text-muted-foreground"
-              title={status.worktree}
-            >
+            <p className="truncate text-muted-foreground" title={status.worktree}>
               {status.worktree}
             </p>
             <Badge variant={status.changes.length ? "secondary" : "outline"}>
-              {status.changes.length
-                ? `${status.changes.length} changed`
-                : "Clean"}
+              {status.changes.length ? `${status.changes.length} changed` : "Clean"}
             </Badge>
           </div>
           {status.changes.length ? (
             <div className="mt-4 space-y-1">
               <p className="mb-2 font-medium">Changes</p>
               {status.changes.map((change) => (
-                <div
-                  key={change}
-                  className="truncate rounded-md px-2 py-1.5 hover:bg-muted"
-                >
+                <div key={change} className="truncate rounded-md px-2 py-1.5 hover:bg-muted">
                   {change}
                 </div>
               ))}
@@ -294,12 +242,7 @@ function UsagePanel({ session }: { session: Session }) {
       <div className="flex items-center justify-between">
         <p className="font-medium">Usage</p>
         {session.agent !== "shell" ? (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => void refresh()}
-            aria-label="Refresh usage"
-          >
+          <Button variant="ghost" size="icon-xs" onClick={() => void refresh()} aria-label="Refresh usage">
             <RefreshCw />
           </Button>
         ) : null}
@@ -307,15 +250,12 @@ function UsagePanel({ session }: { session: Session }) {
       {error ? (
         <p className="text-destructive">{error}</p>
       ) : session.agent === "shell" ? (
-        <div className="rounded-lg border p-3 text-muted-foreground">
-          Usage is not available for shell sessions.
-        </div>
+        <div className="rounded-lg border p-3 text-muted-foreground">Usage is not available for shell sessions.</div>
       ) : usage === undefined ? (
         <p className="text-muted-foreground">Reading provider usage…</p>
       ) : usage === null ? (
         <div className="rounded-lg border p-3 text-muted-foreground">
-          Available after the first{" "}
-          {session.agent === "claude" ? "Claude response" : "provider update"}.
+          Available after the first {session.agent === "claude" ? "Claude response" : "provider update"}.
         </div>
       ) : (
         <>
@@ -323,30 +263,22 @@ function UsagePanel({ session }: { session: Session }) {
             <div className="rounded-lg border p-3">
               <div className="flex justify-between">
                 <span>Session context</span>
-                <span className="tabular-nums">
-                  {usage.contextUsedPercent.toFixed(0)}%
-                </span>
+                <span className="tabular-nums">{usage.contextUsedPercent.toFixed(0)}%</span>
               </div>
               <Meter value={usage.contextUsedPercent} />
               {usage.contextTokens !== undefined ? (
                 <p className="mt-2 text-muted-foreground">
                   {formatNumber.format(usage.contextTokens)}
-                  {usage.contextWindow
-                    ? ` of ${formatNumber.format(usage.contextWindow)}`
-                    : ""}{" "}
-                  tokens
+                  {usage.contextWindow ? ` of ${formatNumber.format(usage.contextWindow)}` : ""} tokens
                 </p>
               ) : null}
               {usage.costUsd !== undefined ? (
-                <p className="mt-1 text-muted-foreground">
-                  ${usage.costUsd.toFixed(2)} session cost
-                </p>
+                <p className="mt-1 text-muted-foreground">${usage.costUsd.toFixed(2)} session cost</p>
               ) : null}
             </div>
           ) : (
             <div className="rounded-lg border p-3 text-muted-foreground">
-              Per-session context is not reported by the{" "}
-              {session.agent === "codex" ? "Codex CLI" : "provider yet"}.
+              Per-session context is not reported by the {session.agent === "codex" ? "Codex CLI" : "provider yet"}.
             </div>
           )}
           {usage.lifetimeTokens !== undefined ? (
@@ -358,21 +290,14 @@ function UsagePanel({ session }: { session: Session }) {
             </div>
           ) : null}
           {usage.windows.map((window) => (
-            <div
-              key={`${window.label}-${window.windowMinutes ?? ""}`}
-              className="rounded-lg border p-3"
-            >
+            <div key={`${window.label}-${window.windowMinutes ?? ""}`} className="rounded-lg border p-3">
               <div className="flex justify-between gap-2">
                 <span className="truncate">{window.label}</span>
-                <span className="tabular-nums">
-                  {window.usedPercent.toFixed(0)}%
-                </span>
+                <span className="tabular-nums">{window.usedPercent.toFixed(0)}%</span>
               </div>
               <Meter value={window.usedPercent} />
               {window.resetsAt ? (
-                <p className="mt-2 text-muted-foreground">
-                  Resets {new Date(window.resetsAt * 1000).toLocaleString()}
-                </p>
+                <p className="mt-2 text-muted-foreground">Resets {new Date(window.resetsAt * 1000).toLocaleString()}</p>
               ) : null}
             </div>
           ))}
