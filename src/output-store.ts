@@ -22,14 +22,11 @@ export function appendOutput(sessionId: string, data: number[]) {
   listeners.get(sessionId)?.forEach((listener) => listener(bytes));
 }
 
-export function replayOutput(sessionId: string, write: (data: Uint8Array) => void) {
-  buffers.get(sessionId)?.chunks.forEach(write);
-}
-
 export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) => void) {
   const sessionListeners = listeners.get(sessionId) ?? new Set();
   sessionListeners.add(listener);
   listeners.set(sessionId, sessionListeners);
+  buffers.get(sessionId)?.chunks.forEach(listener);
   return () => sessionListeners.delete(listener);
 }
 

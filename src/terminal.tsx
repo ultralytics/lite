@@ -6,7 +6,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
-import { replayOutput, subscribeOutput } from "@/output-store";
+import { subscribeOutput } from "@/output-store";
 
 export function TerminalView({ sessionId }: { sessionId: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -31,7 +31,6 @@ export function TerminalView({ sessionId }: { sessionId: string }) {
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
-    replayOutput(sessionId, (data) => terminal.write(data));
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     const input = terminal.onData((data) => {
       void invoke("write_session", {

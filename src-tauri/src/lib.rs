@@ -17,6 +17,15 @@ use tauri_plugin_dialog::DialogExt;
 
 const MAX_FILE_BYTES: u64 = 500_000;
 
+struct ProcessGuard(std::process::Child);
+
+impl Drop for ProcessGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 struct PtySession {
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
@@ -30,6 +39,19 @@ struct PtySession {
     codex_bracketed_paste: bool,
     codex_candidates: Vec<String>,
     codex_discovery_started: bool,
+}
+
+fn stop_pty(session: &mut PtySession) -> Result<(), String> {
+    if session
+        .child
+        .try_wait()
+        .map_err(|error| error.to_string())?
+        .is_none()
+    {
+        session.child.kill().map_err(|error| error.to_string())?;
+    }
+    session.child.wait().map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[derive(Default)]
@@ -144,6 +166,33 @@ fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
     } else {
         Err("Path is outside the selected folder".into())
     }
+}
+
+fn is_sensitive_path(root: &Path, path: &Path) -> bool {
+    path.strip_prefix(root).is_ok_and(|relative| {
+        relative.components().any(|component| {
+            let name = component.as_os_str().to_string_lossy().to_lowercase();
+            name == ".env"
+                || name.starts_with(".env.")
+                || [
+                    ".aws",
+                    ".azure",
+                    ".claude",
+                    ".codex",
+                    ".config",
+                    ".docker",
+                    ".git-credentials",
+                    ".gnupg",
+                    ".netrc",
+                    ".npmrc",
+                    ".pypirc",
+                    ".ssh",
+                    "id_ed25519",
+                    "id_rsa",
+                ]
+                .contains(&name.as_str())
+        })
+    })
 }
 
 fn command_output(directory: &Path, args: &[&str]) -> Result<String, String> {
@@ -325,17 +374,21 @@ fn codex_requests(
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| format!("Could not start Codex app server: {error}"))?;
+    let mut child = ProcessGuard(
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|error| format!("Could not start Codex app server: {error}"))?,
+    );
     let mut stdin = child
+        .0
         .stdin
         .take()
         .ok_or("Codex app server did not open stdin")?;
     let stdout = child
+        .0
         .stdout
         .take()
         .ok_or("Codex app server did not open stdout")?;
@@ -404,7 +457,6 @@ fn codex_requests(
             );
         }
     }
-    let _ = child.kill();
     Ok(responses)
 }
 
@@ -822,18 +874,26 @@ async fn spawn_session(
                 break;
             }
         }
-        let pending_root = output_app
+        let completed = output_app
             .state::<Sessions>()
             .0
             .lock()
             .ok()
             .and_then(|mut sessions| {
-                sessions
-                    .get_mut(&event_session_id)
-                    .filter(|session| session.run_id == event_run_id)
-                    .and_then(|session| session.pending_codex_root.take())
+                if sessions
+                    .get(&event_session_id)
+                    .is_some_and(|session| session.run_id == event_run_id)
+                {
+                    sessions.remove(&event_session_id)
+                } else {
+                    None
+                }
             });
-        release_codex_root(&output_app, pending_root);
+        if let Some(mut session) = completed {
+            let pending_root = session.pending_codex_root.take();
+            let _ = stop_pty(&mut session);
+            release_codex_root(&output_app, pending_root);
+        }
         let _ = output_app.emit(
             "pty-exit",
             PtyExit {
@@ -911,7 +971,7 @@ fn stop_session(
         .remove(&session_id)
     {
         let pending_root = session.pending_codex_root.take();
-        let result = session.child.kill().map_err(|error| error.to_string());
+        let result = stop_pty(&mut session);
         release_codex_root(&app, pending_root);
         result?;
     }
@@ -932,7 +992,11 @@ async fn list_directory(
         .filter_map(|entry| {
             let file_type = entry.file_type().ok()?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name == ".git" || name == "node_modules" || name == "target" {
+            if name == ".git"
+                || name == "node_modules"
+                || name == "target"
+                || is_sensitive_path(&root, &entry.path())
+            {
                 return None;
             }
             Some(FileEntry {
@@ -960,6 +1024,9 @@ async fn read_text_file(
 ) -> Result<String, String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
+    if is_sensitive_path(&root, &path) {
+        return Err("Sensitive files are hidden from preview".into());
+    }
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_FILE_BYTES {
         return Err("File is larger than 500 KB".into());
@@ -1041,6 +1108,24 @@ pub fn run() {
             git_status,
             read_usage
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Lite");
+        .build(tauri::generate_context!())
+        .expect("error while building Lite")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                let sessions = app
+                    .state::<Sessions>()
+                    .0
+                    .lock()
+                    .map(|mut sessions| {
+                        sessions
+                            .drain()
+                            .map(|(_, session)| session)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                for mut session in sessions {
+                    let _ = stop_pty(&mut session);
+                }
+            }
+        });
 }
