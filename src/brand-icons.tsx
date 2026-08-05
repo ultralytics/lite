@@ -1,29 +1,15 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 export const LiteLogomark = ({ className = "size-4" }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 502 512" role="img" aria-label="Lite">
+  <svg className={className} viewBox="0 0 512 512" role="img" aria-label="Lite">
     <title>Lite</title>
     <path
-      d="M117.519.002C52.718.002 0 52.744 0 117.574c0 64.825 52.718 117.569 117.519 117.569 64.802 0 117.52-52.744 117.52-117.569C235.039 52.744 182.321.002 117.519.002Z"
-      fill="#0B23A9"
-    />
-    <path
-      d="M250.48 368.161c-42.332 0-82.331-10.723-117.443-29.55v53.341c0 64.729 51.663 118.437 116.361 119.063 65.332.631 118.681-52.353 118.681-117.564v-54.89c-35.145 18.874-75.209 29.6-117.599 29.6Z"
-      fill="#0B23A9"
-    />
-    <path
-      d="M265.858 117.587c-.122 81.788-66.489 148.21-148.534 148.41-31.649.082-61.348-9.775-85.584-26.983 42.955 76.819 124.921 129.197 218.644 129.015 136.148.108 248.491-110.787 250.76-246.797l-.322-.291c.134-3.389-.032-.613.134-3.389.065-64.875-52.734-117.823-117.259-117.597-65.139.257-117.774 52.756-117.839 117.632Z"
+      d="M100 0C44.772 0 0 44.772 0 100v212c0 110.457 89.543 200 200 200h162V312H200V100C200 44.772 155.228 0 100 0Z"
       fill="url(#lite-gradient)"
     />
+    <circle cx="412" cy="412" r="100" fill="#0B23A9" />
     <defs>
-      <linearGradient
-        id="lite-gradient"
-        x1="142.137"
-        y1="363.87"
-        x2="433.123"
-        y2="41.667"
-        gradientUnits="userSpaceOnUse"
-      >
+      <linearGradient id="lite-gradient" x1="48" y1="472" x2="250" y2="48" gradientUnits="userSpaceOnUse">
         <stop stopColor="#09DBF0" />
         <stop offset="1" stopColor="#0B23A9" />
       </linearGradient>
