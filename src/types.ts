@@ -1,0 +1,25 @@
+export type Agent = "claude" | "codex" | "shell";
+
+export interface Session {
+  id: string;
+  agent: Agent;
+  name: string;
+  cwd: string;
+  rootId: string;
+  running: boolean;
+  providerSessionId?: string;
+}
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  isSymlink: boolean;
+}
+
+export interface GitStatus {
+  root: string;
+  branch: string;
+  worktree: string;
+  changes: string[];
+}

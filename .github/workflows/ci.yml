@@ -1,70 +1,40 @@
-# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
-
-# Continuous Integration (CI) GitHub Actions tests
-
 name: CI
-
-permissions:
-  contents: read # Read code in PRs
-  id-token: write # Required for Codecov OIDC authentication
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-  schedule:
-    - cron: "0 0 * * *" # Runs at 00:00 UTC every day
+
+permissions:
+  contents: read
 
 jobs:
-  Test:
-    runs-on: ${{ matrix.os }}
+  build:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.9", "3.13", "3.14"]
-
+        os: [macos-latest, ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
+      - uses: pnpm/action-setup@v4
         with:
-          python-version: ${{ matrix.python-version }}
-
-      - uses: ultralytics/actions/setup-uv@main
-
-      - name: Install dependencies
-        run: |
-          uv pip install --system -e ".[dev]"
-
-      - name: Option 1 - Python tests with pytest
-        run: |
-          python -m pytest tests -v
-
-      - name: Option 2 - Python tests with unittest
-        run: |
-          python -m unittest discover tests -v
-
-      - name: Option 3 - Python tests with pytest coverage
-        run: |
-          python -m pytest tests -v --cov=./ --cov-report=xml:pytest-coverage.xml
-
-      - name: Option 4 - Python tests with unittest coverage
-        run: |
-          python -m coverage run --source=./ -m unittest discover tests -v && python -m coverage xml -o unittest-coverage.xml
-
-      - name: Run CLI tests
-        run: |
-          example-cli-command
-
-      - name: Upload coverage to Codecov
-        continue-on-error: true
-        uses: codecov/codecov-action@v7
+          version: 10
+      - uses: actions/setup-node@v6
         with:
-          files: ./pytest-coverage.xml,./unittest-coverage.xml # optional (default = coverage.xml)
-          flags: template_coverage # optional
-          use_oidc: true
-          fail_ci_if_error: false
-          disable_search: true
-          plugins: noop
+          node-version: 24
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+      - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+      - run: pnpm tauri build --debug
