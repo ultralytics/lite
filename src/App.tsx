@@ -3,7 +3,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { MoreHorizontal, Plus, RotateCcw, SquareTerminal, X } from "lucide-react";
+import { Moon, MoreHorizontal, Plus, RotateCcw, SquareTerminal, Sun, X } from "lucide-react";
 
 import { ClaudeLogomark, LiteLogomark, OpenAILogomark } from "@/brand-icons";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput } from "@/output-store";
@@ -23,6 +24,7 @@ import type { Session } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
+const THEME_KEY = "lite.theme";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
 
 function loadSessions(): Session[] {
@@ -38,6 +40,12 @@ function ProviderIcon({ agent }: Pick<Session, "agent">) {
   if (agent === "claude") return <ClaudeLogomark className="size-4" />;
   if (agent === "codex") return <OpenAILogomark className="size-4" />;
   return <SquareTerminal className="size-4" />;
+}
+
+function initialTheme(): "light" | "dark" {
+  const saved = localStorage.getItem(THEME_KEY);
+  if (saved === "light" || saved === "dark") return saved;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
 function SessionRow({
@@ -144,16 +152,14 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
+  const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const runs = useRef(new Map<string, string>());
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
 
   useEffect(() => {
-    const media = window.matchMedia("(prefers-color-scheme: dark)");
-    const update = () => document.documentElement.classList.toggle("dark", media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
+    document.documentElement.classList.toggle("dark", theme === "dark");
+    localStorage.setItem(THEME_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.map((session) => ({ ...session, running: false }))));
@@ -277,104 +283,123 @@ function App() {
   }
 
   return (
-    <main className="h-screen overflow-hidden bg-background text-foreground">
-      <ResizablePanelGroup orientation="horizontal">
-        <ResizablePanel defaultSize="18%" minSize="14%" maxSize="26%">
-          <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-            <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-3">
-              <LiteLogomark className="size-6" />
-              <span className="text-sm font-semibold">Lite</span>
-            </div>
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="space-y-1 p-2">
-                {sessions.map((session) => (
-                  <SessionRow
-                    key={session.id}
-                    session={session}
-                    active={session.id === selectedId}
-                    starting={startingIds.has(session.id)}
-                    onSelect={() => selectSession(session)}
-                    onRename={(name) =>
-                      setSessions((current) =>
-                        current.map((item) => (item.id === session.id ? { ...item, name } : item)),
-                      )
+    <TooltipProvider>
+      <main className="h-screen overflow-hidden bg-background text-foreground">
+        <ResizablePanelGroup orientation="horizontal">
+          <ResizablePanel defaultSize="18%" minSize="14%" maxSize="26%">
+            <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+              <div className="flex h-12 items-center gap-2 border-b border-sidebar-border px-3">
+                <LiteLogomark className="size-6" />
+                <span className="text-sm font-semibold">Lite</span>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="relative ml-auto"
+                        onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                        aria-label="Toggle theme"
+                      />
                     }
-                    onRestart={() => void restartSession(session)}
-                    onClose={() => void closeSession(session)}
-                  />
-                ))}
+                  >
+                    <Sun className="size-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+                    <Moon className="absolute size-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                  </TooltipTrigger>
+                  <TooltipContent>{theme === "dark" ? "Light mode" : "Dark mode"}</TooltipContent>
+                </Tooltip>
               </div>
-            </ScrollArea>
-            <div className="border-t border-sidebar-border p-2">
-              <Button variant="ghost" className="w-full justify-start" onClick={() => setNewSessionOpen(true)}>
-                <Plus />
-                New session
-              </Button>
-            </div>
-          </aside>
-        </ResizablePanel>
-        <ResizableHandle />
-        <ResizablePanel defaultSize="57%" minSize="38%">
-          <section className="flex h-full min-w-0 flex-col">
-            {selected ? (
-              <>
-                <header className="flex h-11 shrink-0 items-center gap-3 border-b px-3">
-                  <ProviderIcon agent={selected.agent} />
-                  <span className="truncate text-xs font-medium">{selected.name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{selected.cwd}</span>
-                </header>
-                <div className="min-h-0 flex-1 bg-[#0d0d0d]">
-                  {selected.running ? (
-                    <Suspense fallback={<div className="h-full bg-[#0d0d0d]" />}>
-                      <TerminalView sessionId={selected.id} />
-                    </Suspense>
-                  ) : startingIds.has(selected.id) ? (
-                    <div className="flex h-full items-center justify-center text-sm text-zinc-400">Starting…</div>
-                  ) : (
-                    <button
-                      type="button"
-                      className="flex h-full w-full flex-col items-center justify-center gap-3 text-zinc-400"
-                      onClick={() => void launch(selected, true)}
-                    >
-                      <RotateCcw className="size-5" />
-                      <span className="text-sm">Resume session</span>
-                    </button>
-                  )}
+              <ScrollArea className="min-h-0 flex-1">
+                <div className="space-y-1 p-2">
+                  {sessions.map((session) => (
+                    <SessionRow
+                      key={session.id}
+                      session={session}
+                      active={session.id === selectedId}
+                      starting={startingIds.has(session.id)}
+                      onSelect={() => selectSession(session)}
+                      onRename={(name) =>
+                        setSessions((current) =>
+                          current.map((item) => (item.id === session.id ? { ...item, name } : item)),
+                        )
+                      }
+                      onRestart={() => void restartSession(session)}
+                      onClose={() => void closeSession(session)}
+                    />
+                  ))}
                 </div>
-              </>
-            ) : (
-              <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-                <div className="flex size-12 items-center justify-center rounded-2xl border bg-muted">
-                  <SquareTerminal className="size-5" />
-                </div>
-                <div>
-                  <h1 className="text-sm font-medium">Start light</h1>
-                  <p className="mt-1 text-xs text-muted-foreground">Choose a folder and open your first session.</p>
-                </div>
-                <Button onClick={() => setNewSessionOpen(true)}>
+              </ScrollArea>
+              <div className="border-t border-sidebar-border p-2">
+                <Button variant="ghost" className="w-full justify-start" onClick={() => setNewSessionOpen(true)}>
                   <Plus />
                   New session
                 </Button>
               </div>
-            )}
-            {error ? (
-              <div className="border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>
-            ) : null}
-          </section>
-        </ResizablePanel>
-        {selected ? (
-          <>
-            <ResizableHandle />
-            <ResizablePanel defaultSize="25%" minSize="18%" maxSize="40%">
-              <aside className="h-full">
-                <Inspector key={selected.id} session={selected} />
-              </aside>
-            </ResizablePanel>
-          </>
-        ) : null}
-      </ResizablePanelGroup>
-      <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
-    </main>
+            </aside>
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel defaultSize="57%" minSize="38%">
+            <section className="flex h-full min-w-0 flex-col">
+              {selected ? (
+                <>
+                  <header className="flex h-11 shrink-0 items-center gap-3 border-b px-3">
+                    <ProviderIcon agent={selected.agent} />
+                    <span className="truncate text-xs font-medium">{selected.name}</span>
+                    <span className="truncate text-xs text-muted-foreground">{selected.cwd}</span>
+                  </header>
+                  <div className="min-h-0 flex-1 bg-[#0d0d0d]">
+                    {selected.running ? (
+                      <Suspense fallback={<div className="h-full bg-[#0d0d0d]" />}>
+                        <TerminalView sessionId={selected.id} />
+                      </Suspense>
+                    ) : startingIds.has(selected.id) ? (
+                      <div className="flex h-full items-center justify-center text-sm text-zinc-400">Starting…</div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="flex h-full w-full flex-col items-center justify-center gap-3 text-zinc-400"
+                        onClick={() => void launch(selected, true)}
+                      >
+                        <RotateCcw className="size-5" />
+                        <span className="text-sm">Resume session</span>
+                      </button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+                  <div className="flex size-12 items-center justify-center rounded-2xl border bg-muted">
+                    <SquareTerminal className="size-5" />
+                  </div>
+                  <div>
+                    <h1 className="text-sm font-medium">Start light</h1>
+                    <p className="mt-1 text-xs text-muted-foreground">Choose a folder and open your first session.</p>
+                  </div>
+                  <Button onClick={() => setNewSessionOpen(true)}>
+                    <Plus />
+                    New session
+                  </Button>
+                </div>
+              )}
+              {error ? (
+                <div className="border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>
+              ) : null}
+            </section>
+          </ResizablePanel>
+          {selected ? (
+            <>
+              <ResizableHandle />
+              <ResizablePanel defaultSize="25%" minSize="18%" maxSize="40%">
+                <aside className="h-full">
+                  <Inspector key={selected.id} session={selected} />
+                </aside>
+              </ResizablePanel>
+            </>
+          ) : null}
+        </ResizablePanelGroup>
+        <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
+      </main>
+    </TooltipProvider>
   );
 }
 

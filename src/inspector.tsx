@@ -2,12 +2,13 @@
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronRight, File, FileCode2, Folder, GitBranch, RefreshCw, X } from "lucide-react";
+import { ChevronRight, File, FileCode2, Folder, FolderTree, Gauge, GitBranch, RefreshCw, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DirectoryCursor, DirectoryListing, FileEntry, GitStatus, Session } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
@@ -367,9 +368,24 @@ export function Inspector({ session }: { session: Session }) {
     <Tabs defaultValue="files" className="h-full gap-0">
       <div className="flex h-11 shrink-0 items-center border-b px-2">
         <TabsList variant="line" className="h-8">
-          <TabsTrigger value="files">Files</TabsTrigger>
-          <TabsTrigger value="git">Git</TabsTrigger>
-          <TabsTrigger value="usage">Usage</TabsTrigger>
+          <Tooltip>
+            <TooltipTrigger render={<TabsTrigger value="files" className="size-8" aria-label="Files" />}>
+              <FolderTree />
+            </TooltipTrigger>
+            <TooltipContent>Files and code preview</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<TabsTrigger value="git" className="size-8" aria-label="Git" />}>
+              <GitBranch />
+            </TooltipTrigger>
+            <TooltipContent>Git branch and changes</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger render={<TabsTrigger value="usage" className="size-8" aria-label="Usage" />}>
+              <Gauge />
+            </TooltipTrigger>
+            <TooltipContent>Context and usage limits</TooltipContent>
+          </Tooltip>
         </TabsList>
       </div>
       <TabsContent value="files" className="min-h-0 overflow-hidden">
