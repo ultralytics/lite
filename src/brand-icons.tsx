@@ -4,12 +4,12 @@ export const LiteLogomark = ({ className = "size-4" }: { className?: string }) =
   <svg className={className} viewBox="0 0 512 512" role="img" aria-label="Lite">
     <title>Lite</title>
     <path
-      d="M100 0C44.772 0 0 44.772 0 100v212c0 110.457 89.543 200 200 200h162V312H200V100C200 44.772 155.228 0 100 0Z"
+      d="M187 0C154.415 0 128 26.415 128 59V512H326V394H246V59C246 26.415 219.585 0 187 0Z"
       fill="url(#lite-gradient)"
     />
-    <circle cx="412" cy="412" r="100" fill="#0B23A9" />
+    <circle cx="326" cy="453" r="59" fill="#0B23A9" />
     <defs>
-      <linearGradient id="lite-gradient" x1="48" y1="472" x2="250" y2="48" gradientUnits="userSpaceOnUse">
+      <linearGradient id="lite-gradient" x1="142" y1="480" x2="305" y2="32" gradientUnits="userSpaceOnUse">
         <stop stopColor="#09DBF0" />
         <stop offset="1" stopColor="#0B23A9" />
       </linearGradient>
