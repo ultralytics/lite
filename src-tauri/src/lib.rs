@@ -42,16 +42,18 @@ struct PtySession {
 }
 
 fn stop_pty(session: &mut PtySession) -> Result<(), String> {
-    if session
+    let running = session
         .child
         .try_wait()
         .map_err(|error| error.to_string())?
-        .is_none()
-    {
-        session.child.kill().map_err(|error| error.to_string())?;
+        .is_none();
+    let kill_error = running
+        .then(|| session.child.kill().err().map(|error| error.to_string()))
+        .flatten();
+    match session.child.wait() {
+        Ok(_) => Ok(()),
+        Err(error) => Err(kill_error.unwrap_or_else(|| error.to_string())),
     }
-    session.child.wait().map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 #[derive(Default)]
@@ -747,7 +749,7 @@ async fn spawn_session(
     rows: u16,
 ) -> Result<Option<String>, String> {
     let cwd = root_path(&roots, &root_id)?;
-    {
+    let stale = {
         let mut running = sessions.0.lock().map_err(|error| error.to_string())?;
         if let Some(session) = running.get_mut(&session_id) {
             if session
@@ -758,8 +760,16 @@ async fn spawn_session(
             {
                 return Ok(provider_session_id);
             }
-            running.remove(&session_id);
+            running.remove(&session_id)
+        } else {
+            None
         }
+    };
+    if let Some(mut session) = stale {
+        let pending_root = session.pending_codex_root.take();
+        let result = stop_pty(&mut session);
+        release_codex_root(&app, pending_root);
+        result?;
     }
 
     if agent == "codex" && resume && provider_session_id.is_none() {
