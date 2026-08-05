@@ -16,6 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 const MAX_FILE_BYTES: u64 = 500_000;
+const MAX_DIRECTORY_ENTRIES: usize = 1_000;
+const MAX_GIT_CHANGES: usize = 500;
 
 struct ProcessGuard(std::process::Child);
 
@@ -126,6 +128,7 @@ struct GitStatus {
     branch: String,
     worktree: String,
     changes: Vec<String>,
+    changes_truncated: bool,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -167,7 +170,13 @@ fn root_path(roots: &Roots, root_id: &str) -> Result<PathBuf, String> {
     let root = roots
         .get(root_id)
         .ok_or("Folder permission is no longer available")?;
-    fs::canonicalize(root).map_err(|_| "The selected folder no longer exists".into())
+    let root =
+        fs::canonicalize(root).map_err(|_| "The selected folder no longer exists".to_owned())?;
+    if is_sensitive_root(&root) {
+        Err("Credential and configuration folders cannot be opened".into())
+    } else {
+        Ok(root)
+    }
 }
 
 fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
@@ -179,30 +188,39 @@ fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
     }
 }
 
+fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
+    let name = component.to_string_lossy().to_lowercase();
+    name == ".env"
+        || name.starts_with(".env.")
+        || [
+            ".aws",
+            ".azure",
+            ".claude",
+            ".codex",
+            ".config",
+            ".docker",
+            ".git-credentials",
+            ".gnupg",
+            ".netrc",
+            ".npmrc",
+            ".pypirc",
+            ".ssh",
+            "id_ed25519",
+            "id_rsa",
+        ]
+        .contains(&name.as_str())
+}
+
+fn is_sensitive_root(path: &Path) -> bool {
+    path.components()
+        .any(|component| is_sensitive_component(component.as_os_str()))
+}
+
 fn is_sensitive_path(root: &Path, path: &Path) -> bool {
     path.strip_prefix(root).is_ok_and(|relative| {
-        relative.components().any(|component| {
-            let name = component.as_os_str().to_string_lossy().to_lowercase();
-            name == ".env"
-                || name.starts_with(".env.")
-                || [
-                    ".aws",
-                    ".azure",
-                    ".claude",
-                    ".codex",
-                    ".config",
-                    ".docker",
-                    ".git-credentials",
-                    ".gnupg",
-                    ".netrc",
-                    ".npmrc",
-                    ".pypirc",
-                    ".ssh",
-                    "id_ed25519",
-                    "id_rsa",
-                ]
-                .contains(&name.as_str())
-        })
+        relative
+            .components()
+            .any(|component| is_sensitive_component(component.as_os_str()))
     })
 }
 
@@ -354,6 +372,9 @@ async fn choose_directory(
     };
     let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
+    if is_sensitive_root(&path) {
+        return Err("Credential and configuration folders cannot be opened".into());
+    }
     let id = uuid::Uuid::new_v4().to_string();
     roots
         .0
@@ -994,6 +1015,26 @@ fn stop_session(
 }
 
 #[tauri::command]
+fn delete_session_data(app: AppHandle, session_id: String) -> Result<(), String> {
+    uuid::Uuid::parse_str(&session_id).map_err(|_| "Invalid session ID")?;
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    for name in [
+        format!("claude-{session_id}.json"),
+        format!("usage-{session_id}.json"),
+    ] {
+        match fs::remove_file(directory.join(name)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn list_directory(
     roots: State<'_, Roots>,
     root_id: String,
@@ -1021,6 +1062,7 @@ async fn list_directory(
                 is_symlink: file_type.is_symlink(),
             })
         })
+        .take(MAX_DIRECTORY_ENTRIES)
         .collect::<Vec<_>>();
     entries.sort_by(|left, right| {
         right
@@ -1061,7 +1103,29 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         Err(_) => return Ok(None),
     };
     let branch = command_output(&path, &["branch", "--show-current"])?;
-    let status = command_output(&path, &["status", "--short"])?;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(path_text(&path))
+        .args(["status", "--short"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or("Could not read Git status")?;
+    let mut changes = BufReader::new(stdout)
+        .lines()
+        .take(MAX_GIT_CHANGES + 1)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let changes_truncated = changes.len() > MAX_GIT_CHANGES;
+    if changes_truncated {
+        changes.truncate(MAX_GIT_CHANGES);
+        let _ = child.kill();
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if !status.success() && !changes_truncated {
+        return Err("Could not read Git status".into());
+    }
     Ok(Some(GitStatus {
         branch: if branch.is_empty() {
             "Detached HEAD".into()
@@ -1069,7 +1133,8 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             branch
         },
         worktree: root,
-        changes: status.lines().map(str::to_owned).collect(),
+        changes,
+        changes_truncated,
     }))
 }
 
@@ -1117,6 +1182,7 @@ pub fn run() {
             write_session,
             resize_session,
             stop_session,
+            delete_session_data,
             list_directory,
             read_text_file,
             git_status,

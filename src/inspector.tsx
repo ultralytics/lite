@@ -46,7 +46,7 @@ function Meter({ value }: { value: number }) {
 
 function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOpen: (entry: FileEntry) => void }) {
   const [children, setChildren] = useState<Record<string, FileEntry[]>>({});
-  const [expanded, setExpanded] = useState(() => new Set<string>([root]));
+  const [expanded, setExpanded] = useState(() => new Set<string>());
 
   const load = useCallback(
     async (path: string) => {
@@ -58,10 +58,6 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
     },
     [rootId],
   );
-
-  useEffect(() => {
-    void load(root);
-  }, [load, root]);
 
   async function toggle(path: string) {
     const next = new Set(expanded);
@@ -102,7 +98,24 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
     ));
   }
 
-  return <div className="py-2">{rows(root)}</div>;
+  const parts = root.split(/[\\/]/).filter(Boolean);
+  const name = parts[parts.length - 1] ?? root;
+  return (
+    <div className="py-2">
+      <button
+        type="button"
+        className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium hover:bg-muted"
+        onClick={() => void toggle(root)}
+      >
+        <ChevronRight
+          className={`size-3.5 text-muted-foreground transition-transform ${expanded.has(root) ? "rotate-90" : ""}`}
+        />
+        <Folder className="size-3.5 fill-current text-muted-foreground" />
+        <span className="truncate">{name}</span>
+      </button>
+      {expanded.has(root) ? rows(root, 1) : null}
+    </div>
+  );
 }
 
 function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
@@ -192,7 +205,9 @@ function GitPanel({ rootId }: { rootId: string }) {
               {status.worktree}
             </p>
             <Badge variant={status.changes.length ? "secondary" : "outline"}>
-              {status.changes.length ? `${status.changes.length} changed` : "Clean"}
+              {status.changes.length
+                ? `${status.changes.length}${status.changesTruncated ? "+" : ""} changed`
+                : "Clean"}
             </Badge>
           </div>
           {status.changes.length ? (

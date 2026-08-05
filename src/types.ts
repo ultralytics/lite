@@ -23,4 +23,5 @@ export interface GitStatus {
   branch: string;
   worktree: string;
   changes: string[];
+  changesTruncated: boolean;
 }

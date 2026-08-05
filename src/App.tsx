@@ -274,8 +274,9 @@ function App() {
 
   async function closeSession(session: Session) {
     runs.current.delete(session.id);
+    await invoke("stop_session", { sessionId: session.id });
     await Promise.all([
-      invoke("stop_session", { sessionId: session.id }),
+      invoke("delete_session_data", { sessionId: session.id }),
       invoke("revoke_directory", { rootId: session.rootId }),
     ]);
     clearOutput(session.id);
