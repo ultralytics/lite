@@ -18,6 +18,8 @@ use tauri_plugin_dialog::DialogExt;
 const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
+const MAX_CODEX_INPUT_CHARS: usize = 100_000;
+const MAX_CODEX_CANDIDATES: usize = 32;
 
 struct ProcessGuard(std::process::Child);
 
@@ -702,16 +704,49 @@ fn capture_codex_input(session: &mut PtySession, data: &[u8]) {
         }
         match character {
             '\u{1b}' => session.codex_escape.push(character),
+            '\u{1}' => session.codex_cursor = 0,
+            '\u{2}' => session.codex_cursor = session.codex_cursor.saturating_sub(1),
+            '\u{4}' if session.codex_cursor < session.codex_input.len() => {
+                session.codex_input.remove(session.codex_cursor);
+            }
+            '\u{5}' => session.codex_cursor = session.codex_input.len(),
+            '\u{6}' => {
+                session.codex_cursor = (session.codex_cursor + 1).min(session.codex_input.len())
+            }
+            '\u{b}' => session.codex_input.truncate(session.codex_cursor),
+            '\u{15}' => {
+                session.codex_input.drain(..session.codex_cursor);
+                session.codex_cursor = 0;
+            }
+            '\u{17}' => {
+                while session.codex_cursor > 0
+                    && session.codex_input[session.codex_cursor - 1].is_whitespace()
+                {
+                    session.codex_cursor -= 1;
+                    session.codex_input.remove(session.codex_cursor);
+                }
+                while session.codex_cursor > 0
+                    && !session.codex_input[session.codex_cursor - 1].is_whitespace()
+                {
+                    session.codex_cursor -= 1;
+                    session.codex_input.remove(session.codex_cursor);
+                }
+            }
             '\r' | '\n' => {
                 if session.codex_bracketed_paste {
-                    session.codex_input.insert(session.codex_cursor, '\n');
-                    session.codex_cursor += 1;
+                    if session.codex_input.len() < MAX_CODEX_INPUT_CHARS {
+                        session.codex_input.insert(session.codex_cursor, '\n');
+                        session.codex_cursor += 1;
+                    }
                     continue;
                 }
                 let prompt = session.codex_input.iter().collect::<String>();
                 let prompt = prompt.trim();
                 if !prompt.is_empty() && !session.codex_candidates.iter().any(|item| item == prompt)
                 {
+                    if session.codex_candidates.len() == MAX_CODEX_CANDIDATES {
+                        session.codex_candidates.remove(0);
+                    }
                     session.codex_candidates.push(prompt.to_owned());
                 }
                 session.codex_input.clear();
@@ -721,7 +756,9 @@ fn capture_codex_input(session: &mut PtySession, data: &[u8]) {
                 session.codex_cursor -= 1;
                 session.codex_input.remove(session.codex_cursor);
             }
-            character if !character.is_control() => {
+            character
+                if !character.is_control() && session.codex_input.len() < MAX_CODEX_INPUT_CHARS =>
+            {
                 session.codex_input.insert(session.codex_cursor, character);
                 session.codex_cursor += 1;
             }
