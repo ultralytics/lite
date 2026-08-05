@@ -42,7 +42,7 @@ function ProviderIcon({ agent }: Pick<Session, "agent">) {
   return <SquareTerminal className="size-4" />;
 }
 
-function initialTheme(): "light" | "dark" {
+export function initialTheme(): "light" | "dark" {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === "light" || saved === "dark") return saved;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -158,6 +158,7 @@ function App() {
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", theme === "dark");
+    document.documentElement.style.colorScheme = theme;
     localStorage.setItem(THEME_KEY, theme);
   }, [theme]);
 
@@ -303,8 +304,8 @@ function App() {
                       />
                     }
                   >
-                    <Sun className="size-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-                    <Moon className="absolute size-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                    <Sun className="size-4 rotate-0 scale-100 transition-transform motion-reduce:transition-none dark:-rotate-90 dark:scale-0" />
+                    <Moon className="absolute size-4 rotate-90 scale-0 transition-transform motion-reduce:transition-none dark:rotate-0 dark:scale-100" />
                   </TooltipTrigger>
                   <TooltipContent>{theme === "dark" ? "Light mode" : "Dark mode"}</TooltipContent>
                 </Tooltip>

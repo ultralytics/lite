@@ -18,6 +18,8 @@ use tauri_plugin_dialog::DialogExt;
 const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
+const CODEX_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+static CODEX_DAEMON_STARTED: Mutex<bool> = Mutex::new(false);
 
 struct ProcessGuard(std::process::Child);
 
@@ -55,6 +57,9 @@ struct Sessions(Mutex<HashMap<String, PtySession>>);
 
 #[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
+
+#[derive(Default)]
+struct ProviderSessions(Mutex<HashMap<String, String>>);
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -234,6 +239,14 @@ fn roots_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("roots.json"))
 }
 
+fn provider_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("provider-sessions.json"))
+}
+
 fn load_roots(app: &AppHandle) -> Roots {
     let roots = roots_path(app)
         .ok()
@@ -241,6 +254,15 @@ fn load_roots(app: &AppHandle) -> Roots {
         .and_then(|bytes| serde_json::from_slice::<HashMap<String, PathBuf>>(&bytes).ok())
         .unwrap_or_default();
     Roots(Mutex::new(roots))
+}
+
+fn load_provider_sessions(app: &AppHandle) -> ProviderSessions {
+    let sessions = provider_sessions_path(app)
+        .ok()
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice::<HashMap<String, String>>(&bytes).ok())
+        .unwrap_or_default();
+    ProviderSessions(Mutex::new(sessions))
 }
 
 fn save_roots(app: &AppHandle, roots: &Roots) -> Result<(), String> {
@@ -252,6 +274,29 @@ fn save_roots(app: &AppHandle, roots: &Roots) -> Result<(), String> {
     fs::write(
         path,
         serde_json::to_vec(&*roots).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn update_provider_session(
+    app: &AppHandle,
+    sessions: &ProviderSessions,
+    session_id: &str,
+    provider_session_id: Option<String>,
+) -> Result<(), String> {
+    let path = provider_sessions_path(app)?;
+    if let Some(directory) = path.parent() {
+        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    }
+    let mut sessions = sessions.0.lock().map_err(|error| error.to_string())?;
+    if let Some(provider_session_id) = provider_session_id {
+        sessions.insert(session_id.to_owned(), provider_session_id);
+    } else {
+        sessions.remove(session_id);
+    }
+    fs::write(
+        path,
+        serde_json::to_vec(&*sessions).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())
 }
@@ -389,8 +434,29 @@ fn revoke_directory(app: AppHandle, roots: State<Roots>, root_id: String) -> Res
 fn codex_requests(
     requests: &[(u64, &str, serde_json::Value)],
 ) -> Result<HashMap<u64, serde_json::Value>, String> {
+    let mut daemon_started = CODEX_DAEMON_STARTED
+        .lock()
+        .map_err(|error| error.to_string())?;
+    if !*daemon_started {
+        let mut daemon = Command::new("codex");
+        daemon.args(["app-server", "daemon", "start"]);
+        if let Some(path) = user_path() {
+            daemon.env("PATH", path);
+        }
+        let daemon = daemon.output().map_err(|error| error.to_string())?;
+        if !daemon.status.success() {
+            let message = String::from_utf8_lossy(&daemon.stderr).trim().to_owned();
+            return Err(if message.is_empty() {
+                "Could not start the Codex app server".into()
+            } else {
+                message
+            });
+        }
+        *daemon_started = true;
+    }
+    drop(daemon_started);
     let mut command = Command::new("codex");
-    command.args(["app-server"]);
+    command.args(["app-server", "proxy"]);
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
@@ -441,7 +507,7 @@ fn codex_requests(
     stdin.flush().map_err(|error| error.to_string())?;
     loop {
         let (id, response) = receiver
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(CODEX_RESPONSE_TIMEOUT)
             .map_err(|_| "Codex app server did not initialize")?;
         if id == 0 {
             response
@@ -468,7 +534,7 @@ fn codex_requests(
     let mut responses = HashMap::new();
     while responses.len() < requests.len() {
         let (id, result) = receiver
-            .recv_timeout(Duration::from_secs(5))
+            .recv_timeout(CODEX_RESPONSE_TIMEOUT)
             .map_err(|_| "Codex app server did not return a response")?;
         if requests.iter().any(|request| request.0 == id) {
             responses.insert(
@@ -562,6 +628,16 @@ fn archive_codex_thread(thread_id: &str) {
     )]);
 }
 
+fn rollback_codex_thread(
+    app: &AppHandle,
+    sessions: &ProviderSessions,
+    session_id: &str,
+    thread_id: &str,
+) {
+    archive_codex_thread(thread_id);
+    let _ = update_provider_session(app, sessions, session_id, None);
+}
+
 #[cfg(unix)]
 fn user_path() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
@@ -618,6 +694,7 @@ async fn spawn_session(
     app: AppHandle,
     sessions: State<'_, Sessions>,
     roots: State<'_, Roots>,
+    provider_sessions: State<'_, ProviderSessions>,
     session_id: String,
     run_id: String,
     root_id: String,
@@ -629,6 +706,14 @@ async fn spawn_session(
     rows: u16,
 ) -> Result<Option<String>, String> {
     let cwd = root_path(&roots, &root_id)?;
+    if agent == "codex" && provider_session_id.is_none() {
+        provider_session_id = provider_sessions
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(&session_id)
+            .cloned();
+    }
     let stale = {
         let mut running = sessions.0.lock().map_err(|error| error.to_string())?;
         if let Some(session) = running.get_mut(&session_id) {
@@ -664,6 +749,22 @@ async fn spawn_session(
     if codex_created {
         provider_session_id = Some(start_codex_thread(&cwd)?);
     }
+    if agent == "codex" {
+        let provider_session_id = provider_session_id
+            .as_ref()
+            .expect("created or restored above");
+        if let Err(error) = update_provider_session(
+            &app,
+            &provider_sessions,
+            &session_id,
+            Some(provider_session_id.clone()),
+        ) {
+            if codex_created {
+                archive_codex_thread(provider_session_id);
+            }
+            return Err(error);
+        }
+    }
     let mut command = agent_command(
         &agent,
         resume,
@@ -681,7 +782,12 @@ async fn spawn_session(
         Ok(child) => child,
         Err(error) => {
             if codex_created {
-                archive_codex_thread(provider_session_id.as_deref().expect("created above"));
+                rollback_codex_thread(
+                    &app,
+                    &provider_sessions,
+                    &session_id,
+                    provider_session_id.as_deref().expect("created above"),
+                );
             }
             return Err(if agent == "shell" {
                 error.to_string()
@@ -697,7 +803,12 @@ async fn spawn_session(
             let _ = child.kill();
             let _ = child.wait();
             if codex_created {
-                archive_codex_thread(provider_session_id.as_deref().expect("created above"));
+                rollback_codex_thread(
+                    &app,
+                    &provider_sessions,
+                    &session_id,
+                    provider_session_id.as_deref().expect("created above"),
+                );
             }
             return Err(error.to_string());
         }
@@ -708,7 +819,12 @@ async fn spawn_session(
             let _ = child.kill();
             let _ = child.wait();
             if codex_created {
-                archive_codex_thread(provider_session_id.as_deref().expect("created above"));
+                rollback_codex_thread(
+                    &app,
+                    &provider_sessions,
+                    &session_id,
+                    provider_session_id.as_deref().expect("created above"),
+                );
             }
             return Err(error.to_string());
         }
@@ -831,7 +947,11 @@ fn stop_session(sessions: State<Sessions>, session_id: String) -> Result<(), Str
 }
 
 #[tauri::command]
-fn delete_session_data(app: AppHandle, session_id: String) -> Result<(), String> {
+fn delete_session_data(
+    app: AppHandle,
+    provider_sessions: State<ProviderSessions>,
+    session_id: String,
+) -> Result<(), String> {
     uuid::Uuid::parse_str(&session_id).map_err(|_| "Invalid session ID")?;
     let directory = app
         .path()
@@ -847,7 +967,7 @@ fn delete_session_data(app: AppHandle, session_id: String) -> Result<(), String>
             Err(error) => return Err(error.to_string()),
         }
     }
-    Ok(())
+    update_provider_session(&app, &provider_sessions, &session_id, None)
 }
 
 #[tauri::command]
@@ -1005,6 +1125,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
+            app.manage(load_provider_sessions(app.handle()));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

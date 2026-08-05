@@ -30,7 +30,7 @@ function TooltipContent({
       <TooltipPrimitive.Positioner side={side} sideOffset={sideOffset} className="z-50">
         <TooltipPrimitive.Popup
           className={cn(
-            "rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
+            "rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md motion-reduce:animate-none data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0",
             className,
           )}
           {...props}
