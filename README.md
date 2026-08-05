@@ -16,8 +16,8 @@ Lite targets macOS, Windows, and Linux with a shared Tauri, Rust, and React code
 ## MVP
 
 - Keep Claude Code, Codex, and ordinary shell sessions in one resizable workspace.
-- Resume dormant tabs after an app or system restart. A new Codex tab becomes resumable after its first prompt. Lite
-  records only local session metadata; each provider stores its own conversation history.
+- Resume dormant tabs after an app or system restart. Lite records only local session metadata; each provider stores its
+  own conversation history.
 - Reuse the normal Claude Code and Codex login. Authenticate in the provider CLI once and every later Lite session uses
   that provider's existing local credentials—Lite never reads or stores tokens.
 - Browse folders on demand, preview popular source languages with syntax highlighting, and render Markdown safely.

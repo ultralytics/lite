@@ -3,7 +3,7 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -33,11 +33,6 @@ struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     run_id: String,
-    pending_codex_root: Option<PathBuf>,
-    codex_before: HashSet<String>,
-    codex_escape: String,
-    codex_bracketed_paste: bool,
-    codex_discovery_started: bool,
 }
 
 fn stop_pty(session: &mut PtySession) -> Result<(), String> {
@@ -61,25 +56,6 @@ struct Sessions(Mutex<HashMap<String, PtySession>>);
 #[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
 
-#[derive(Default)]
-struct CodexReservations(Mutex<HashSet<PathBuf>>);
-
-struct CodexReservation<'a> {
-    reservations: &'a CodexReservations,
-    root: PathBuf,
-    keep: bool,
-}
-
-impl Drop for CodexReservation<'_> {
-    fn drop(&mut self) {
-        if !self.keep {
-            if let Ok(mut roots) = self.reservations.0.lock() {
-                roots.remove(&self.root);
-            }
-        }
-    }
-}
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct PtyOutput {
@@ -93,14 +69,6 @@ struct PtyOutput {
 struct PtyExit {
     session_id: String,
     run_id: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ProviderSession {
-    session_id: String,
-    run_id: String,
-    provider_session_id: String,
 }
 
 #[derive(Serialize)]
@@ -572,127 +540,26 @@ fn codex_usage() -> Result<UsageSnapshot, String> {
     })
 }
 
-fn codex_threads(cwd: &Path) -> Result<HashSet<String>, String> {
+fn start_codex_thread(cwd: &Path) -> Result<String, String> {
     let responses = codex_requests(&[(
         3,
-        "thread/list",
-        serde_json::json!({"cwd": path_text(cwd), "limit": 100, "sortKey": "created_at"}),
+        "thread/start",
+        serde_json::json!({"cwd": path_text(cwd), "serviceName": "ultralytics_lite"}),
     )])?;
-    Ok(responses
+    responses
         .get(&3)
-        .and_then(|response| response.get("data"))
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|thread| thread.get("id")?.as_str().map(str::to_owned))
-        .collect())
+        .and_then(|response| response.pointer("/thread/id"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or("Codex app server did not return a thread ID".into())
 }
 
-fn release_codex_root(app: &AppHandle, root: Option<PathBuf>) {
-    let Some(root) = root else {
-        return;
-    };
-    if let Ok(mut roots) = app.state::<CodexReservations>().0.lock() {
-        roots.remove(&root);
-    }
-}
-
-fn discover_codex_session(
-    app: AppHandle,
-    session_id: String,
-    run_id: String,
-    cwd: PathBuf,
-    before: HashSet<String>,
-) {
-    thread::spawn(move || {
-        for delay in [500, 1_000, 2_000, 4_000] {
-            thread::sleep(Duration::from_millis(delay));
-            let active = app
-                .state::<Sessions>()
-                .0
-                .lock()
-                .ok()
-                .is_some_and(|sessions| {
-                    sessions
-                        .get(&session_id)
-                        .is_some_and(|session| session.run_id == run_id)
-                });
-            if !active {
-                return;
-            }
-            let Ok(after) = codex_threads(&cwd) else {
-                continue;
-            };
-            let mut matches = after.iter().filter(|id| !before.contains(*id));
-            let Some(exact_id) = matches.next() else {
-                continue;
-            };
-            if matches.next().is_some() {
-                break;
-            }
-            let exact_id = exact_id.clone();
-            let root = if let Ok(mut sessions) = app.state::<Sessions>().0.lock() {
-                let Some(session) = sessions.get_mut(&session_id) else {
-                    return;
-                };
-                if session.run_id != run_id {
-                    return;
-                }
-                session.pending_codex_root.take()
-            } else {
-                return;
-            };
-            release_codex_root(&app, root);
-            let _ = app.emit(
-                "provider-session",
-                ProviderSession {
-                    session_id,
-                    run_id,
-                    provider_session_id: exact_id,
-                },
-            );
-            return;
-        }
-        if let Ok(mut sessions) = app.state::<Sessions>().0.lock() {
-            if let Some(session) = sessions
-                .get_mut(&session_id)
-                .filter(|session| session.run_id == run_id)
-            {
-                session.codex_discovery_started = false;
-            }
-        }
-    });
-}
-
-fn apply_codex_escape(session: &mut PtySession) {
-    match session.codex_escape.as_str() {
-        "\u{1b}[200~" => session.codex_bracketed_paste = true,
-        "\u{1b}[201~" => session.codex_bracketed_paste = false,
-        _ => {}
-    }
-    session.codex_escape.clear();
-}
-
-fn capture_codex_submission(session: &mut PtySession, data: &[u8]) -> bool {
-    let mut submitted = false;
-    for character in String::from_utf8_lossy(data).chars() {
-        if !session.codex_escape.is_empty() {
-            session.codex_escape.push(character);
-            let complete = character.is_ascii_alphabetic()
-                || character == '~'
-                || (session.codex_escape.len() == 2 && character != '[' && character != ']');
-            if complete {
-                apply_codex_escape(session);
-            }
-            continue;
-        }
-        match character {
-            '\u{1b}' => session.codex_escape.push(character),
-            '\r' | '\n' if !session.codex_bracketed_paste => submitted = true,
-            _ => {}
-        }
-    }
-    submitted
+fn archive_codex_thread(thread_id: &str) {
+    let _ = codex_requests(&[(
+        3,
+        "thread/archive",
+        serde_json::json!({"threadId": thread_id}),
+    )]);
 }
 
 #[cfg(unix)]
@@ -751,11 +618,10 @@ async fn spawn_session(
     app: AppHandle,
     sessions: State<'_, Sessions>,
     roots: State<'_, Roots>,
-    codex_reservations: State<'_, CodexReservations>,
     session_id: String,
     run_id: String,
     root_id: String,
-    provider_session_id: Option<String>,
+    mut provider_session_id: Option<String>,
     agent: String,
     name: String,
     resume: bool,
@@ -780,39 +646,12 @@ async fn spawn_session(
         }
     };
     if let Some(mut session) = stale {
-        let pending_root = session.pending_codex_root.take();
-        let result = stop_pty(&mut session);
-        release_codex_root(&app, pending_root);
-        result?;
+        stop_pty(&mut session)?;
     }
 
     if agent == "codex" && resume && provider_session_id.is_none() {
         return Err("This Codex tab has no exact session ID. Start a new session instead.".into());
     }
-    let codex_new = agent == "codex" && provider_session_id.is_none();
-    let mut reservation = if codex_new {
-        let inserted = codex_reservations
-            .0
-            .lock()
-            .map_err(|error| error.to_string())?
-            .insert(cwd.clone());
-        if !inserted {
-            return Err("Send a first prompt in the other new Codex tab for this project before opening another.".into());
-        }
-        Some(CodexReservation {
-            reservations: &codex_reservations,
-            root: cwd.clone(),
-            keep: false,
-        })
-    } else {
-        None
-    };
-    let codex_before = if codex_new {
-        codex_threads(&cwd)?
-    } else {
-        HashSet::new()
-    };
-
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -821,6 +660,10 @@ async fn spawn_session(
             pixel_height: 0,
         })
         .map_err(|error| error.to_string())?;
+    let codex_created = agent == "codex" && provider_session_id.is_none();
+    if codex_created {
+        provider_session_id = Some(start_codex_thread(&cwd)?);
+    }
     let mut command = agent_command(
         &agent,
         resume,
@@ -834,22 +677,42 @@ async fn spawn_session(
     }
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
-    let child = pair.slave.spawn_command(command).map_err(|error| {
-        if agent == "shell" {
-            error.to_string()
-        } else {
-            format!("Could not start {agent}. Install its CLI and make sure it is available in your PATH. {error}")
+    let mut child = match pair.slave.spawn_command(command) {
+        Ok(child) => child,
+        Err(error) => {
+            if codex_created {
+                archive_codex_thread(provider_session_id.as_deref().expect("created above"));
+            }
+            return Err(if agent == "shell" {
+                error.to_string()
+            } else {
+                format!("Could not start {agent}. Install its CLI and make sure it is available in your PATH. {error}")
+            });
         }
-    })?;
+    };
     drop(pair.slave);
-    let mut reader = pair
-        .master
-        .try_clone_reader()
-        .map_err(|error| error.to_string())?;
-    let writer = pair
-        .master
-        .take_writer()
-        .map_err(|error| error.to_string())?;
+    let mut reader = match pair.master.try_clone_reader() {
+        Ok(reader) => reader,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            if codex_created {
+                archive_codex_thread(provider_session_id.as_deref().expect("created above"));
+            }
+            return Err(error.to_string());
+        }
+    };
+    let writer = match pair.master.take_writer() {
+        Ok(writer) => writer,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            if codex_created {
+                archive_codex_thread(provider_session_id.as_deref().expect("created above"));
+            }
+            return Err(error.to_string());
+        }
+    };
     sessions
         .0
         .lock()
@@ -861,16 +724,8 @@ async fn spawn_session(
                 master: pair.master,
                 writer,
                 run_id: run_id.clone(),
-                pending_codex_root: codex_new.then(|| cwd.clone()),
-                codex_before,
-                codex_escape: String::new(),
-                codex_bracketed_paste: false,
-                codex_discovery_started: false,
             },
         );
-    if let Some(reservation) = reservation.as_mut() {
-        reservation.keep = true;
-    }
 
     let event_session_id = session_id.clone();
     let event_run_id = run_id.clone();
@@ -911,9 +766,7 @@ async fn spawn_session(
                 }
             });
         if let Some(mut session) = completed {
-            let pending_root = session.pending_codex_root.take();
             let _ = stop_pty(&mut session);
-            release_codex_root(&output_app, pending_root);
         }
         let _ = output_app.emit(
             "pty-exit",
@@ -929,7 +782,6 @@ async fn spawn_session(
 
 #[tauri::command]
 fn write_session(
-    app: AppHandle,
     sessions: State<Sessions>,
     session_id: String,
     data: Vec<u8>,
@@ -942,21 +794,7 @@ fn write_session(
         .writer
         .write_all(&data)
         .map_err(|error| error.to_string())?;
-    session.writer.flush().map_err(|error| error.to_string())?;
-    let mut discovery = None;
-    if session.pending_codex_root.is_some() {
-        let submitted = capture_codex_submission(session, &data);
-        if !session.codex_discovery_started && submitted {
-            let cwd = session.pending_codex_root.clone().expect("checked above");
-            session.codex_discovery_started = true;
-            discovery = Some((session.run_id.clone(), cwd, session.codex_before.clone()));
-        }
-    }
-    drop(sessions);
-    if let Some((run_id, cwd, before)) = discovery {
-        discover_codex_session(app, session_id, run_id, cwd, before);
-    }
-    Ok(())
+    session.writer.flush().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -980,21 +818,14 @@ fn resize_session(
 }
 
 #[tauri::command]
-fn stop_session(
-    app: AppHandle,
-    sessions: State<Sessions>,
-    session_id: String,
-) -> Result<(), String> {
+fn stop_session(sessions: State<Sessions>, session_id: String) -> Result<(), String> {
     if let Some(mut session) = sessions
         .0
         .lock()
         .map_err(|error| error.to_string())?
         .remove(&session_id)
     {
-        let pending_root = session.pending_codex_root.take();
-        let result = stop_pty(&mut session);
-        release_codex_root(&app, pending_root);
-        result?;
+        stop_pty(&mut session)?;
     }
     Ok(())
 }
@@ -1171,7 +1002,6 @@ async fn read_usage(
 pub fn run() {
     tauri::Builder::default()
         .manage(Sessions::default())
-        .manage(CodexReservations::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));

@@ -163,7 +163,6 @@ function App() {
     let disposed = false;
     let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
-    let unlistenProvider: (() => void) | undefined;
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) === payload.runId) appendOutput(payload.sessionId, payload.data);
@@ -175,34 +174,19 @@ function App() {
           current.map((session) => (session.id === payload.sessionId ? { ...session, running: false } : session)),
         );
       }),
-      listen<{
-        sessionId: string;
-        runId: string;
-        providerSessionId: string;
-      }>("provider-session", ({ payload }) => {
-        if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        setSessions((current) =>
-          current.map((session) =>
-            session.id === payload.sessionId ? { ...session, providerSessionId: payload.providerSessionId } : session,
-          ),
-        );
-      }),
-    ]).then(([output, exit, provider]) => {
+    ]).then(([output, exit]) => {
       if (disposed) {
         output();
         exit();
-        provider();
         return;
       }
       unlistenOutput = output;
       unlistenExit = exit;
-      unlistenProvider = provider;
     });
     return () => {
       disposed = true;
       unlistenOutput?.();
       unlistenExit?.();
-      unlistenProvider?.();
     };
   }, []);
 
@@ -338,9 +322,6 @@ function App() {
                   <ProviderIcon agent={selected.agent} />
                   <span className="truncate text-xs font-medium">{selected.name}</span>
                   <span className="truncate text-xs text-muted-foreground">{selected.cwd}</span>
-                  {selected.agent === "codex" && !selected.providerSessionId ? (
-                    <span className="ml-auto shrink-0 text-[11px] text-amber-500">Resume saves after first prompt</span>
-                  ) : null}
                 </header>
                 <div className="min-h-0 flex-1 bg-[#0d0d0d]">
                   {selected.running ? (
