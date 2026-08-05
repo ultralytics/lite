@@ -1,15 +1,27 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 export const LiteLogomark = ({ className = "size-4" }: { className?: string }) => (
-  <svg className={className} viewBox="0 0 512 512" role="img" aria-label="Lite">
+  <svg className={className} viewBox="0 0 640 640" role="img" aria-label="Lite">
     <title>Lite</title>
-    <path
-      d="M187 0C154.415 0 128 26.415 128 59V512H326V394H246V59C246 26.415 219.585 0 187 0Z"
-      fill="url(#lite-gradient)"
-    />
-    <circle cx="326" cy="453" r="59" fill="#0B23A9" />
+    <g transform="translate(64 101.5)">
+      <path
+        d="M270.952 119.964l-.062 61.109c.209 83.395-67.867 151.455-151.018 151.361-33.029-.05-63.093-10.097-87.458-27.676 43.708 78.565 127.539 131.622 222.855 131.674 138.473-.126 252.937-112.839 255.122-251.381l-.03-.578c.127-3.192.003-62.264.159-64.879C510.345 53.863 456.594-.152 390.84.023c-66.058-.099-120.093 53.632-119.888 119.941Z"
+        fill="url(#lite-gradient)"
+      />
+      <path
+        d="M119.731 61.501C53.711 61.501 0 115.196 0 181.195c0 65.994 53.711 119.689 119.731 119.689 66.023 0 119.735-53.695 119.735-119.689 0-65.999-53.712-119.694-119.735-119.694Z"
+        fill="#0B23A9"
+      />
+    </g>
     <defs>
-      <linearGradient id="lite-gradient" x1="142" y1="480" x2="305" y2="32" gradientUnits="userSpaceOnUse">
+      <linearGradient
+        id="lite-gradient"
+        x1="144.465"
+        y1="432.322"
+        x2="418.535"
+        y2="128.61"
+        gradientUnits="userSpaceOnUse"
+      >
         <stop stopColor="#09DBF0" />
         <stop offset="1" stopColor="#0B23A9" />
       </linearGradient>
