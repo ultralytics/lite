@@ -18,8 +18,6 @@ use tauri_plugin_dialog::DialogExt;
 const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
-const MAX_CODEX_INPUT_CHARS: usize = 100_000;
-const MAX_CODEX_CANDIDATES: usize = 32;
 
 struct ProcessGuard(std::process::Child);
 
@@ -37,11 +35,8 @@ struct PtySession {
     run_id: String,
     pending_codex_root: Option<PathBuf>,
     codex_before: HashSet<String>,
-    codex_input: Vec<char>,
-    codex_cursor: usize,
     codex_escape: String,
     codex_bracketed_paste: bool,
-    codex_candidates: Vec<String>,
     codex_discovery_started: bool,
 }
 
@@ -577,7 +572,7 @@ fn codex_usage() -> Result<UsageSnapshot, String> {
     })
 }
 
-fn codex_threads(cwd: &Path) -> Result<HashMap<String, String>, String> {
+fn codex_threads(cwd: &Path) -> Result<HashSet<String>, String> {
     let responses = codex_requests(&[(
         3,
         "thread/list",
@@ -589,12 +584,7 @@ fn codex_threads(cwd: &Path) -> Result<HashMap<String, String>, String> {
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|thread| {
-            Some((
-                thread.get("id")?.as_str()?.to_owned(),
-                thread.get("preview")?.as_str()?.trim().to_owned(),
-            ))
-        })
+        .filter_map(|thread| thread.get("id")?.as_str().map(str::to_owned))
         .collect())
 }
 
@@ -617,28 +607,30 @@ fn discover_codex_session(
     thread::spawn(move || {
         for delay in [500, 1_000, 2_000, 4_000] {
             thread::sleep(Duration::from_millis(delay));
-            let candidates = app.state::<Sessions>().0.lock().ok().and_then(|sessions| {
-                sessions
-                    .get(&session_id)
-                    .filter(|session| session.run_id == run_id)
-                    .map(|session| session.codex_candidates.clone())
-            });
-            let Some(candidates) = candidates else {
+            let active = app
+                .state::<Sessions>()
+                .0
+                .lock()
+                .ok()
+                .is_some_and(|sessions| {
+                    sessions
+                        .get(&session_id)
+                        .is_some_and(|session| session.run_id == run_id)
+                });
+            if !active {
                 return;
-            };
+            }
             let Ok(after) = codex_threads(&cwd) else {
                 continue;
             };
-            let mut matches = after
-                .iter()
-                .filter(|(id, preview)| !before.contains(*id) && candidates.contains(preview))
-                .map(|(id, _)| id.clone());
+            let mut matches = after.iter().filter(|id| !before.contains(*id));
             let Some(exact_id) = matches.next() else {
                 continue;
             };
             if matches.next().is_some() {
                 break;
             }
+            let exact_id = exact_id.clone();
             let root = if let Ok(mut sessions) = app.state::<Sessions>().0.lock() {
                 let Some(session) = sessions.get_mut(&session_id) else {
                     return;
@@ -674,15 +666,6 @@ fn discover_codex_session(
 
 fn apply_codex_escape(session: &mut PtySession) {
     match session.codex_escape.as_str() {
-        "\u{1b}[D" => session.codex_cursor = session.codex_cursor.saturating_sub(1),
-        "\u{1b}[C" => {
-            session.codex_cursor = (session.codex_cursor + 1).min(session.codex_input.len())
-        }
-        "\u{1b}[H" | "\u{1b}[1~" => session.codex_cursor = 0,
-        "\u{1b}[F" | "\u{1b}[4~" => session.codex_cursor = session.codex_input.len(),
-        "\u{1b}[3~" if session.codex_cursor < session.codex_input.len() => {
-            session.codex_input.remove(session.codex_cursor);
-        }
         "\u{1b}[200~" => session.codex_bracketed_paste = true,
         "\u{1b}[201~" => session.codex_bracketed_paste = false,
         _ => {}
@@ -690,7 +673,8 @@ fn apply_codex_escape(session: &mut PtySession) {
     session.codex_escape.clear();
 }
 
-fn capture_codex_input(session: &mut PtySession, data: &[u8]) {
+fn capture_codex_submission(session: &mut PtySession, data: &[u8]) -> bool {
+    let mut submitted = false;
     for character in String::from_utf8_lossy(data).chars() {
         if !session.codex_escape.is_empty() {
             session.codex_escape.push(character);
@@ -704,67 +688,11 @@ fn capture_codex_input(session: &mut PtySession, data: &[u8]) {
         }
         match character {
             '\u{1b}' => session.codex_escape.push(character),
-            '\u{1}' => session.codex_cursor = 0,
-            '\u{2}' => session.codex_cursor = session.codex_cursor.saturating_sub(1),
-            '\u{4}' if session.codex_cursor < session.codex_input.len() => {
-                session.codex_input.remove(session.codex_cursor);
-            }
-            '\u{5}' => session.codex_cursor = session.codex_input.len(),
-            '\u{6}' => {
-                session.codex_cursor = (session.codex_cursor + 1).min(session.codex_input.len())
-            }
-            '\u{b}' => session.codex_input.truncate(session.codex_cursor),
-            '\u{15}' => {
-                session.codex_input.drain(..session.codex_cursor);
-                session.codex_cursor = 0;
-            }
-            '\u{17}' => {
-                while session.codex_cursor > 0
-                    && session.codex_input[session.codex_cursor - 1].is_whitespace()
-                {
-                    session.codex_cursor -= 1;
-                    session.codex_input.remove(session.codex_cursor);
-                }
-                while session.codex_cursor > 0
-                    && !session.codex_input[session.codex_cursor - 1].is_whitespace()
-                {
-                    session.codex_cursor -= 1;
-                    session.codex_input.remove(session.codex_cursor);
-                }
-            }
-            '\r' | '\n' => {
-                if session.codex_bracketed_paste {
-                    if session.codex_input.len() < MAX_CODEX_INPUT_CHARS {
-                        session.codex_input.insert(session.codex_cursor, '\n');
-                        session.codex_cursor += 1;
-                    }
-                    continue;
-                }
-                let prompt = session.codex_input.iter().collect::<String>();
-                let prompt = prompt.trim();
-                if !prompt.is_empty() && !session.codex_candidates.iter().any(|item| item == prompt)
-                {
-                    if session.codex_candidates.len() == MAX_CODEX_CANDIDATES {
-                        session.codex_candidates.remove(0);
-                    }
-                    session.codex_candidates.push(prompt.to_owned());
-                }
-                session.codex_input.clear();
-                session.codex_cursor = 0;
-            }
-            '\u{7f}' | '\u{8}' if session.codex_cursor > 0 => {
-                session.codex_cursor -= 1;
-                session.codex_input.remove(session.codex_cursor);
-            }
-            character
-                if !character.is_control() && session.codex_input.len() < MAX_CODEX_INPUT_CHARS =>
-            {
-                session.codex_input.insert(session.codex_cursor, character);
-                session.codex_cursor += 1;
-            }
+            '\r' | '\n' if !session.codex_bracketed_paste => submitted = true,
             _ => {}
         }
     }
+    submitted
 }
 
 #[cfg(unix)]
@@ -880,7 +808,7 @@ async fn spawn_session(
         None
     };
     let codex_before = if codex_new {
-        codex_threads(&cwd)?.into_keys().collect()
+        codex_threads(&cwd)?
     } else {
         HashSet::new()
     };
@@ -935,11 +863,8 @@ async fn spawn_session(
                 run_id: run_id.clone(),
                 pending_codex_root: codex_new.then(|| cwd.clone()),
                 codex_before,
-                codex_input: Vec::new(),
-                codex_cursor: 0,
                 codex_escape: String::new(),
                 codex_bracketed_paste: false,
-                codex_candidates: Vec::new(),
                 codex_discovery_started: false,
             },
         );
@@ -1020,8 +945,8 @@ fn write_session(
     session.writer.flush().map_err(|error| error.to_string())?;
     let mut discovery = None;
     if session.pending_codex_root.is_some() {
-        capture_codex_input(session, &data);
-        if !session.codex_discovery_started && !session.codex_candidates.is_empty() {
+        let submitted = capture_codex_submission(session, &data);
+        if !session.codex_discovery_started && submitted {
             let cwd = session.pending_codex_root.clone().expect("checked above");
             session.codex_discovery_started = true;
             discovery = Some((session.run_id.clone(), cwd, session.codex_before.clone()));
