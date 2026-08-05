@@ -275,13 +275,21 @@ function App() {
   async function closeSession(session: Session) {
     runs.current.delete(session.id);
     await invoke("stop_session", { sessionId: session.id });
-    await Promise.all([
-      invoke("delete_session_data", { sessionId: session.id }),
-      invoke("revoke_directory", { rootId: session.rootId }),
-    ]);
+    let cleanupError = "";
+    try {
+      await invoke("delete_session_data", { sessionId: session.id });
+    } catch (reason) {
+      cleanupError = String(reason);
+    }
+    try {
+      await invoke("revoke_directory", { rootId: session.rootId });
+    } catch (reason) {
+      cleanupError ||= String(reason);
+    }
     clearOutput(session.id);
     setSessions((current) => current.filter((item) => item.id !== session.id));
     if (selectedId === session.id) setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
+    if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
   return (

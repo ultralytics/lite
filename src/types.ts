@@ -19,6 +19,11 @@ export interface FileEntry {
   isSymlink: boolean;
 }
 
+export interface DirectoryListing {
+  entries: FileEntry[];
+  nextOffset: number | null;
+}
+
 export interface GitStatus {
   branch: string;
   worktree: string;

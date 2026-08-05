@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
 const MAX_FILE_BYTES: u64 = 500_000;
-const MAX_DIRECTORY_ENTRIES: usize = 1_000;
+const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
 
 struct ProcessGuard(std::process::Child);
@@ -120,6 +120,13 @@ struct FileEntry {
     path: String,
     is_directory: bool,
     is_symlink: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirectoryListing {
+    entries: Vec<FileEntry>,
+    next_offset: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -1039,7 +1046,8 @@ async fn list_directory(
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
-) -> Result<Vec<FileEntry>, String> {
+    offset: usize,
+) -> Result<DirectoryListing, String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
     let mut entries = fs::read_dir(path)
@@ -1062,15 +1070,21 @@ async fn list_directory(
                 is_symlink: file_type.is_symlink(),
             })
         })
-        .take(MAX_DIRECTORY_ENTRIES)
+        .skip(offset)
+        .take(DIRECTORY_PAGE_SIZE + 1)
         .collect::<Vec<_>>();
+    let next_offset = (entries.len() > DIRECTORY_PAGE_SIZE).then_some(offset + DIRECTORY_PAGE_SIZE);
+    entries.truncate(DIRECTORY_PAGE_SIZE);
     entries.sort_by(|left, right| {
         right
             .is_directory
             .cmp(&left.is_directory)
             .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
     });
-    Ok(entries)
+    Ok(DirectoryListing {
+        entries,
+        next_offset,
+    })
 }
 
 #[tauri::command]

@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { FileEntry, GitStatus, Session } from "@/types";
+import type { DirectoryListing, FileEntry, GitStatus, Session } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
@@ -45,16 +45,26 @@ function Meter({ value }: { value: number }) {
 }
 
 function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOpen: (entry: FileEntry) => void }) {
-  const [children, setChildren] = useState<Record<string, FileEntry[]>>({});
+  const [children, setChildren] = useState<Record<string, DirectoryListing>>({});
   const [expanded, setExpanded] = useState(() => new Set<string>());
 
   const load = useCallback(
-    async (path: string) => {
-      const entries = await invoke<FileEntry[]>("list_directory", {
+    async (path: string, offset = 0) => {
+      const listing = await invoke<DirectoryListing>("list_directory", {
         rootId,
         path,
+        offset,
       });
-      setChildren((current) => ({ ...current, [path]: entries }));
+      setChildren((current) => ({
+        ...current,
+        [path]:
+          offset === 0
+            ? listing
+            : {
+                entries: [...(current[path]?.entries ?? []), ...listing.entries],
+                nextOffset: listing.nextOffset,
+              },
+      }));
     },
     [rootId],
   );
@@ -70,32 +80,48 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
   }
 
   function rows(path: string, depth = 0): React.ReactNode {
-    return children[path]?.map((entry) => (
-      <div key={entry.path}>
-        <button
-          type="button"
-          className="flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-xs hover:bg-muted"
-          style={{ paddingLeft: `${8 + depth * 14}px` }}
-          onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
-        >
-          {entry.isDirectory ? (
-            <>
-              <ChevronRight
-                className={`size-3.5 text-muted-foreground transition-transform ${expanded.has(entry.path) ? "rotate-90" : ""}`}
-              />
-              <Folder className="size-3.5 fill-current text-muted-foreground" />
-            </>
-          ) : (
-            <>
-              <span className="w-3.5" />
-              <File className="size-3.5 text-muted-foreground" />
-            </>
-          )}
-          <span className="truncate">{entry.name}</span>
-        </button>
-        {entry.isDirectory && expanded.has(entry.path) ? rows(entry.path, depth + 1) : null}
-      </div>
-    ));
+    const listing = children[path];
+    if (!listing) return null;
+    return (
+      <>
+        {listing.entries.map((entry) => (
+          <div key={entry.path}>
+            <button
+              type="button"
+              className="flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-xs hover:bg-muted"
+              style={{ paddingLeft: `${8 + depth * 14}px` }}
+              onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
+            >
+              {entry.isDirectory ? (
+                <>
+                  <ChevronRight
+                    className={`size-3.5 text-muted-foreground transition-transform ${expanded.has(entry.path) ? "rotate-90" : ""}`}
+                  />
+                  <Folder className="size-3.5 fill-current text-muted-foreground" />
+                </>
+              ) : (
+                <>
+                  <span className="w-3.5" />
+                  <File className="size-3.5 text-muted-foreground" />
+                </>
+              )}
+              <span className="truncate">{entry.name}</span>
+            </button>
+            {entry.isDirectory && expanded.has(entry.path) ? rows(entry.path, depth + 1) : null}
+          </div>
+        ))}
+        {listing.nextOffset !== null ? (
+          <button
+            type="button"
+            className="h-7 w-full rounded-md pr-2 text-left text-xs text-muted-foreground hover:bg-muted"
+            style={{ paddingLeft: `${30 + depth * 14}px` }}
+            onClick={() => void load(path, listing.nextOffset ?? 0)}
+          >
+            Load more…
+          </button>
+        ) : null}
+      </>
+    );
   }
 
   const parts = root.split(/[\\/]/).filter(Boolean);
