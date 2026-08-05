@@ -269,7 +269,7 @@ function App() {
     setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
     await invoke("stop_session", { sessionId: session.id });
     clearOutput(session.id);
-    await launch({ ...session, running: false }, true);
+    await launch({ ...session, running: false }, session.agent !== "codex" || Boolean(session.providerSessionId));
   }
 
   async function closeSession(session: Session) {

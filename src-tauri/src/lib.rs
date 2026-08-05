@@ -123,7 +123,6 @@ struct FileEntry {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitStatus {
-    root: String,
     branch: String,
     worktree: String,
     changes: Vec<String>,
@@ -150,7 +149,17 @@ pub struct UsageSnapshot {
 }
 
 fn path_text(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        if let Some(path) = path.strip_prefix("\\\\?\\UNC\\") {
+            return format!("\\\\{path}");
+        }
+        if let Some(path) = path.strip_prefix("\\\\?\\") {
+            return path.to_owned();
+        }
+    }
+    path.into_owned()
 }
 
 fn root_path(roots: &Roots, root_id: &str) -> Result<PathBuf, String> {
@@ -200,7 +209,7 @@ fn is_sensitive_path(root: &Path, path: &Path) -> bool {
 fn command_output(directory: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .arg("-C")
-        .arg(directory)
+        .arg(path_text(directory))
         .args(args)
         .output()
         .map_err(|error| error.to_string())?;
@@ -523,11 +532,10 @@ fn codex_usage() -> Result<UsageSnapshot, String> {
 }
 
 fn codex_threads(cwd: &Path) -> Result<HashMap<String, String>, String> {
-    let cwd = path_text(cwd);
     let responses = codex_requests(&[(
         3,
         "thread/list",
-        serde_json::json!({"limit": 100, "sortKey": "created_at"}),
+        serde_json::json!({"cwd": path_text(cwd), "limit": 100, "sortKey": "created_at"}),
     )])?;
     Ok(responses
         .get(&3)
@@ -535,9 +543,6 @@ fn codex_threads(cwd: &Path) -> Result<HashMap<String, String>, String> {
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|thread| {
-            thread.get("cwd").and_then(serde_json::Value::as_str) == Some(cwd.as_str())
-        })
         .filter_map(|thread| {
             Some((
                 thread.get("id")?.as_str()?.to_owned(),
@@ -818,7 +823,7 @@ async fn spawn_session(
         let settings = claude_settings(&app, &session_id)?;
         command.args(["--settings", &path_text(&settings)]);
     }
-    command.cwd(&cwd);
+    command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
     let child = pair.slave.spawn_command(command).map_err(|error| {
         if agent == "shell" {
@@ -1058,13 +1063,12 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
     let branch = command_output(&path, &["branch", "--show-current"])?;
     let status = command_output(&path, &["status", "--short"])?;
     Ok(Some(GitStatus {
-        root,
         branch: if branch.is_empty() {
             "Detached HEAD".into()
         } else {
             branch
         },
-        worktree: path_text(&path),
+        worktree: root,
         changes: status.lines().map(str::to_owned).collect(),
     }))
 }

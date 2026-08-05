@@ -20,7 +20,6 @@ export interface FileEntry {
 }
 
 export interface GitStatus {
-  root: string;
   branch: string;
   worktree: string;
   changes: string[];
