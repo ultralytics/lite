@@ -19,9 +19,15 @@ export interface FileEntry {
   isSymlink: boolean;
 }
 
+export interface DirectoryCursor {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+}
+
 export interface DirectoryListing {
   entries: FileEntry[];
-  nextOffset: number | null;
+  nextCursor: DirectoryCursor | null;
 }
 
 export interface GitStatus {

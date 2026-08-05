@@ -1,6 +1,6 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronRight, File, FileCode2, Folder, GitBranch, RefreshCw, X } from "lucide-react";
 
@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import type { DirectoryListing, FileEntry, GitStatus, Session } from "@/types";
+import type { DirectoryCursor, DirectoryListing, FileEntry, GitStatus, Session } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
@@ -45,26 +45,27 @@ function Meter({ value }: { value: number }) {
 }
 
 function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOpen: (entry: FileEntry) => void }) {
-  const [children, setChildren] = useState<Record<string, DirectoryListing>>({});
+  const [children, setChildren] = useState<Record<string, DirectoryListing & { after: DirectoryCursor | null }>>({});
   const [expanded, setExpanded] = useState(() => new Set<string>());
+  const loading = useRef(new Set<string>());
+  const [loadingPaths, setLoadingPaths] = useState(() => new Set<string>());
 
   const load = useCallback(
-    async (path: string, offset = 0) => {
-      const listing = await invoke<DirectoryListing>("list_directory", {
-        rootId,
-        path,
-        offset,
-      });
-      setChildren((current) => ({
-        ...current,
-        [path]:
-          offset === 0
-            ? listing
-            : {
-                entries: [...(current[path]?.entries ?? []), ...listing.entries],
-                nextOffset: listing.nextOffset,
-              },
-      }));
+    async (path: string, after: DirectoryCursor | null = null) => {
+      if (loading.current.has(path)) return;
+      loading.current.add(path);
+      setLoadingPaths((current) => new Set(current).add(path));
+      try {
+        const listing = await invoke<DirectoryListing>("list_directory", { rootId, path, after });
+        setChildren((current) => ({ ...current, [path]: { ...listing, after } }));
+      } finally {
+        loading.current.delete(path);
+        setLoadingPaths((current) => {
+          const next = new Set(current);
+          next.delete(path);
+          return next;
+        });
+      }
     },
     [rootId],
   );
@@ -110,15 +111,28 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
             {entry.isDirectory && expanded.has(entry.path) ? rows(entry.path, depth + 1) : null}
           </div>
         ))}
-        {listing.nextOffset !== null ? (
-          <button
-            type="button"
-            className="h-7 w-full rounded-md pr-2 text-left text-xs text-muted-foreground hover:bg-muted"
-            style={{ paddingLeft: `${30 + depth * 14}px` }}
-            onClick={() => void load(path, listing.nextOffset ?? 0)}
-          >
-            Load more…
-          </button>
+        {listing.after || listing.nextCursor ? (
+          <div className="flex h-7 items-center gap-3 pr-2 text-xs" style={{ paddingLeft: `${30 + depth * 14}px` }}>
+            {listing.after ? (
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground"
+                onClick={() => void load(path)}
+              >
+                First page
+              </button>
+            ) : null}
+            {listing.nextCursor ? (
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                disabled={loadingPaths.has(path)}
+                onClick={() => void load(path, listing.nextCursor)}
+              >
+                Next 250…
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </>
     );

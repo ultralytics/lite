@@ -3,7 +3,7 @@
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -113,7 +113,7 @@ struct DirectoryGrant {
     path: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FileEntry {
     name: String,
@@ -122,11 +122,27 @@ struct FileEntry {
     is_symlink: bool,
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirectoryCursor {
+    name: String,
+    path: String,
+    is_directory: bool,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectoryListing {
     entries: Vec<FileEntry>,
-    next_offset: Option<usize>,
+    next_cursor: Option<DirectoryCursor>,
+}
+
+fn directory_key(name: &str, path: &str, is_directory: bool) -> (u8, String, String) {
+    (
+        u8::from(!is_directory),
+        name.to_lowercase(),
+        path.to_owned(),
+    )
 }
 
 #[derive(Serialize)]
@@ -1046,44 +1062,54 @@ async fn list_directory(
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
-    offset: usize,
+    after: Option<DirectoryCursor>,
 ) -> Result<DirectoryListing, String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
-    let mut entries = fs::read_dir(path)
-        .map_err(|error| error.to_string())?
-        .filter_map(Result::ok)
-        .filter_map(|entry| {
-            let file_type = entry.file_type().ok()?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if name == ".git"
-                || name == "node_modules"
-                || name == "target"
-                || is_sensitive_path(&root, &entry.path())
-            {
-                return None;
-            }
-            Some(FileEntry {
-                name,
-                path: path_text(&entry.path()),
-                is_directory: file_type.is_dir(),
-                is_symlink: file_type.is_symlink(),
-            })
-        })
-        .skip(offset)
-        .take(DIRECTORY_PAGE_SIZE + 1)
-        .collect::<Vec<_>>();
-    let next_offset = (entries.len() > DIRECTORY_PAGE_SIZE).then_some(offset + DIRECTORY_PAGE_SIZE);
-    entries.truncate(DIRECTORY_PAGE_SIZE);
-    entries.sort_by(|left, right| {
-        right
-            .is_directory
-            .cmp(&left.is_directory)
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    let after = after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
+    let mut page = BTreeMap::new();
+    let mut has_more = false;
+    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+        let Ok(entry) = entry else { continue };
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name == ".git"
+            || name == "node_modules"
+            || name == "target"
+            || is_sensitive_path(&root, &entry.path())
+        {
+            continue;
+        }
+        let entry = FileEntry {
+            name,
+            path: path_text(&entry.path()),
+            is_directory: file_type.is_dir(),
+            is_symlink: file_type.is_symlink(),
+        };
+        let key = directory_key(&entry.name, &entry.path, entry.is_directory);
+        if after.as_ref().is_some_and(|after| key <= *after) {
+            continue;
+        }
+        page.insert(key, entry);
+        if page.len() > DIRECTORY_PAGE_SIZE {
+            page.pop_last();
+            has_more = true;
+        }
+    }
+    let entries = page.into_values().collect::<Vec<_>>();
+    let next_cursor = has_more.then(|| {
+        let entry = entries.last().expect("a truncated page is not empty");
+        DirectoryCursor {
+            name: entry.name.clone(),
+            path: entry.path.clone(),
+            is_directory: entry.is_directory,
+        }
     });
     Ok(DirectoryListing {
         entries,
-        next_offset,
+        next_cursor,
     })
 }
 
