@@ -1314,6 +1314,20 @@ async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), 
         }
         _ => return Err("No setup guide for this session type".into()),
     };
+    open_external(url)
+}
+
+// Terminals make their links clickable, and a provider's sign-in URL is the reason people want that.
+// Only web schemes open, so terminal output cannot talk the browser into anything else.
+#[tauri::command]
+async fn open_url(url: String) -> Result<(), String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("Only web links can be opened".into());
+    }
+    open_external(&url)
+}
+
+fn open_external(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
     #[cfg(target_os = "windows")]
@@ -1330,7 +1344,7 @@ async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), 
         .stderr(Stdio::null())
         .status()
         .map(|_| ())
-        .map_err(|error| format!("Could not open the setup guide: {error}"))
+        .map_err(|error| format!("Could not open the link: {error}"))
 }
 
 #[tauri::command]
@@ -1894,6 +1908,7 @@ pub fn run() {
             read_usage,
             agent_availability,
             open_setup_docs,
+            open_url,
             provider_auth,
             save_api_key,
             delete_api_key,

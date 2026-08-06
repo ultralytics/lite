@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
@@ -59,6 +60,15 @@ const themes: Record<Theme, ITheme> = {
   },
 };
 
+const FONT_SIZE_KEY = "lite.terminal.fontSize";
+const MIN_FONT_SIZE = 9;
+const MAX_FONT_SIZE = 24;
+
+function storedFontSize(): number {
+  const saved = Number(localStorage.getItem(FONT_SIZE_KEY));
+  return saved >= MIN_FONT_SIZE && saved <= MAX_FONT_SIZE ? saved : 13;
+}
+
 export function TerminalView({ sessionId, theme }: { sessionId: string; theme: Theme }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -70,13 +80,20 @@ export function TerminalView({ sessionId, theme }: { sessionId: string; theme: T
     const terminal = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-      fontSize: 13,
+      fontSize: storedFontSize(),
       lineHeight: 1.25,
       scrollback: 5000,
     });
     terminalRef.current = terminal;
     const fit = new FitAddon();
     terminal.loadAddon(fit);
+    // Links go to the system browser, the way every other terminal handles them.
+    terminal.loadAddon(
+      new WebLinksAddon((event, url) => {
+        event.preventDefault();
+        void invoke("open_url", { url });
+      }),
+    );
     terminal.open(container);
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     const input = terminal.onData((data) => {
@@ -95,6 +112,17 @@ export function TerminalView({ sessionId, theme }: { sessionId: string; theme: T
     };
     const observer = new ResizeObserver(() => requestAnimationFrame(resize));
     observer.observe(container);
+    // Command and the zoom keys resize the type, as they do in a terminal app.
+    terminal.attachCustomKeyEventHandler((event) => {
+      if (event.type !== "keydown" || !(event.metaKey || event.ctrlKey)) return true;
+      const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
+      if (!step && event.key !== "0") return true;
+      const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminal.options.fontSize ?? 13) + step) : 13;
+      terminal.options.fontSize = size;
+      localStorage.setItem(FONT_SIZE_KEY, String(size));
+      requestAnimationFrame(resize);
+      return false;
+    });
     resize();
     terminal.focus();
 

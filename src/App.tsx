@@ -192,11 +192,35 @@ function App() {
   const [updateError, setUpdateError] = useState("");
   const runs = useRef(new Map<string, string>());
   const resumed = useRef("");
+  const sessionsRef = useRef<Session[]>([]);
+  const selectedRef = useRef<Session>(undefined);
+  const closeRef = useRef<(session: Session) => void>(() => {});
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
+  sessionsRef.current = sessions;
+  selectedRef.current = selected;
+  closeRef.current = (session) => void closeSession(session);
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!event.metaKey && !event.ctrlKey) return;
+      if (event.key === "n") setNewSessionOpen(true);
+      else if (event.key === ",") setSettingsOpen(true);
+      else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
+      else if (event.key >= "1" && event.key <= "9") {
+        const target = sessionsRef.current[Number(event.key) - 1];
+        if (!target) return;
+        setSelectedId(target.id);
+      } else return;
+      event.preventDefault();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(
