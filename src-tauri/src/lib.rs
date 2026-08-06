@@ -56,9 +56,11 @@ struct Roots(Mutex<HashMap<String, PathBuf>>);
 #[derive(Default)]
 struct ProviderSessions(Mutex<HashMap<String, String>>);
 
+// Discovery watches a harness session store for the entry a launch just created, so only launches of
+// the same harness have to queue. Kimi and Codex watch different stores and never block each other.
 #[derive(Default)]
-struct CodexDiscovery {
-    running: Mutex<bool>,
+struct SessionDiscovery {
+    running: Mutex<HashSet<String>>,
     ready: Condvar,
 }
 
@@ -845,25 +847,25 @@ fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool,
     })
 }
 
-fn begin_codex_discovery(discovery: &CodexDiscovery) -> Result<(), String> {
+fn begin_discovery(discovery: &SessionDiscovery, agent: &str) -> Result<(), String> {
     let mut running = discovery
         .running
         .lock()
         .map_err(|error| error.to_string())?;
-    while *running {
+    while running.contains(agent) {
         running = discovery
             .ready
             .wait(running)
             .map_err(|error| error.to_string())?;
     }
-    *running = true;
+    running.insert(agent.to_owned());
     Ok(())
 }
 
-fn finish_codex_discovery(discovery: &CodexDiscovery) {
+fn finish_discovery(discovery: &SessionDiscovery, agent: &str) {
     if let Ok(mut running) = discovery.running.lock() {
-        *running = false;
-        discovery.ready.notify_one();
+        running.remove(agent);
+        discovery.ready.notify_all();
     }
 }
 
@@ -967,7 +969,7 @@ fn deepseek_profile_exists(app: &AppHandle) -> bool {
     })
 }
 
-fn kimi_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
     std::env::var_os("KIMI_CODE_HOME")
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
@@ -980,30 +982,47 @@ fn kimi_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
             },
             Ok,
         )
-        .map(|home| home.join("sessions"))
 }
 
-// Kimi groups sessions by working directory under an opaque key, so every group is scanned instead.
-fn kimi_session_ids(app: &AppHandle) -> HashSet<String> {
+// Kimi groups sessions under an opaque per-directory key that its workspace index maps back to a path.
+fn kimi_workspace_key(app: &AppHandle, cwd: &Path) -> Option<String> {
+    let bytes = fs::read(kimi_home(app).ok()?.join("workspaces.json")).ok()?;
+    let index: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    index
+        .get("workspaces")?
+        .as_object()?
+        .iter()
+        .find(|(key, workspace)| {
+            is_provider_session_id(key)
+                && workspace
+                    .get("root")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|root| fs::canonicalize(root).ok())
+                    .is_some_and(|root| root == cwd)
+        })
+        .map(|(key, _)| key.clone())
+}
+
+// Only this directory's group is read, so a Kimi session started elsewhere is never claimed by this tab.
+fn kimi_session_ids(app: &AppHandle, cwd: &Path) -> HashSet<String> {
     let mut ids = HashSet::new();
-    let Ok(groups) = kimi_sessions_path(app)
-        .and_then(|path| fs::read_dir(path).map_err(|error| error.to_string()))
-    else {
+    let Some(key) = kimi_workspace_key(app, cwd) else {
         return ids;
     };
-    for group in groups.flatten() {
-        let Ok(sessions) = fs::read_dir(group.path()) else {
+    let Ok(home) = kimi_home(app) else {
+        return ids;
+    };
+    let Ok(sessions) = fs::read_dir(home.join("sessions").join(key)) else {
+        return ids;
+    };
+    for session in sessions.flatten() {
+        if !session.file_type().is_ok_and(|kind| kind.is_dir()) {
             continue;
-        };
-        for session in sessions.flatten() {
-            if !session.file_type().is_ok_and(|kind| kind.is_dir()) {
-                continue;
-            }
-            if let Some(name) = session.file_name().to_str()
-                && is_provider_session_id(name)
-            {
-                ids.insert(name.to_owned());
-            }
+        }
+        if let Some(name) = session.file_name().to_str()
+            && is_provider_session_id(name)
+        {
+            ids.insert(name.to_owned());
         }
     }
     ids
@@ -1114,7 +1133,7 @@ async fn agent_availability(
                 String::new()
             } else {
                 format!(
-                    "Add a DeepSeek provider to your Codex configuration. Lite launches `{DEEPSEEK_MODEL}` through it and never stores your key."
+                    "Add a DeepSeek provider to your Codex configuration, ideally as a `{DEEPSEEK_PROFILE}` profile without any login-method keys, which sign you out of ChatGPT. Lite launches `{DEEPSEEK_MODEL}` through it and never stores your key."
                 )
             },
         });
@@ -1164,7 +1183,7 @@ async fn spawn_session(
     roots: State<'_, Roots>,
     provider_sessions: State<'_, ProviderSessions>,
     codex_server: State<'_, CodexServer>,
-    codex_discovery: State<'_, CodexDiscovery>,
+    discovery: State<'_, SessionDiscovery>,
     session_id: String,
     run_id: String,
     root_id: String,
@@ -1229,7 +1248,7 @@ async fn spawn_session(
     // A Kimi session the user deleted should start a new one instead of failing the terminal.
     if agent == "kimi"
         && let Some(known) = provider_session_id.as_deref()
-        && !kimi_session_ids(&app).contains(known)
+        && !kimi_session_ids(&app, &cwd).contains(known)
     {
         update_provider_session(&app, &provider_sessions, &session_id, None)?;
         provider_session_id = None;
@@ -1250,16 +1269,16 @@ async fn spawn_session(
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
     let known_sessions = if provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
-        begin_codex_discovery(&codex_discovery)?;
+        begin_discovery(&discovery, &agent)?;
         let known = if agent == "kimi" {
-            Ok(kimi_session_ids(&app))
+            Ok(kimi_session_ids(&app, &cwd))
         } else {
             codex_thread_ids(&codex_server, &cwd)
         };
         match known {
             Ok(known) => Some(known),
             Err(error) => {
-                finish_codex_discovery(&codex_discovery);
+                finish_discovery(&discovery, &agent);
                 return Err(error);
             }
         }
@@ -1270,7 +1289,7 @@ async fn spawn_session(
         Ok(child) => child,
         Err(error) => {
             if known_sessions.is_some() {
-                finish_codex_discovery(&codex_discovery);
+                finish_discovery(&discovery, &agent);
             }
             return Err(if agent == "shell" {
                 error.to_string()
@@ -1288,7 +1307,7 @@ async fn spawn_session(
             let _ = child.kill();
             let _ = child.wait();
             if known_sessions.is_some() {
-                finish_codex_discovery(&codex_discovery);
+                finish_discovery(&discovery, &agent);
             }
             return Err(error.to_string());
         }
@@ -1299,7 +1318,7 @@ async fn spawn_session(
             let _ = child.kill();
             let _ = child.wait();
             if known_sessions.is_some() {
-                finish_codex_discovery(&codex_discovery);
+                finish_discovery(&discovery, &agent);
             }
             return Err(error.to_string());
         }
@@ -1310,7 +1329,7 @@ async fn spawn_session(
             let _ = child.kill();
             let _ = child.wait();
             if known_sessions.is_some() {
-                finish_codex_discovery(&codex_discovery);
+                finish_discovery(&discovery, &agent);
             }
             return Err(error.to_string());
         }
@@ -1383,7 +1402,7 @@ async fn spawn_session(
         thread::spawn(move || {
             loop {
                 let current = if discovery_agent == "kimi" {
-                    Ok(kimi_session_ids(&discovery_app))
+                    Ok(kimi_session_ids(&discovery_app, &cwd))
                 } else {
                     codex_thread_ids(&discovery_app.state::<CodexServer>(), &cwd)
                 };
@@ -1409,7 +1428,7 @@ async fn spawn_session(
                 }
                 thread::sleep(Duration::from_secs(1));
             }
-            finish_codex_discovery(&discovery_app.state::<CodexDiscovery>());
+            finish_discovery(&discovery_app.state::<SessionDiscovery>(), &discovery_agent);
         });
     }
 
@@ -1701,7 +1720,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sessions::default())
-        .manage(CodexDiscovery::default())
+        .manage(SessionDiscovery::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));

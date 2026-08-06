@@ -70,7 +70,20 @@ Install the provider CLIs you want to use:
 
 Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never copies or stores those tokens. The new-session dialog tells you when a CLI is missing and links to its setup guide.
 
-**Codex · DeepSeek** runs the Codex harness against DeepSeek instead of OpenAI. Configure the DeepSeek provider in your own [Codex configuration](https://api-docs.deepseek.com/quick_start/agent_integrations/codex) — either a `deepseek` provider in `config.toml` or a `deepseek.config.toml` profile in `$CODEX_HOME`. Lite selects it per launch, so your default Codex provider and existing OpenAI sessions are untouched, and it never reads or stores the DeepSeek key.
+**Codex · DeepSeek** runs the Codex harness against DeepSeek instead of OpenAI. Configure the DeepSeek provider in your own [Codex configuration](https://api-docs.deepseek.com/quick_start/agent_integrations/codex) — a `deepseek.config.toml` profile in `$CODEX_HOME` is cleanest:
+
+```toml
+model = "deepseek-v4-flash"
+model_provider = "deepseek"
+
+[model_providers.deepseek]
+name = "deepseek"
+base_url = "https://api.deepseek.com/"
+wire_api = "responses"
+experimental_bearer_token = "<your DeepSeek API key>"
+```
+
+Leave `preferred_auth_method` and `forced_login_method` out. Codex applies those globally, and setting them signs you out of ChatGPT the next time it runs. Lite selects the DeepSeek provider per launch, so your default Codex provider and existing OpenAI sessions are untouched, and it never reads or stores the DeepSeek key.
 
 Choose a project folder, create a session, and work. Lite saves only the local metadata needed to restore tabs; provider conversation history remains owned by the provider CLI.
 
