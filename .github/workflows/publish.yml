@@ -42,7 +42,7 @@ jobs:
             RELEASE_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$TAG" \
               -f name="Lite $TAG" \
-              -f body="Download the installer for your operating system below. Lite runs locally and uses your existing Claude Code and Codex authentication." \
+              -f body="Download the installer for your operating system below. Lite runs locally and uses your existing Claude Code and Codex authentication. The release includes a cross-platform source and dependency SBOM." \
               -f target_commitish="$GITHUB_SHA" \
               -F draft=true \
               -F generate_release_notes=true \
