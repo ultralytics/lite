@@ -39,6 +39,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Inspector } from "@/inspector";
@@ -439,6 +440,7 @@ function App() {
           <LiteLogomark className="size-5" />
           {selected ? (
             <>
+              <Separator orientation="vertical" className="mx-1 h-4" />
               <ProviderIcon agent={selected.agent} provider={selected.provider} />
               <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
