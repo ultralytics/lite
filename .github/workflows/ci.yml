@@ -33,4 +33,4 @@ jobs:
       - run: bun ci
       - run: bun run check
       - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
-      - run: bun run tauri build --debug
+      - run: bun run tauri build --debug --config '{"bundle":{"createUpdaterArtifacts":false}}'
