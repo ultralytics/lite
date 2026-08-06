@@ -20,14 +20,14 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 ## ✨ Features
 
 - Run Claude Code, Codex, and shell sessions side by side
-- Resume session tabs after closing Lite or restarting your computer
+- Resume session tabs automatically after closing Lite or restarting your computer
 - Authenticate once with each provider and reuse its existing local credentials
 - Browse files on demand with syntax highlighting for popular languages
 - Preview rendered Markdown safely alongside source files
 - See the active Git branch, worktree, and changed files
 - Inspect per-session context and provider usage reported by Claude or Codex
 - Install signed updates from inside Lite
-- Switch between light and dark themes
+- Switch between light and dark themes, terminal and code preview included
 
 Lite is intentionally quiet: idle means idle. It does not index your repository, watch every file, read provider tokens, or send telemetry.
 
@@ -57,7 +57,7 @@ chmod +x Lite_0.0.2_linux_amd64.AppImage
 ./Lite_0.0.2_linux_amd64.AppImage
 ```
 
-After installing 0.0.2, use the update button beside the theme switch to check for signed updates, install them, and restart Lite. Lite never checks for updates in the background.
+After installing 0.0.2, open the Lite menu in the top bar and choose **Check for updates** to install signed updates and restart Lite. Lite never checks for updates in the background.
 
 ## 🚀 First Run
 

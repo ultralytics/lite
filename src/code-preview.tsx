@@ -22,7 +22,6 @@ import yaml from "highlight.js/lib/languages/yaml";
 import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import "highlight.js/styles/github-dark.css";
 
 const languages = {
   bash,
@@ -119,7 +118,7 @@ export default function CodePreview({ path, source }: { path: string; source: st
     );
   }
   return (
-    <pre className="min-h-full overflow-auto bg-[#0d0d0d] p-5 text-[13px] leading-5 text-zinc-200">
+    <pre className="min-h-full overflow-auto p-4 font-mono text-[12.5px] leading-5">
       <HighlightedCode source={source} language={extensionLanguages[extension]} />
     </pre>
   );

@@ -1,5 +1,15 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+import { SquareTerminal } from "lucide-react";
+
+import type { Agent } from "@/types";
+
+export const ProviderIcon = ({ agent, className = "size-4" }: { agent: Agent; className?: string }) => {
+  if (agent === "claude") return <ClaudeLogomark className={className} />;
+  if (agent === "codex") return <OpenAILogomark className={className} />;
+  return <SquareTerminal className={className} />;
+};
+
 export const LiteLogomark = ({ className = "size-4" }: { className?: string }) => (
   <svg className={className} viewBox="0 0 640 640" role="img" aria-label="Lite">
     <title>Lite</title>

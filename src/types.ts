@@ -2,6 +2,12 @@
 
 export type Agent = "claude" | "codex" | "shell";
 
+export const agentLabels: Record<Agent, string> = {
+  claude: "Claude Code",
+  codex: "Codex",
+  shell: "Shell",
+};
+
 export interface Session {
   id: string;
   agent: Agent;

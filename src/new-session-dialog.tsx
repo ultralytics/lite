@@ -1,10 +1,10 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { FolderOpen, TerminalSquare } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { ClaudeLogomark, OpenAILogomark } from "@/brand-icons";
+import { ProviderIcon } from "@/brand-icons";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,32 +15,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import type { Agent, Session } from "@/types";
+import { type Agent, agentLabels, type Session } from "@/types";
 
-const agents: {
-  id: Agent;
-  label: string;
-  description: string;
-  icon: React.ReactNode;
-}[] = [
-  {
-    id: "claude",
-    label: "Claude Code",
-    description: "Use your Anthropic account",
-    icon: <ClaudeLogomark className="size-5" />,
-  },
-  {
-    id: "codex",
-    label: "Codex",
-    description: "Use your OpenAI account",
-    icon: <OpenAILogomark className="size-5" />,
-  },
-  {
-    id: "shell",
-    label: "Shell",
-    description: "Open your default shell",
-    icon: <TerminalSquare className="size-5" />,
-  },
+const agents: { id: Agent; description: string }[] = [
+  { id: "claude", description: "Use your Anthropic account" },
+  { id: "codex", description: "Use your OpenAI account" },
+  { id: "shell", description: "Open your default shell" },
 ];
 
 interface DirectoryGrant {
@@ -126,11 +106,12 @@ export function NewSessionDialog({
             <button
               key={option.id}
               type="button"
+              aria-pressed={agent === option.id}
               onClick={() => setAgent(option.id)}
               className={`flex min-h-24 flex-col items-start gap-2 rounded-xl border p-3 text-left transition-colors ${agent === option.id ? "border-foreground bg-muted" : "hover:bg-muted/60"}`}
             >
-              {option.icon}
-              <span className="text-sm font-medium">{option.label}</span>
+              <ProviderIcon agent={option.id} className="size-5" />
+              <span className="text-sm font-medium">{agentLabels[option.id]}</span>
               <span className="text-xs leading-4 text-muted-foreground">{option.description}</span>
             </button>
           ))}
@@ -139,6 +120,7 @@ export function NewSessionDialog({
           <Input
             value={directory?.path ?? ""}
             readOnly
+            className="font-mono text-xs"
             placeholder="Choose a project folder"
             aria-label="Project folder"
           />
