@@ -1,5 +1,6 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+use atomicwrites::{AllowOverwrite, AtomicFile};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -303,17 +304,30 @@ fn load_codex_server(app: &AppHandle) -> Result<CodexServer, String> {
     })))
 }
 
-fn save_roots(app: &AppHandle, roots: &Roots) -> Result<(), String> {
-    let path = roots_path(app)?;
+fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
     if let Some(directory) = path.parent() {
         fs::create_dir_all(directory).map_err(|error| error.to_string())?;
     }
-    let roots = roots.0.lock().map_err(|error| error.to_string())?;
-    fs::write(
-        path,
-        serde_json::to_vec(&*roots).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
+    AtomicFile::new(path, AllowOverwrite)
+        .write(|file| file.write_all(contents))
+        .map_err(|error| error.to_string())
+}
+
+fn update_roots(
+    app: &AppHandle,
+    roots: &Roots,
+    update: impl FnOnce(&mut HashMap<String, PathBuf>),
+) -> Result<(), String> {
+    let path = roots_path(app)?;
+    let mut roots = roots.0.lock().map_err(|error| error.to_string())?;
+    let mut next = roots.clone();
+    update(&mut next);
+    write_atomic(
+        &path,
+        &serde_json::to_vec(&next).map_err(|error| error.to_string())?,
+    )?;
+    *roots = next;
+    Ok(())
 }
 
 fn update_provider_session(
@@ -324,7 +338,6 @@ fn update_provider_session(
 ) -> Result<(), String> {
     uuid::Uuid::parse_str(session_id).map_err(|_| "Invalid session ID")?;
     let directory = provider_sessions_path(app)?;
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let path = directory.join(session_id);
     let mut sessions = sessions.0.lock().map_err(|error| error.to_string())?;
     if let Some(provider_session_id) = provider_session_id {
@@ -333,20 +346,7 @@ fn update_provider_session(
                 return Ok(());
             }
         }
-        let temporary = directory.join(format!(".{session_id}.tmp"));
-        let mut file = fs::File::create(&temporary).map_err(|error| error.to_string())?;
-        file.write_all(provider_session_id.as_bytes())
-            .and_then(|()| file.sync_all())
-            .map_err(|error| error.to_string())?;
-        #[cfg(windows)]
-        if path.exists() {
-            fs::remove_file(&path).map_err(|error| error.to_string())?;
-        }
-        fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
-        #[cfg(unix)]
-        fs::File::open(&directory)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|error| error.to_string())?;
+        write_atomic(&path, provider_session_id.as_bytes())?;
         sessions.insert(session_id.to_owned(), provider_session_id);
     } else {
         match fs::remove_file(path) {
@@ -374,7 +374,6 @@ fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String>
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
-    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
     let settings_path = directory.join(format!("claude-{session_id}.json"));
     let usage_path = directory.join(format!("usage-{session_id}.json"));
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -383,11 +382,12 @@ fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String>
         shell_quote(&path_text(&executable)),
         shell_quote(&path_text(&usage_path))
     );
-    fs::write(
+    write_atomic(
         &settings_path,
-        serde_json::json!({ "statusLine": { "type": "command", "command": command } }).to_string(),
-    )
-    .map_err(|error| error.to_string())?;
+        serde_json::json!({ "statusLine": { "type": "command", "command": command } })
+            .to_string()
+            .as_bytes(),
+    )?;
     Ok(settings_path)
 }
 
@@ -435,11 +435,10 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
         lifetime_tokens: None,
         windows,
     };
-    fs::write(
-        path,
-        serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
+    write_atomic(
+        Path::new(path),
+        &serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?,
+    )?;
     if let Some(percent) = snapshot.context_used_percent {
         println!("Lite · {percent:.0}% context");
     } else {
@@ -467,12 +466,9 @@ async fn choose_directory(
         return Err("Credential and configuration folders cannot be opened".into());
     }
     let id = uuid::Uuid::new_v4().to_string();
-    roots
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(id.clone(), path.clone());
-    save_roots(&app, &roots)?;
+    update_roots(&app, &roots, |roots| {
+        roots.insert(id.clone(), path.clone());
+    })?;
     Ok(Some(DirectoryGrant {
         id,
         path: path_text(&path),
@@ -481,12 +477,9 @@ async fn choose_directory(
 
 #[tauri::command]
 fn revoke_directory(app: AppHandle, roots: State<Roots>, root_id: String) -> Result<(), String> {
-    roots
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .remove(&root_id);
-    save_roots(&app, &roots)
+    update_roots(&app, &roots, |roots| {
+        roots.remove(&root_id);
+    })
 }
 
 fn codex_exchange<S: Read + Write, F: FnOnce(&S) -> Result<(), String>>(
