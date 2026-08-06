@@ -126,6 +126,7 @@ jobs:
           format: spdx-json
           output-file: sbom.spdx.json
           path: .
+          syft-version: v1.50.0
           upload-artifact: false
           upload-release-assets: false
       - name: Validate and upload SBOM
