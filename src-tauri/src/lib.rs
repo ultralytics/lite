@@ -945,11 +945,61 @@ fn write_api_keys(app: &AppHandle, keys: &HashMap<String, String>) -> Result<(),
     Ok(())
 }
 
+// macOS keeps Claude Code's credentials in the login keychain; other platforms write a file. Presence is
+// all that is read here, never the credential itself.
+fn claude_signed_in(app: &AppHandle) -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app;
+        Command::new("security")
+            .args(["find-generic-password", "-s", "Claude Code-credentials"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        app.path()
+            .home_dir()
+            .is_ok_and(|home| home.join(".claude").join(".credentials.json").is_file())
+    }
+}
+
+fn cli_signed_in(app: &AppHandle, name: &str) -> bool {
+    match name {
+        "claude" => claude_signed_in(app),
+        "codex" => codex_home(app).is_ok_and(|home| home.join("auth.json").is_file()),
+        "deepseek" => deepseek_profile_exists(app) || codex_declares_deepseek(app),
+        "kimi" => kimi_home(app).is_ok_and(|home| home.join("config.toml").is_file()),
+        _ => false,
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderAuth {
+    name: String,
+    key_hint: Option<String>,
+    cli_signed_in: bool,
+}
+
 #[tauri::command]
-async fn saved_api_keys(app: AppHandle) -> Result<Vec<String>, String> {
-    let mut names = load_api_keys(&app).into_keys().collect::<Vec<_>>();
-    names.sort();
-    Ok(names)
+async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
+    let keys = load_api_keys(&app);
+    Ok(SUPPORTED_KEYS
+        .iter()
+        .map(|name| ProviderAuth {
+            name: (*name).to_owned(),
+            // Only the last characters travel to the interface, enough to tell two keys apart.
+            key_hint: keys.get(*name).map(|key| {
+                key.chars()
+                    .skip(key.chars().count().saturating_sub(4))
+                    .collect()
+            }),
+            cli_signed_in: cli_signed_in(&app, name),
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -1808,7 +1858,7 @@ pub fn run() {
             read_usage,
             agent_availability,
             open_setup_docs,
-            saved_api_keys,
+            provider_auth,
             save_api_key,
             delete_api_key,
             check_update,
