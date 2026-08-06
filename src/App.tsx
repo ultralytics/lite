@@ -3,7 +3,18 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { KeyRound, Moon, MoreHorizontal, Plus, RefreshCw, RotateCcw, SquareTerminal, Sun, X } from "lucide-react";
+import {
+  KeyRound,
+  Moon,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  SquareTerminal,
+  Sun,
+  Trash2,
+  X,
+} from "lucide-react";
 import { Component, lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { LiteLogomark, ProviderIcon } from "@/brand-icons";
@@ -102,8 +113,8 @@ function SessionRow({
       className={`group flex items-center rounded-lg pr-1 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2">
-        <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
-          <ProviderIcon agent={session.agent} provider={session.provider} />
+        <span className="relative flex size-8 shrink-0 items-center justify-center rounded-md border bg-background">
+          <ProviderIcon agent={session.agent} provider={session.provider} className="size-4.5" />
           {starting ? (
             <Spinner
               className={`absolute -right-1 -bottom-1 size-3 rounded-full bg-background text-muted-foreground ring-2 ${active ? "ring-sidebar-accent" : "ring-sidebar"}`}
@@ -147,32 +158,41 @@ function SessionRow({
           </button>
         )}
       </div>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              disabled={starting}
-              className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 aria-expanded:opacity-100"
-              aria-label={`Actions for ${session.name}`}
-            />
-          }
-        >
-          <MoreHorizontal />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-36">
-          <DropdownMenuItem onClick={() => setRenaming(true)}>Rename</DropdownMenuItem>
-          <DropdownMenuItem onClick={onRestart}>
+      <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={starting}
+                onClick={onRestart}
+                aria-label={`Restart ${session.name}`}
+              />
+            }
+          >
             <RotateCcw />
-            Restart
-          </DropdownMenuItem>
-          <DropdownMenuItem variant="destructive" onClick={onClose}>
-            <X />
-            Close
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+          </TooltipTrigger>
+          <TooltipContent>Restart</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                disabled={starting}
+                className="hover:text-destructive"
+                onClick={onClose}
+                aria-label={`Close ${session.name}`}
+              />
+            }
+          >
+            <Trash2 />
+          </TooltipTrigger>
+          <TooltipContent>Close session</TooltipContent>
+        </Tooltip>
+      </span>
     </div>
   );
 }
@@ -192,11 +212,13 @@ function App() {
   const [updateError, setUpdateError] = useState("");
   const runs = useRef(new Map<string, string>());
   const resumed = useRef("");
+  const themeRef = useRef<Theme>("dark");
   const sessionsRef = useRef<Session[]>([]);
   const selectedRef = useRef<Session>(undefined);
   const closeRef = useRef<(session: Session) => void>(() => {});
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
   sessionsRef.current = sessions;
+  themeRef.current = theme;
   selectedRef.current = selected;
   closeRef.current = (session) => void closeSession(session);
 
@@ -281,6 +303,7 @@ function App() {
         agent: session.agent,
         provider: session.provider,
         mode: session.mode,
+        theme: themeRef.current,
         name: session.name,
         resume,
         cols: 100,
@@ -413,10 +436,10 @@ function App() {
           data-tauri-drag-region
           className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[platform=macos]:pl-[86px]"
         >
-          <LiteLogomark className="size-5" />
+          <LiteLogomark className="size-6" />
           {selected ? (
             <>
-              <ProviderIcon agent={selected.agent} provider={selected.provider} />
+              <ProviderIcon agent={selected.agent} provider={selected.provider} className="size-5" />
               <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
             </>

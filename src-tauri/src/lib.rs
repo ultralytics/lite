@@ -434,6 +434,27 @@ fn shell_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\\\""))
 }
 
+// Claude files a session under a key derived from its working directory. Searching for the transcript
+// by name avoids depending on how that key is spelled, and a session it never wrote cannot be resumed.
+fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
+    let Ok(home) = std::env::var_os("CLAUDE_CONFIG_DIR")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .map_or_else(
+            || app.path().home_dir().map(|home| home.join(".claude")),
+            Ok,
+        )
+    else {
+        return false;
+    };
+    let transcript = format!("{session_id}.jsonl");
+    fs::read_dir(home.join("projects")).is_ok_and(|projects| {
+        projects
+            .flatten()
+            .any(|project| project.path().join(&transcript).is_file())
+    })
+}
+
 fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String> {
     let directory = app
         .path()
@@ -1187,11 +1208,12 @@ fn agent_command(
             command
         }
         "kimi" => {
+            // Only an exact id resumes. `--continue` would reopen whatever ran last in the directory,
+            // which two tabs there would both land on, and it creates no entry for discovery to record,
+            // so the tab could never learn which session it is showing.
             let mut command = CommandBuilder::new("kimi");
             if let Some(provider_session_id) = provider_session_id {
                 command.args(["--session", provider_session_id]);
-            } else if resume {
-                command.arg("--continue");
             }
             command
         }
@@ -1361,6 +1383,7 @@ async fn spawn_session(
     agent: String,
     provider: Option<String>,
     mode: Option<String>,
+    theme: Option<String>,
     name: String,
     resume: bool,
     cols: u16,
@@ -1369,6 +1392,8 @@ async fn spawn_session(
     let cwd = root_path(&roots, &root_id)?;
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
+    // Resuming a Claude session it never recorded fails outright, so that tab starts one instead.
+    let resume = resume && (agent != "claude" || claude_session_exists(&app, &session_id));
     if !signing_in && (agent == "codex" || agent == "kimi") {
         if let Some(saved_provider_session_id) = provider_sessions
             .0
@@ -1447,6 +1472,15 @@ async fn spawn_session(
     }
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
+    // The conventional hint for which way a terminal is shaded, so a CLI picks a readable palette.
+    command.env(
+        "COLORFGBG",
+        if theme.as_deref() == Some("light") {
+            "0;15"
+        } else {
+            "15;0"
+        },
+    );
     let known_sessions =
         if !signing_in && provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
             let known = if agent == "kimi" {
