@@ -132,11 +132,16 @@ jobs:
       - name: Validate and upload SBOM
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.check.outputs.release_id }}
           TAG: ${{ needs.check.outputs.tag }}
         run: |
           jq -e --arg version "${TAG#v}" '.spdxVersion == "SPDX-2.3" and .name == "Lite" and any(.packages[]; .name == "lite" and .versionInfo == $version)' sbom.spdx.json >/dev/null
           jq -e '[.packages[].externalRefs[]? | select(.referenceType == "purl") | .referenceLocator] | any(startswith("pkg:cargo/")) and any(startswith("pkg:npm/"))' sbom.spdx.json >/dev/null
-          gh release upload "$TAG" sbom.spdx.json --clobber
+          ASSET_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq 'map(select(.name == "sbom.spdx.json")) | first.id // empty')
+          if [ -n "$ASSET_ID" ]; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
+          fi
+          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=sbom.spdx.json" -H "Content-Type: application/json" --input sbom.spdx.json >/dev/null
 
   publish:
     needs: [check, build, sbom]
