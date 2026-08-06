@@ -19,6 +19,7 @@ import {
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -358,17 +359,21 @@ function App() {
   return (
     <TooltipProvider>
       <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
-        <header className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground">
+        {/* The window buttons sit inside this bar on macOS, so it doubles as the title bar and drags the window. */}
+        <header
+          data-tauri-drag-region
+          className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[platform=macos]:pl-[86px]"
+        >
           <LiteLogomark className="size-5" />
-          <span className="text-sm font-semibold">Lite</span>
           {selected ? (
             <>
-              <span className="mx-1 h-4 w-px shrink-0 bg-border" />
               <ProviderIcon agent={selected.agent} />
               <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
             </>
-          ) : null}
+          ) : (
+            <span className="text-sm font-semibold">Lite</span>
+          )}
           <div className="ml-auto flex shrink-0 items-center gap-0.5">
             <Tooltip>
               <TooltipTrigger
@@ -393,10 +398,10 @@ function App() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 {version ? (
-                  <>
+                  <DropdownMenuGroup>
                     <DropdownMenuLabel>Lite {version}</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                  </>
+                  </DropdownMenuGroup>
                 ) : null}
                 <DropdownMenuItem onClick={() => void checkForUpdates()}>
                   <RefreshCw />
