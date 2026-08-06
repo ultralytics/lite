@@ -199,7 +199,10 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.map((session) => ({ ...session, running: false }))));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(sessions.filter((session) => !session.mode).map((session) => ({ ...session, running: false }))),
+    );
   }, [sessions]);
 
   useEffect(() => {
@@ -253,6 +256,7 @@ function App() {
         providerSessionId: session.providerSessionId,
         agent: session.agent,
         provider: session.provider,
+        mode: session.mode,
         name: session.name,
         resume,
         cols: 100,
@@ -289,10 +293,28 @@ function App() {
 
   // Opening the app, or coming back to a session, brings its provider process back on its own.
   useEffect(() => {
-    if (!selected || selected.running || resumed.current === selected.id) return;
+    if (!selected || selected.mode || selected.running || resumed.current === selected.id) return;
     resumed.current = selected.id;
     void launch(selected, true);
   }, [selected, launch]);
+
+  async function signIn(agent: Session["agent"]) {
+    setSettingsOpen(false);
+    try {
+      const grant = await invoke<{ id: string; path: string }>("default_directory");
+      createSession({
+        id: crypto.randomUUID(),
+        agent,
+        mode: "login",
+        cwd: grant.path,
+        rootId: grant.id,
+        name: `Sign in · ${sessionLabel({ agent })}`,
+        running: false,
+      });
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
 
   function createSession(session: Session) {
     resumed.current = session.id;
@@ -569,7 +591,7 @@ function App() {
           </DialogContent>
         </Dialog>
         <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
-        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
       </div>
     </TooltipProvider>
   );

@@ -26,6 +26,7 @@ const providers: {
   label: string;
   variable: string;
   signedIn: string;
+  signIn: boolean;
 }[] = [
   {
     id: "claude",
@@ -33,6 +34,7 @@ const providers: {
     label: "Anthropic",
     variable: "ANTHROPIC_API_KEY",
     signedIn: "Signed in through Claude Code",
+    signIn: true,
   },
   {
     id: "codex",
@@ -41,6 +43,7 @@ const providers: {
     label: "OpenAI",
     variable: "OPENAI_API_KEY",
     signedIn: "Signed in through Codex",
+    signIn: true,
   },
   {
     id: "deepseek",
@@ -49,6 +52,7 @@ const providers: {
     label: "DeepSeek",
     variable: "DEEPSEEK_API_KEY",
     signedIn: "Configured in your Codex settings",
+    signIn: false,
   },
   {
     id: "kimi",
@@ -56,6 +60,7 @@ const providers: {
     label: "Moonshot",
     variable: "MOONSHOT_API_KEY",
     signedIn: "Configured in Kimi Code",
+    signIn: true,
   },
 ];
 
@@ -68,9 +73,11 @@ interface ProviderAuth {
 export function SettingsDialog({
   open: isOpen,
   onOpenChange,
+  onSignIn,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSignIn: (agent: Agent) => void;
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -143,7 +150,7 @@ export function SettingsDialog({
         <div className="space-y-3">
           {providers.map((option) => {
             const status = auth?.find((entry) => entry.name === option.id);
-            const open = editing.has(option.id) || (auth !== undefined && !status?.keyHint && !status?.cliSignedIn);
+            const open = editing.has(option.id);
             const draft = drafts[option.id] ?? "";
             return (
               <div key={option.id} className="flex items-center gap-3">
@@ -194,11 +201,9 @@ export function SettingsDialog({
                       {busy === option.id ? <Spinner /> : null}
                       Save
                     </Button>
-                    {status?.keyHint || status?.cliSignedIn ? (
-                      <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
-                        Cancel
-                      </Button>
-                    ) : null}
+                    <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
+                      Cancel
+                    </Button>
                   </>
                 ) : (
                   <>
@@ -210,9 +215,16 @@ export function SettingsDialog({
                           <span className="font-mono">••••{status.keyHint}</span>
                         </>
                       ) : (
-                        <span className="truncate">{status ? option.signedIn : "Checking…"}</span>
+                        <span className="truncate">
+                          {status ? (status.cliSignedIn ? option.signedIn : "Not set up") : "Checking…"}
+                        </span>
                       )}
                     </span>
+                    {!status?.keyHint && !status?.cliSignedIn && option.signIn ? (
+                      <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
+                        Sign in
+                      </Button>
+                    ) : null}
                     <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
                       {status?.keyHint ? "Replace" : "Use a key"}
                     </Button>

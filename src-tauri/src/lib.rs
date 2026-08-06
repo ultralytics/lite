@@ -1210,6 +1210,32 @@ fn agent_command(
     Ok(command)
 }
 
+// Each CLI owns its sign-in and opens the browser itself, so Lite only runs the command and shows it.
+fn login_command(agent: &str) -> Result<CommandBuilder, String> {
+    let mut command = match agent {
+        "claude" => {
+            let mut command = CommandBuilder::new("claude");
+            command.args(["auth", "login"]);
+            command
+        }
+        "codex" => {
+            let mut command = CommandBuilder::new("codex");
+            command.arg("login");
+            command
+        }
+        "kimi" => {
+            let mut command = CommandBuilder::new("kimi");
+            command.arg("login");
+            command
+        }
+        _ => return Err("This provider signs in with an API key".into()),
+    };
+    if let Some(path) = user_path() {
+        command.env("PATH", path);
+    }
+    Ok(command)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Availability {
@@ -1320,13 +1346,16 @@ async fn spawn_session(
     mut provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
+    mode: Option<String>,
     name: String,
     resume: bool,
     cols: u16,
     rows: u16,
 ) -> Result<Option<String>, String> {
     let cwd = root_path(&roots, &root_id)?;
-    if agent == "codex" || agent == "kimi" {
+    // A sign-in runs the provider's own login command and owns no session of its own.
+    let signing_in = mode.as_deref() == Some("login");
+    if !signing_in && (agent == "codex" || agent == "kimi") {
         if let Some(saved_provider_session_id) = provider_sessions
             .0
             .lock()
@@ -1365,7 +1394,8 @@ async fn spawn_session(
             pixel_height: 0,
         })
         .map_err(|error| error.to_string())?;
-    if agent == "codex"
+    if !signing_in
+        && agent == "codex"
         && provider_session_id.is_some()
         && !codex_thread_resumable(
             &codex_server,
@@ -1376,42 +1406,48 @@ async fn spawn_session(
         provider_session_id = None;
     }
     // A Kimi session the user deleted should start a new one instead of failing the terminal.
-    if agent == "kimi"
+    if !signing_in
+        && agent == "kimi"
         && let Some(known) = provider_session_id.as_deref()
         && !kimi_session_ids(&app, &cwd).contains(known)
     {
         update_provider_session(&app, &provider_sessions, &session_id, None)?;
         provider_session_id = None;
     }
-    let mut command = agent_command(
-        &app,
-        &agent,
-        provider.as_deref(),
-        resume,
-        &session_id,
-        provider_session_id.as_deref(),
-        &name,
-    )?;
-    if agent == "claude" {
+    let mut command = if signing_in {
+        login_command(&agent)?
+    } else {
+        agent_command(
+            &app,
+            &agent,
+            provider.as_deref(),
+            resume,
+            &session_id,
+            provider_session_id.as_deref(),
+            &name,
+        )?
+    };
+    if !signing_in && agent == "claude" {
         let settings = claude_settings(&app, &session_id)?;
         command.args(["--settings", &path_text(&settings)]);
     }
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
-    let known_sessions = if provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
-        let known = if agent == "kimi" {
-            Ok(kimi_session_ids(&app, &cwd))
+    let known_sessions =
+        if !signing_in && provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
+            let known = if agent == "kimi" {
+                Ok(kimi_session_ids(&app, &cwd))
+            } else {
+                codex_thread_ids(&codex_server, &cwd)
+            };
+            // Losing discovery costs exact resume, not the session, so a failure here still opens the terminal.
+            match known {
+                Ok(known) => Some(known),
+                Err(_) => None,
+            }
         } else {
-            codex_thread_ids(&codex_server, &cwd)
+            None
         };
-        // Losing discovery costs exact resume, not the session, so a failure here still opens the terminal.
-        match known {
-            Ok(known) => Some(known),
-            Err(_) => None,
-        }
-    } else {
-        None
-    };
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {

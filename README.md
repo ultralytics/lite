@@ -43,7 +43,11 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 1. Download `Lite_0.0.2_darwin_aarch64.dmg` for an Apple silicon Mac.
 2. Open the disk image and drag **Lite** into **Applications**.
-3. Open Lite from **Applications**. If macOS blocks this first unsigned release, open **System Settings → Privacy & Security**, select **Open Anyway** for Lite, then confirm.
+3. Open Lite from **Applications**. If macOS blocks this first unsigned release, open **System Settings → Privacy & Security**, set **Allow applications from** to **App Store & Known Developers**, select **Open Anyway** for Lite, then confirm.
+
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/a7d3a991-91f2-4d9b-ba57-a8d80bbc37f5" width="70%" alt="Approving Lite in macOS System Settings">
+</div>
 
 ### Windows
 

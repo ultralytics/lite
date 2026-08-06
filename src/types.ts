@@ -8,6 +8,8 @@ export interface Session {
   id: string;
   agent: Agent;
   provider?: ModelProvider;
+  // A sign-in session runs the provider's own login command; it is never stored or resumed.
+  mode?: "login";
   name: string;
   cwd: string;
   rootId: string;
