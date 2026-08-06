@@ -476,9 +476,11 @@ function App() {
           <DialogContent showCloseButton={updateStatus !== "checking" && updateStatus !== "installing"}>
             <DialogHeader>
               <DialogTitle>Lite updates</DialogTitle>
-              <DialogDescription>
+              <DialogDescription aria-live="polite">
                 {updateStatus === "checking" ? "Checking GitHub for the latest release…" : null}
-                {updateStatus === "available" ? `Lite ${availableVersion} is ready to install.` : null}
+                {updateStatus === "available"
+                  ? `Lite ${availableVersion} is ready. Updating stops running sessions; their tabs resume after restart.`
+                  : null}
                 {updateStatus === "current" ? "You have the latest version of Lite." : null}
                 {updateStatus === "installing" ? "Downloading and installing the update…" : null}
                 {updateStatus === "error" ? `Update failed: ${updateError}` : null}
