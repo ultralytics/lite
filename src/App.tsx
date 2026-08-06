@@ -33,7 +33,7 @@ import { Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput } from "@/output-store";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
-import { agentLabels, type Session } from "@/types";
+import { type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -101,7 +101,7 @@ function SessionRow({
     >
       <div className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2">
         <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
-          <ProviderIcon agent={session.agent} />
+          <ProviderIcon agent={session.agent} provider={session.provider} />
           {starting ? (
             <Spinner
               className={`absolute -right-1 -bottom-1 size-3 rounded-full bg-background text-muted-foreground ring-2 ${active ? "ring-sidebar-accent" : "ring-sidebar"}`}
@@ -249,6 +249,7 @@ function App() {
         rootId: session.rootId,
         providerSessionId: session.providerSessionId,
         agent: session.agent,
+        provider: session.provider,
         name: session.name,
         resume,
         cols: 100,
@@ -364,7 +365,7 @@ function App() {
           {selected ? (
             <>
               <span className="mx-1 h-4 w-px shrink-0 bg-border" />
-              <ProviderIcon agent={selected.agent} />
+              <ProviderIcon agent={selected.agent} provider={selected.provider} />
               <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
             </>
@@ -461,7 +462,7 @@ function App() {
                   ) : startingIds.has(selected.id) ? (
                     <div className="flex h-full flex-col items-center justify-center gap-3">
                       <Spinner className="size-5 text-muted-foreground" />
-                      <p className="text-xs text-muted-foreground">Starting {agentLabels[selected.agent]}…</p>
+                      <p className="text-xs text-muted-foreground">Starting {sessionLabel(selected)}…</p>
                     </div>
                   ) : (
                     <div className="flex h-full flex-col items-center justify-center gap-3">

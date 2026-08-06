@@ -9,7 +9,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com/)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
+Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli), [Kimi Code](https://www.kimi.com/code), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
 
 <div align="center">
   <br>
@@ -19,7 +19,8 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 
 ## ✨ Features
 
-- Run Claude Code, Codex, and shell sessions side by side
+- Run Claude Code, Codex, Kimi Code, and shell sessions side by side
+- Run Codex against DeepSeek when your Codex configuration provides that model
 - Resume session tabs automatically after closing Lite or restarting your computer
 - Authenticate once with each provider and reuse its existing local credentials
 - Browse files on demand with syntax highlighting for popular languages
@@ -65,8 +66,11 @@ Install the provider CLIs you want to use:
 
 - [Claude Code](https://code.claude.com/docs/en/setup)
 - [Codex](https://developers.openai.com/codex/cli)
+- [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) — Windows also needs Git for Windows
 
-Open each provider in Lite and complete its normal sign-in once. Claude Code and Codex keep credentials in their standard local stores, so every later Lite session reuses the same authentication. Lite never copies or stores those tokens.
+Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never copies or stores those tokens. The new-session dialog tells you when a CLI is missing and links to its setup guide.
+
+**Codex · DeepSeek** runs the Codex harness against DeepSeek instead of OpenAI. Configure the DeepSeek provider in your own [Codex configuration](https://api-docs.deepseek.com/quick_start/agent_integrations/codex) — either a `deepseek` provider in `config.toml` or a `deepseek.config.toml` profile in `$CODEX_HOME`. Lite selects it per launch, so your default Codex provider and existing OpenAI sessions are untouched, and it never reads or stores the DeepSeek key.
 
 Choose a project folder, create a session, and work. Lite saves only the local metadata needed to restore tabs; provider conversation history remains owned by the provider CLI.
 

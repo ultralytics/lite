@@ -22,6 +22,8 @@ const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const DEEPSEEK_PROFILE: &str = "deepseek";
+const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
 
 struct PtySession {
     child: Box<dyn Child + Send + Sync>,
@@ -200,6 +202,7 @@ fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
             ".docker",
             ".git-credentials",
             ".gnupg",
+            ".kimi-code",
             ".netrc",
             ".npmrc",
             ".pypirc",
@@ -270,6 +273,15 @@ fn load_roots(app: &AppHandle) -> Roots {
     Roots(Mutex::new(roots))
 }
 
+// Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
+fn is_provider_session_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        })
+}
+
 fn load_provider_sessions(app: &AppHandle) -> ProviderSessions {
     let mut sessions = HashMap::new();
     if let Ok(entries) = provider_sessions_path(app)
@@ -284,7 +296,7 @@ fn load_provider_sessions(app: &AppHandle) -> ProviderSessions {
             }
             if let Ok(provider_session_id) = fs::read_to_string(entry.path()) {
                 let provider_session_id = provider_session_id.trim();
-                if uuid::Uuid::parse_str(provider_session_id).is_ok() {
+                if is_provider_session_id(provider_session_id) {
                     sessions.insert(session_id, provider_session_id.to_owned());
                 }
             }
@@ -356,6 +368,9 @@ fn update_provider_session(
     let path = directory.join(session_id);
     let mut sessions = sessions.0.lock().map_err(|error| error.to_string())?;
     if let Some(provider_session_id) = provider_session_id {
+        if !is_provider_session_id(&provider_session_id) {
+            return Err("Invalid provider session ID".into());
+        }
         if let Some(existing) = sessions.get(session_id) {
             if existing == &provider_session_id {
                 return Ok(());
@@ -898,8 +913,106 @@ fn user_path() -> Option<String> {
     std::env::var("PATH").ok()
 }
 
+fn executable_exists(name: &str) -> bool {
+    let Some(path) = user_path() else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|directory| {
+        #[cfg(windows)]
+        {
+            ["exe", "cmd", "bat"]
+                .iter()
+                .any(|extension| directory.join(format!("{name}.{extension}")).is_file())
+        }
+        #[cfg(unix)]
+        {
+            directory.join(name).is_file()
+        }
+    })
+}
+
+fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
+    std::env::var_os("CODEX_HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .map_or_else(
+            || {
+                app.path()
+                    .home_dir()
+                    .map(|home| home.join(".codex"))
+                    .map_err(|error| error.to_string())
+            },
+            Ok,
+        )
+}
+
+// Looks only for the section header. The DeepSeek credential lives in that file and is never read.
+fn codex_declares_deepseek(app: &AppHandle) -> bool {
+    let Ok(home) = codex_home(app) else {
+        return false;
+    };
+    let Ok(file) = fs::File::open(home.join("config.toml")) else {
+        return false;
+    };
+    BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .any(|line| line.trim() == "[model_providers.deepseek]")
+}
+
+fn deepseek_profile_exists(app: &AppHandle) -> bool {
+    codex_home(app).is_ok_and(|home| {
+        home.join(format!("{DEEPSEEK_PROFILE}.config.toml"))
+            .is_file()
+    })
+}
+
+fn kimi_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
+    std::env::var_os("KIMI_CODE_HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .map_or_else(
+            || {
+                app.path()
+                    .home_dir()
+                    .map(|home| home.join(".kimi-code"))
+                    .map_err(|error| error.to_string())
+            },
+            Ok,
+        )
+        .map(|home| home.join("sessions"))
+}
+
+// Kimi groups sessions by working directory under an opaque key, so every group is scanned instead.
+fn kimi_session_ids(app: &AppHandle) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let Ok(groups) = kimi_sessions_path(app)
+        .and_then(|path| fs::read_dir(path).map_err(|error| error.to_string()))
+    else {
+        return ids;
+    };
+    for group in groups.flatten() {
+        let Ok(sessions) = fs::read_dir(group.path()) else {
+            continue;
+        };
+        for session in sessions.flatten() {
+            if !session.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            if let Some(name) = session.file_name().to_str()
+                && is_provider_session_id(name)
+            {
+                ids.insert(name.to_owned());
+            }
+        }
+    }
+    ids
+}
+
 fn agent_command(
+    app: &AppHandle,
     agent: &str,
+    provider: Option<&str>,
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
@@ -917,8 +1030,26 @@ fn agent_command(
         }
         "codex" => {
             let mut command = CommandBuilder::new("codex");
+            // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
+            if provider == Some("deepseek") {
+                if deepseek_profile_exists(app) {
+                    command.args(["--profile", DEEPSEEK_PROFILE]);
+                } else {
+                    command.args(["-c", "model_provider=\"deepseek\""]);
+                    command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
+                }
+            }
             if let Some(provider_session_id) = provider_session_id {
                 command.args(["resume", provider_session_id]);
+            }
+            command
+        }
+        "kimi" => {
+            let mut command = CommandBuilder::new("kimi");
+            if let Some(provider_session_id) = provider_session_id {
+                command.args(["--session", provider_session_id]);
+            } else if resume {
+                command.arg("--continue");
             }
             command
         }
@@ -929,6 +1060,101 @@ fn agent_command(
         command.env("PATH", path);
     }
     Ok(command)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Availability {
+    available: bool,
+    detail: String,
+}
+
+#[tauri::command]
+async fn agent_availability(
+    app: AppHandle,
+    agent: String,
+    provider: Option<String>,
+) -> Result<Availability, String> {
+    let (executable, missing) = match agent.as_str() {
+        "claude" => (
+            "claude",
+            "Install the Claude Code CLI, then sign in with `claude`.",
+        ),
+        "codex" => (
+            "codex",
+            "Install the Codex CLI, then sign in with `codex login`.",
+        ),
+        "kimi" => (
+            "kimi",
+            if cfg!(windows) {
+                "Install Git for Windows, then run `irm https://code.kimi.com/kimi-code/install.ps1 | iex` in PowerShell."
+            } else {
+                "Install Kimi Code with `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`."
+            },
+        ),
+        "shell" => {
+            return Ok(Availability {
+                available: true,
+                detail: String::new(),
+            });
+        }
+        _ => return Err("Unknown session type".into()),
+    };
+    if !executable_exists(executable) {
+        return Ok(Availability {
+            available: false,
+            detail: missing.into(),
+        });
+    }
+    if agent == "codex" && provider.as_deref() == Some("deepseek") {
+        let configured = deepseek_profile_exists(&app) || codex_declares_deepseek(&app);
+        return Ok(Availability {
+            available: configured,
+            detail: if configured {
+                String::new()
+            } else {
+                format!(
+                    "Add a DeepSeek provider to your Codex configuration. Lite launches `{DEEPSEEK_MODEL}` through it and never stores your key."
+                )
+            },
+        });
+    }
+    Ok(Availability {
+        available: true,
+        detail: String::new(),
+    })
+}
+
+#[tauri::command]
+async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), String> {
+    let url = match (agent.as_str(), provider.as_deref()) {
+        ("claude", _) => "https://code.claude.com/docs/en/setup",
+        ("codex", Some("deepseek")) => {
+            "https://api-docs.deepseek.com/quick_start/agent_integrations/codex"
+        }
+        ("codex", _) => "https://developers.openai.com/codex/cli",
+        ("kimi", _) => {
+            "https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html"
+        }
+        _ => return Err("No setup guide for this session type".into()),
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("cmd");
+        command.args(["/c", "start", ""]);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = Command::new("xdg-open");
+    command
+        .arg(url)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|_| ())
+        .map_err(|error| format!("Could not open the setup guide: {error}"))
 }
 
 #[tauri::command]
@@ -944,13 +1170,14 @@ async fn spawn_session(
     root_id: String,
     mut provider_session_id: Option<String>,
     agent: String,
+    provider: Option<String>,
     name: String,
     resume: bool,
     cols: u16,
     rows: u16,
 ) -> Result<Option<String>, String> {
     let cwd = root_path(&roots, &root_id)?;
-    if agent == "codex" {
+    if agent == "codex" || agent == "kimi" {
         if let Some(saved_provider_session_id) = provider_sessions
             .0
             .lock()
@@ -999,8 +1226,18 @@ async fn spawn_session(
         update_provider_session(&app, &provider_sessions, &session_id, None)?;
         provider_session_id = None;
     }
+    // A Kimi session the user deleted should start a new one instead of failing the terminal.
+    if agent == "kimi"
+        && let Some(known) = provider_session_id.as_deref()
+        && !kimi_session_ids(&app).contains(known)
+    {
+        update_provider_session(&app, &provider_sessions, &session_id, None)?;
+        provider_session_id = None;
+    }
     let mut command = agent_command(
+        &app,
         &agent,
+        provider.as_deref(),
         resume,
         &session_id,
         provider_session_id.as_deref(),
@@ -1012,10 +1249,15 @@ async fn spawn_session(
     }
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
-    let codex_threads = if agent == "codex" && provider_session_id.is_none() {
+    let known_sessions = if provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
         begin_codex_discovery(&codex_discovery)?;
-        match codex_thread_ids(&codex_server, &cwd) {
-            Ok(threads) => Some(threads),
+        let known = if agent == "kimi" {
+            Ok(kimi_session_ids(&app))
+        } else {
+            codex_thread_ids(&codex_server, &cwd)
+        };
+        match known {
+            Ok(known) => Some(known),
             Err(error) => {
                 finish_codex_discovery(&codex_discovery);
                 return Err(error);
@@ -1027,7 +1269,7 @@ async fn spawn_session(
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
-            if codex_threads.is_some() {
+            if known_sessions.is_some() {
                 finish_codex_discovery(&codex_discovery);
             }
             return Err(if agent == "shell" {
@@ -1045,7 +1287,7 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if codex_threads.is_some() {
+            if known_sessions.is_some() {
                 finish_codex_discovery(&codex_discovery);
             }
             return Err(error.to_string());
@@ -1056,7 +1298,7 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if codex_threads.is_some() {
+            if known_sessions.is_some() {
                 finish_codex_discovery(&codex_discovery);
             }
             return Err(error.to_string());
@@ -1067,7 +1309,7 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if codex_threads.is_some() {
+            if known_sessions.is_some() {
                 finish_codex_discovery(&codex_discovery);
             }
             return Err(error.to_string());
@@ -1134,12 +1376,18 @@ async fn spawn_session(
         );
     });
 
-    if let Some(existing) = codex_threads {
+    if let Some(existing) = known_sessions {
         let discovery_app = app.clone();
         let discovery_session_id = session_id.clone();
+        let discovery_agent = agent.clone();
         thread::spawn(move || {
             loop {
-                if let Ok(current) = codex_thread_ids(&discovery_app.state::<CodexServer>(), &cwd)
+                let current = if discovery_agent == "kimi" {
+                    Ok(kimi_session_ids(&discovery_app))
+                } else {
+                    codex_thread_ids(&discovery_app.state::<CodexServer>(), &cwd)
+                };
+                if let Ok(current) = current
                     && let Some(provider_session_id) = current.difference(&existing).next()
                     && update_provider_session(
                         &discovery_app,
@@ -1368,8 +1616,13 @@ async fn read_usage(
     app: AppHandle,
     codex_server: State<'_, CodexServer>,
     agent: String,
+    provider: Option<String>,
     session_id: String,
 ) -> Result<Option<UsageSnapshot>, String> {
+    // A DeepSeek-backed Codex session bills DeepSeek, so the OpenAI account limits are not its usage.
+    if agent == "codex" && provider.as_deref() == Some("deepseek") {
+        return Ok(None);
+    }
     match agent.as_str() {
         "claude" => {
             let path = app
@@ -1386,7 +1639,7 @@ async fn read_usage(
             }
         }
         "codex" => codex_usage(&codex_server).map(Some),
-        "shell" => Ok(None),
+        "kimi" | "shell" => Ok(None),
         _ => Err("Unknown session type".into()),
     }
 }
@@ -1469,6 +1722,8 @@ pub fn run() {
             read_text_file,
             git_status,
             read_usage,
+            agent_availability,
+            open_setup_docs,
             check_update,
             install_update
         ])

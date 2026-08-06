@@ -297,6 +297,16 @@ function GitPanel({ rootId }: { rootId: string }) {
   );
 }
 
+// Each harness and provider reports what it reports; Lite never fills the gap with a number of its own.
+function missingUsage(session: Session): string {
+  if (session.agent === "shell") return "Shell sessions report no provider usage.";
+  if (session.agent === "kimi") return "Kimi Code keeps session usage inside its own terminal view.";
+  if (session.agent === "codex" && session.provider === "deepseek")
+    return "DeepSeek publishes no account limits locally. Codex reports this session's usage in the terminal.";
+  if (session.agent === "claude") return "Usage appears after Claude reports its first update.";
+  return "This provider reports no usage locally.";
+}
+
 function UsagePanel({ session }: { session: Session }) {
   const [usage, setUsage] = useState<UsageSnapshot | null>();
   const [error, setError] = useState("");
@@ -309,6 +319,7 @@ function UsagePanel({ session }: { session: Session }) {
       setUsage(
         await invoke<UsageSnapshot | null>("read_usage", {
           agent: session.agent,
+          provider: session.provider,
           sessionId: session.id,
         }),
       );
@@ -317,12 +328,11 @@ function UsagePanel({ session }: { session: Session }) {
     } finally {
       setReading(false);
     }
-  }, [session.agent, session.id]);
+  }, [session.agent, session.provider, session.id]);
 
   useEffect(() => {
-    if (session.agent === "shell") setUsage(null);
-    else void refresh();
-  }, [refresh, session.agent]);
+    void refresh();
+  }, [refresh]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -344,14 +354,10 @@ function UsagePanel({ session }: { session: Session }) {
         <div className="space-y-3 p-3 text-xs">
           {error ? (
             <p className="text-destructive">{error}</p>
-          ) : session.agent === "shell" ? (
-            <p className="text-muted-foreground">Shell sessions report no provider usage.</p>
           ) : usage === undefined ? (
             <Loading label="Reading provider usage…" />
           ) : usage === null ? (
-            <p className="text-muted-foreground">
-              Usage appears after {session.agent === "claude" ? "Claude" : "the provider"} reports its first update.
-            </p>
+            <p className="text-muted-foreground">{missingUsage(session)}</p>
           ) : (
             <>
               {usage.contextUsedPercent != null ? (
