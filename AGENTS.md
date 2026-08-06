@@ -9,7 +9,9 @@ Less is more. Use **Delete > Replace > Add**, solve behavior at its owner, searc
 every change as small as the complete product behavior permits.
 
 - Lite must remain quiet: no indexing, file watchers, telemetry, cloud service, or idle background work.
-- Provider CLIs own authentication and credentials. Never read, copy, proxy, or store provider secrets.
+- Provider CLIs own their own sign-in. Never read, copy, or proxy their credential stores.
+- A key the user hands to Lite is Lite's to keep: owner-only in the app data folder, handed to a session through
+  the provider's environment variable, never written into provider configuration.
 - Read files and Git state only on explicit user interaction. Bound file and terminal memory.
 - Keep platform behavior in Rust and the interface platform-neutral so macOS, Windows, and Linux share one codebase.
 - Lazy-load terminal and file-rendering dependencies. Measure startup bundle changes before accepting new UI libraries.

@@ -3,7 +3,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Moon, MoreHorizontal, Plus, RefreshCw, RotateCcw, SquareTerminal, Sun, X } from "lucide-react";
+import { KeyRound, Moon, MoreHorizontal, Plus, RefreshCw, RotateCcw, SquareTerminal, Sun, X } from "lucide-react";
 import { Component, lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { LiteLogomark, ProviderIcon } from "@/brand-icons";
@@ -33,6 +33,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput } from "@/output-store";
+import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
 import { type Session, sessionLabel } from "@/types";
 import "./App.css";
@@ -180,6 +181,7 @@ function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -404,6 +406,10 @@ function App() {
                     <DropdownMenuSeparator />
                   </DropdownMenuGroup>
                 ) : null}
+                <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
+                  <KeyRound />
+                  API keys
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => void checkForUpdates()}>
                   <RefreshCw />
                   Check for updates
@@ -563,6 +569,7 @@ function App() {
           </DialogContent>
         </Dialog>
         <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
       </div>
     </TooltipProvider>
   );

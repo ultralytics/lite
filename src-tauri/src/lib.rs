@@ -26,6 +26,7 @@ const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEEPSEEK_PROFILE: &str = "deepseek";
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
+const SUPPORTED_KEYS: [&str; 4] = ["claude", "codex", "deepseek", "kimi"];
 
 struct PtySession {
     child: Box<dyn Child + Send + Sync>,
@@ -894,6 +895,86 @@ fn user_path() -> Option<String> {
     std::env::var("PATH").ok()
 }
 
+// Keys live in one owner-only file beside Lite's other local state, which is what the Codex and Kimi
+// CLIs already do with their own credentials, and it survives updates because the updater replaces the
+// bundle and not the data directory. A key is handed to a session through the environment variable its
+// CLI already reads, so nothing is copied into provider configuration.
+fn api_keys_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("api-keys.json"))
+}
+
+fn api_key_env(agent: &str, provider: Option<&str>) -> Option<(&'static str, &'static str)> {
+    match (agent, provider) {
+        ("claude", _) => Some(("claude", "ANTHROPIC_API_KEY")),
+        ("codex", Some("deepseek")) => Some(("deepseek", "DEEPSEEK_API_KEY")),
+        ("codex", _) => Some(("codex", "OPENAI_API_KEY")),
+        ("kimi", _) => Some(("kimi", "MOONSHOT_API_KEY")),
+        _ => None,
+    }
+}
+
+fn saved_api_key(app: &AppHandle, agent: &str, provider: Option<&str>) -> Option<String> {
+    let (name, _) = api_key_env(agent, provider)?;
+    load_api_keys(app).remove(name)
+}
+
+fn load_api_keys(app: &AppHandle) -> HashMap<String, String> {
+    api_keys_path(app)
+        .ok()
+        .and_then(|path| fs::read(path).ok())
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn write_api_keys(app: &AppHandle, keys: &HashMap<String, String>) -> Result<(), String> {
+    let path = api_keys_path(app)?;
+    write_atomic(
+        &path,
+        &serde_json::to_vec(keys).map_err(|error| error.to_string())?,
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn saved_api_keys(app: AppHandle) -> Result<Vec<String>, String> {
+    let mut names = load_api_keys(&app).into_keys().collect::<Vec<_>>();
+    names.sort();
+    Ok(names)
+}
+
+#[tauri::command]
+async fn save_api_key(app: AppHandle, name: String, key: String) -> Result<(), String> {
+    let key = key.trim().to_owned();
+    if key.is_empty() {
+        return Err("Enter an API key".into());
+    }
+    if !SUPPORTED_KEYS.contains(&name.as_str()) {
+        return Err("Unknown provider".into());
+    }
+    let mut keys = load_api_keys(&app);
+    keys.insert(name, key);
+    write_api_keys(&app, &keys)
+}
+
+#[tauri::command]
+async fn delete_api_key(app: AppHandle, name: String) -> Result<(), String> {
+    let mut keys = load_api_keys(&app);
+    if keys.remove(&name).is_none() {
+        return Ok(());
+    }
+    write_api_keys(&app, &keys)
+}
+
 fn executable_exists(name: &str) -> bool {
     let Some(path) = user_path() else {
         return false;
@@ -1030,7 +1111,20 @@ fn agent_command(
             let mut command = CommandBuilder::new("codex");
             // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
             if provider == Some("deepseek") {
-                if deepseek_profile_exists(app) {
+                if saved_api_key(app, agent, provider).is_some() {
+                    // A key held by Lite defines the provider inline and is read from the environment,
+                    // so no Codex configuration file has to exist or be written.
+                    for override_value in [
+                        "model_providers.deepseek.name=\"deepseek\"",
+                        "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
+                        "model_providers.deepseek.wire_api=\"responses\"",
+                        "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
+                    ] {
+                        command.args(["-c", override_value]);
+                    }
+                    command.args(["-c", "model_provider=\"deepseek\""]);
+                    command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
+                } else if deepseek_profile_exists(app) {
                     command.args(["--profile", DEEPSEEK_PROFILE]);
                 } else {
                     command.args(["-c", "model_provider=\"deepseek\""]);
@@ -1056,6 +1150,12 @@ fn agent_command(
     };
     if let Some(path) = user_path() {
         command.env("PATH", path);
+    }
+    // The key reaches the CLI through the variable it already reads, and only for this session.
+    if let Some((_, variable)) = api_key_env(agent, provider)
+        && let Some(key) = saved_api_key(app, agent, provider)
+    {
+        command.env(variable, key);
     }
     Ok(command)
 }
@@ -1105,14 +1205,16 @@ async fn agent_availability(
         });
     }
     if agent == "codex" && provider.as_deref() == Some("deepseek") {
-        let configured = deepseek_profile_exists(&app) || codex_declares_deepseek(&app);
+        let configured = saved_api_key(&app, &agent, provider.as_deref()).is_some()
+            || deepseek_profile_exists(&app)
+            || codex_declares_deepseek(&app);
         return Ok(Availability {
             available: configured,
             detail: if configured {
                 String::new()
             } else {
                 format!(
-                    "Add a DeepSeek provider to your Codex configuration, ideally as a `{DEEPSEEK_PROFILE}` profile without any login-method keys, which sign you out of ChatGPT. Lite launches `{DEEPSEEK_MODEL}` through it and never stores your key."
+                    "Save a DeepSeek key in Lite's settings, or add a DeepSeek provider to your Codex configuration. Either way Lite launches `{DEEPSEEK_MODEL}` through it."
                 )
             },
         });
@@ -1706,6 +1808,9 @@ pub fn run() {
             read_usage,
             agent_availability,
             open_setup_docs,
+            saved_api_keys,
+            save_api_key,
+            delete_api_key,
             check_update,
             install_update
         ])
