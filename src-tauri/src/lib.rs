@@ -281,8 +281,9 @@ fn load_codex_server(app: &AppHandle) -> Result<CodexServer, String> {
     #[cfg(unix)]
     let endpoint = {
         let home = std::env::var_os("CODEX_HOME")
+            .filter(|home| !home.is_empty())
             .map(PathBuf::from)
-            .map(Ok)
+            .map(|home| home.canonicalize().map_err(|error| error.to_string()))
             .unwrap_or_else(|| {
                 app.path()
                     .home_dir()
