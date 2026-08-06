@@ -21,6 +21,7 @@ jobs:
     outputs:
       increment: ${{ steps.release.outputs.increment }}
       release_id: ${{ steps.release.outputs.release_id }}
+      tag: ${{ steps.release.outputs.tag }}
     steps:
       - uses: actions/checkout@v7
       - id: release
@@ -47,8 +48,11 @@ jobs:
               -F generate_release_notes=true \
               --jq .id)
           fi
-          echo "increment=true" >> "$GITHUB_OUTPUT"
-          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+          {
+            echo "increment=true"
+            echo "release_id=$RELEASE_ID"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
 
   build:
     needs: check
@@ -59,12 +63,13 @@ jobs:
         include:
           - platform: macos-latest
             target: aarch64-apple-darwin
-          - platform: macos-latest
-            target: x86_64-apple-darwin
+            bundles: dmg,app
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            bundles: appimage
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
+            bundles: nsis
     runs-on: ${{ matrix.platform }}
     permissions:
       contents: write
@@ -87,14 +92,18 @@ jobs:
       - uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           releaseId: ${{ needs.check.outputs.release_id }}
           releaseDraft: true
           releaseAssetNamePattern: Lite_[version]_[platform]_[arch][setup][ext]
           retryAttempts: 2
+          tagName: ${{ needs.check.outputs.tag }}
           tauriScript: bun run tauri
-          uploadUpdaterJson: false
+          updaterJsonPreferNsis: true
+          uploadUpdaterJson: true
           uploadUpdaterSignatures: false
 
   publish:
@@ -103,6 +112,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Verify updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.check.outputs.release_id }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          ASSETS=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets")
+          VERSION=${TAG#v}
+          jq -e --arg version "$VERSION" '([.[].name] | sort) == (["Lite_\($version)_darwin_aarch64.app.tar.gz", "Lite_\($version)_darwin_aarch64.dmg", "Lite_\($version)_linux_amd64.AppImage", "Lite_\($version)_windows_x64-setup.exe", "latest.json"] | sort)' <<< "$ASSETS" >/dev/null
+          LATEST_ID=$(jq -r 'map(select(.name == "latest.json")) | first.id // empty' <<< "$ASSETS")
+          test -n "$LATEST_ID"
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$LATEST_ID" > "$RUNNER_TEMP/latest.json"
+          jq -e --arg version "$VERSION" '.version == $version' "$RUNNER_TEMP/latest.json" >/dev/null
+          for PLATFORM in darwin-aarch64-app linux-x86_64-appimage windows-x86_64-nsis; do
+            jq -e --arg platform "$PLATFORM" '.platforms[$platform] | (.url | type == "string" and length > 0) and (.signature | type == "string" and length > 0)' "$RUNNER_TEMP/latest.json" >/dev/null
+            ASSET_ID=$(jq -r --arg platform "$PLATFORM" '.platforms[$platform].url | capture("/assets/(?<id>[0-9]+)$").id' "$RUNNER_TEMP/latest.json")
+            jq -e --argjson id "$ASSET_ID" 'any(.id == $id)' <<< "$ASSETS" >/dev/null
+          done
       - name: Publish complete release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -26,6 +26,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 - Preview rendered Markdown safely alongside source files
 - See the active Git branch, worktree, and changed files
 - Inspect per-session context and provider usage reported by Claude or Codex
+- Install signed updates from inside Lite
 - Switch between light and dark themes
 
 Lite is intentionally quiet: idle means idle. It does not index your repository, watch every file, read provider tokens, or send telemetry.
@@ -36,31 +37,27 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 ### macOS
 
-1. Download `Lite_0.0.1_darwin_aarch64.dmg` for Apple silicon or `Lite_0.0.1_darwin_x64.dmg` for an Intel Mac.
+1. Download `Lite_0.0.2_darwin_aarch64.dmg` for an Apple silicon Mac.
 2. Open the disk image and drag **Lite** into **Applications**.
 3. Open Lite from **Applications**. If macOS blocks this first unsigned release, open **System Settings → Privacy & Security**, select **Open Anyway** for Lite, then confirm.
 
 ### Windows
 
-1. Download `Lite_0.0.1_windows_x64-setup.exe` (or the `.msi` asset if you prefer Windows Installer).
+1. Download `Lite_0.0.2_windows_x64-setup.exe`.
 2. Run the installer, then open **Lite** from the Start menu.
 3. If Microsoft Defender SmartScreen appears for this early unsigned release, select **More info → Run anyway**.
 
 ### Linux
 
-Download `Lite_0.0.1_linux_amd64.AppImage` for a portable app, `Lite_0.0.1_linux_amd64.deb` for Debian or Ubuntu, or the `.rpm` asset for Fedora-compatible distributions.
+Download the portable `Lite_0.0.2_linux_amd64.AppImage`.
 
 ```bash
 # AppImage
-chmod +x Lite_0.0.1_linux_amd64.AppImage
-./Lite_0.0.1_linux_amd64.AppImage
-
-# Debian or Ubuntu
-sudo apt install ./Lite_0.0.1_linux_amd64.deb
-
-# Fedora
-sudo dnf install ./Lite_0.0.1_linux_x86_64.rpm
+chmod +x Lite_0.0.2_linux_amd64.AppImage
+./Lite_0.0.2_linux_amd64.AppImage
 ```
+
+After installing 0.0.2, use the update button beside the theme switch to check for signed updates, install them, and restart Lite. Lite never checks for updates in the background.
 
 ## 🚀 First Run
 

@@ -2,11 +2,19 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Moon, MoreHorizontal, Plus, RotateCcw, SquareTerminal, Sun, X } from "lucide-react";
+import { Moon, MoreHorizontal, Plus, RefreshCw, RotateCcw, SquareTerminal, Sun, X } from "lucide-react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { ClaudeLogomark, LiteLogomark, OpenAILogomark } from "@/brand-icons";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +34,7 @@ import "./App.css";
 const STORAGE_KEY = "lite.sessions.v1";
 const THEME_KEY = "lite.theme";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
+type UpdateStatus = "checking" | "available" | "current" | "installing" | "error";
 
 function loadSessions(): Session[] {
   try {
@@ -164,6 +173,10 @@ function App() {
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
+  const [updateOpen, setUpdateOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
+  const [availableVersion, setAvailableVersion] = useState("");
+  const [updateError, setUpdateError] = useState("");
   const runs = useRef(new Map<string, string>());
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
 
@@ -294,6 +307,36 @@ function App() {
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
+  async function checkForUpdates() {
+    setUpdateOpen(true);
+    setUpdateStatus("checking");
+    setUpdateError("");
+    try {
+      const version = await invoke<string | null>("check_update");
+      setAvailableVersion(version ?? "");
+      setUpdateStatus(version ? "available" : "current");
+    } catch (reason) {
+      setUpdateError(String(reason));
+      setUpdateStatus("error");
+    }
+  }
+
+  async function installUpdate() {
+    setUpdateStatus("installing");
+    try {
+      await invoke("install_update");
+    } catch (reason) {
+      setUpdateError(String(reason));
+      setUpdateStatus("error");
+    }
+  }
+
+  function changeUpdateOpen(open: boolean) {
+    if (!open && (updateStatus === "checking" || updateStatus === "installing")) return;
+    setUpdateOpen(open);
+    if (!open) setAvailableVersion("");
+  }
+
   return (
     <TooltipProvider>
       <main className="h-screen overflow-hidden bg-background text-foreground">
@@ -309,7 +352,23 @@ function App() {
                       <Button
                         variant="ghost"
                         size="icon-xs"
-                        className="relative ml-auto"
+                        className="ml-auto"
+                        onClick={() => void checkForUpdates()}
+                        aria-label="Check for updates"
+                      />
+                    }
+                  >
+                    <RefreshCw />
+                  </TooltipTrigger>
+                  <TooltipContent>Check for updates</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        className="relative"
                         onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
                         aria-label="Toggle theme"
                       />
@@ -413,6 +472,41 @@ function App() {
             </>
           ) : null}
         </ResizablePanelGroup>
+        <Dialog open={updateOpen} onOpenChange={changeUpdateOpen}>
+          <DialogContent showCloseButton={updateStatus !== "checking" && updateStatus !== "installing"}>
+            <DialogHeader>
+              <DialogTitle>Lite updates</DialogTitle>
+              <DialogDescription>
+                {updateStatus === "checking" ? "Checking GitHub for the latest release…" : null}
+                {updateStatus === "available" ? `Lite ${availableVersion} is ready to install.` : null}
+                {updateStatus === "current" ? "You have the latest version of Lite." : null}
+                {updateStatus === "installing" ? "Downloading and installing the update…" : null}
+                {updateStatus === "error" ? `Update failed: ${updateError}` : null}
+              </DialogDescription>
+            </DialogHeader>
+            {updateStatus === "checking" || updateStatus === "installing" ? (
+              <RefreshCw className="mx-auto size-5 animate-spin text-muted-foreground motion-reduce:animate-none" />
+            ) : null}
+            {updateStatus === "available" ? (
+              <DialogFooter>
+                <Button variant="outline" onClick={() => changeUpdateOpen(false)}>
+                  Not now
+                </Button>
+                <Button onClick={() => void installUpdate()}>Install and restart</Button>
+              </DialogFooter>
+            ) : null}
+            {updateStatus === "current" ? (
+              <DialogFooter>
+                <Button onClick={() => changeUpdateOpen(false)}>Done</Button>
+              </DialogFooter>
+            ) : null}
+            {updateStatus === "error" ? (
+              <DialogFooter>
+                <Button onClick={() => void checkForUpdates()}>Try again</Button>
+              </DialogFooter>
+            ) : null}
+          </DialogContent>
+        </Dialog>
         <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
       </main>
     </TooltipProvider>

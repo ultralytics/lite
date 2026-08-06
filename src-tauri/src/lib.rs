@@ -15,6 +15,7 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_updater::UpdaterExt;
 use tungstenite::Message;
 
 const MAX_FILE_BYTES: u64 = 500_000;
@@ -1390,9 +1391,62 @@ async fn read_usage(
     }
 }
 
+fn stop_runtime(app: &AppHandle) {
+    let sessions = app
+        .state::<Sessions>()
+        .0
+        .lock()
+        .map(|mut sessions| {
+            sessions
+                .drain()
+                .map(|(_, session)| session)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    for mut session in sessions {
+        let _ = stop_pty(&mut session);
+    }
+    stop_codex_server(&app.state::<CodexServer>());
+}
+
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+    app.updater_builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map(|update| update.map(|update| update.version))
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let cleanup_app = app.clone();
+    let update = app
+        .updater_builder()
+        .on_before_exit(move || {
+            stop_runtime(&cleanup_app);
+            cleanup_app.cleanup_before_exit();
+        })
+        .build()
+        .map_err(|error| error.to_string())?
+        .check()
+        .await
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "No update is available.".to_string())?;
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| error.to_string())?;
+    app.restart()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sessions::default())
         .manage(CodexDiscovery::default())
         .plugin(tauri_plugin_dialog::init())
@@ -1414,27 +1468,15 @@ pub fn run() {
             list_directory,
             read_text_file,
             git_status,
-            read_usage
+            read_usage,
+            check_update,
+            install_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lite")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                let sessions = app
-                    .state::<Sessions>()
-                    .0
-                    .lock()
-                    .map(|mut sessions| {
-                        sessions
-                            .drain()
-                            .map(|(_, session)| session)
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-                for mut session in sessions {
-                    let _ = stop_pty(&mut session);
-                }
-                stop_codex_server(&app.state::<CodexServer>());
+                stop_runtime(app);
             }
         });
 }
