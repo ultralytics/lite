@@ -22,6 +22,8 @@ const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+// Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
+const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEEPSEEK_PROFILE: &str = "deepseek";
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
 
@@ -543,7 +545,7 @@ fn revoke_directory(app: AppHandle, roots: State<Roots>, root_id: String) -> Res
 fn codex_exchange<S: Read + Write, F: FnOnce(&S) -> Result<(), String>>(
     mut socket: tungstenite::WebSocket<S>,
     requests: &[(u64, &str, serde_json::Value)],
-    clear_read_timeout: F,
+    extend_read_timeout: F,
 ) -> Result<HashMap<u64, serde_json::Value>, String> {
     socket
         .send(Message::Text(
@@ -566,7 +568,7 @@ fn codex_exchange<S: Read + Write, F: FnOnce(&S) -> Result<(), String>>(
             break;
         }
     }
-    clear_read_timeout(socket.get_ref())?;
+    extend_read_timeout(socket.get_ref())?;
     socket
         .send(Message::Text(
             serde_json::json!({"method":"initialized","params":{}})
@@ -640,7 +642,7 @@ fn codex_requests_once(
             tungstenite::client("ws://localhost/", stream).map_err(|error| error.to_string())?;
         codex_exchange(socket, requests, |stream| {
             stream
-                .set_read_timeout(None)
+                .set_read_timeout(Some(CODEX_REQUEST_TIMEOUT))
                 .map_err(|error| error.to_string())
         })
     }
@@ -1275,11 +1277,12 @@ async fn spawn_session(
         } else {
             codex_thread_ids(&codex_server, &cwd)
         };
+        // Losing discovery costs exact resume, not the session, so a failure here still opens the terminal.
         match known {
             Ok(known) => Some(known),
-            Err(error) => {
+            Err(_) => {
                 finish_discovery(&discovery, &agent);
-                return Err(error);
+                None
             }
         }
     } else {
