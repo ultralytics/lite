@@ -9,7 +9,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::{Condvar, Mutex},
+    sync::Mutex,
     thread,
     time::Duration,
 };
@@ -57,14 +57,6 @@ struct Roots(Mutex<HashMap<String, PathBuf>>);
 
 #[derive(Default)]
 struct ProviderSessions(Mutex<HashMap<String, String>>);
-
-// Discovery watches a harness session store for the entry a launch just created, so only launches of
-// the same harness have to queue. Kimi and Codex watch different stores and never block each other.
-#[derive(Default)]
-struct SessionDiscovery {
-    running: Mutex<HashSet<String>>,
-    ready: Condvar,
-}
 
 struct CodexServer(Mutex<CodexServerState>);
 
@@ -366,7 +358,7 @@ fn update_provider_session(
     sessions: &ProviderSessions,
     session_id: &str,
     provider_session_id: Option<String>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     uuid::Uuid::parse_str(session_id).map_err(|_| "Invalid session ID")?;
     let directory = provider_sessions_path(app)?;
     let path = directory.join(session_id);
@@ -377,8 +369,15 @@ fn update_provider_session(
         }
         if let Some(existing) = sessions.get(session_id) {
             if existing == &provider_session_id {
-                return Ok(());
+                return Ok(true);
             }
+        }
+        // Claiming under the lock lets concurrent discoveries run without one stealing the other's session.
+        if sessions
+            .iter()
+            .any(|(owner, claimed)| owner != session_id && claimed == &provider_session_id)
+        {
+            return Ok(false);
         }
         write_atomic(&path, provider_session_id.as_bytes())?;
         sessions.insert(session_id.to_owned(), provider_session_id);
@@ -390,7 +389,7 @@ fn update_provider_session(
         }
         sessions.remove(session_id);
     }
-    Ok(())
+    Ok(true)
 }
 
 fn grant_directory(
@@ -849,28 +848,6 @@ fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool,
     })
 }
 
-fn begin_discovery(discovery: &SessionDiscovery, agent: &str) -> Result<(), String> {
-    let mut running = discovery
-        .running
-        .lock()
-        .map_err(|error| error.to_string())?;
-    while running.contains(agent) {
-        running = discovery
-            .ready
-            .wait(running)
-            .map_err(|error| error.to_string())?;
-    }
-    running.insert(agent.to_owned());
-    Ok(())
-}
-
-fn finish_discovery(discovery: &SessionDiscovery, agent: &str) {
-    if let Ok(mut running) = discovery.running.lock() {
-        running.remove(agent);
-        discovery.ready.notify_all();
-    }
-}
-
 fn stop_codex_server(server: &CodexServer) {
     let Ok(mut server) = server.0.lock() else {
         return;
@@ -1185,7 +1162,6 @@ async fn spawn_session(
     roots: State<'_, Roots>,
     provider_sessions: State<'_, ProviderSessions>,
     codex_server: State<'_, CodexServer>,
-    discovery: State<'_, SessionDiscovery>,
     session_id: String,
     run_id: String,
     root_id: String,
@@ -1271,7 +1247,6 @@ async fn spawn_session(
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
     let known_sessions = if provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
-        begin_discovery(&discovery, &agent)?;
         let known = if agent == "kimi" {
             Ok(kimi_session_ids(&app, &cwd))
         } else {
@@ -1280,10 +1255,7 @@ async fn spawn_session(
         // Losing discovery costs exact resume, not the session, so a failure here still opens the terminal.
         match known {
             Ok(known) => Some(known),
-            Err(_) => {
-                finish_discovery(&discovery, &agent);
-                None
-            }
+            Err(_) => None,
         }
     } else {
         None
@@ -1291,9 +1263,6 @@ async fn spawn_session(
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
-            if known_sessions.is_some() {
-                finish_discovery(&discovery, &agent);
-            }
             return Err(if agent == "shell" {
                 error.to_string()
             } else {
@@ -1309,9 +1278,6 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if known_sessions.is_some() {
-                finish_discovery(&discovery, &agent);
-            }
             return Err(error.to_string());
         }
     };
@@ -1320,9 +1286,6 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if known_sessions.is_some() {
-                finish_discovery(&discovery, &agent);
-            }
             return Err(error.to_string());
         }
     };
@@ -1331,9 +1294,6 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if known_sessions.is_some() {
-                finish_discovery(&discovery, &agent);
-            }
             return Err(error.to_string());
         }
     };
@@ -1409,15 +1369,17 @@ async fn spawn_session(
                 } else {
                     codex_thread_ids(&discovery_app.state::<CodexServer>(), &cwd)
                 };
+                // Any candidate another session already claimed is skipped, so overlapping launches settle.
                 if let Ok(current) = current
-                    && let Some(provider_session_id) = current.difference(&existing).next()
-                    && update_provider_session(
-                        &discovery_app,
-                        &discovery_app.state::<ProviderSessions>(),
-                        &discovery_session_id,
-                        Some(provider_session_id.clone()),
-                    )
-                    .is_ok()
+                    && current.difference(&existing).any(|provider_session_id| {
+                        update_provider_session(
+                            &discovery_app,
+                            &discovery_app.state::<ProviderSessions>(),
+                            &discovery_session_id,
+                            Some(provider_session_id.clone()),
+                        )
+                        .unwrap_or(false)
+                    })
                 {
                     break;
                 }
@@ -1431,7 +1393,6 @@ async fn spawn_session(
                 }
                 thread::sleep(Duration::from_secs(1));
             }
-            finish_discovery(&discovery_app.state::<SessionDiscovery>(), &discovery_agent);
         });
     }
 
@@ -1509,7 +1470,7 @@ fn delete_session_data(
             Err(error) => return Err(error.to_string()),
         }
     }
-    update_provider_session(&app, &provider_sessions, &session_id, None)
+    update_provider_session(&app, &provider_sessions, &session_id, None).map(|_| ())
 }
 
 #[tauri::command]
@@ -1723,7 +1684,6 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sessions::default())
-        .manage(SessionDiscovery::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
