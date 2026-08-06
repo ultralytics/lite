@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { FolderOpen, TerminalSquare } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { ClaudeLogomark, OpenAILogomark } from "@/brand-icons";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,23 @@ export function NewSessionDialog({
   const [agent, setAgent] = useState<Agent>("claude");
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let disposed = false;
+    setError("");
+    void invoke<DirectoryGrant>("default_directory")
+      .then((selected) => {
+        if (disposed) void invoke("revoke_directory", { rootId: selected.id });
+        else setDirectory(selected);
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [isOpen]);
 
   async function chooseFolder() {
     setError("");
@@ -125,7 +142,7 @@ export function NewSessionDialog({
             placeholder="Choose a project folder"
             aria-label="Project folder"
           />
-          <Button variant="outline" onClick={chooseFolder}>
+          <Button variant="outline" onClick={chooseFolder} disabled={!directory && !error}>
             <FolderOpen />
             Browse
           </Button>

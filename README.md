@@ -4,9 +4,6 @@
 
 [![Ultralytics Actions](https://github.com/ultralytics/lite/actions/workflows/format.yml/badge.svg)](https://github.com/ultralytics/lite/actions/workflows/format.yml)
 [![CI](https://github.com/ultralytics/lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ultralytics/lite/actions/workflows/ci.yml)
-[![Release](https://github.com/ultralytics/lite/actions/workflows/publish.yml/badge.svg)](https://github.com/ultralytics/lite/actions/workflows/publish.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/ultralytics/lite?logo=github)](https://github.com/ultralytics/lite/releases/latest)
-[![License](https://img.shields.io/github/license/ultralytics/lite)](LICENSE)
 
 [![Ultralytics Discord](https://img.shields.io/discord/1089800235347353640?logo=discord&logoColor=white&label=Discord&color=blue)](https://discord.com/invite/ultralytics)
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com/)
@@ -16,7 +13,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 
 <div align="center">
   <br>
-  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/ultralytics/lite/blob/005876813215ea52157027cee64ecd97a20e534a/lite-screenshot.png?raw=true" width="100%" alt="Ultralytics Lite desktop app"></a>
+  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/ultralytics/lite/blob/eeb99328e396cbb55508a7d34fce96f6cf0e86f1/lite-product-full.png?raw=true" width="100%" alt="Ultralytics Lite desktop app"></a>
   <br>
 </div>
 
@@ -39,27 +36,30 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 ### macOS
 
-1. Download the `.dmg` matching your Mac: `aarch64` for Apple silicon or `x86_64` for Intel.
+1. Download `Lite_0.0.1_darwin_aarch64.dmg` for Apple silicon or `Lite_0.0.1_darwin_x64.dmg` for an Intel Mac.
 2. Open the disk image and drag **Lite** into **Applications**.
-3. Try to open Lite once. If macOS blocks it, open **System Settings → Privacy & Security**, select **Open Anyway** for Lite, then confirm.
+3. Open Lite from **Applications**. If macOS blocks this first unsigned release, open **System Settings → Privacy & Security**, select **Open Anyway** for Lite, then confirm.
 
 ### Windows
 
-1. Download the Windows `.exe` installer.
+1. Download `Lite_0.0.1_windows_x64-setup.exe` (or the `.msi` asset if you prefer Windows Installer).
 2. Run the installer, then open **Lite** from the Start menu.
 3. If Microsoft Defender SmartScreen appears for this early unsigned release, select **More info → Run anyway**.
 
 ### Linux
 
-Download either the portable `.AppImage` or the Debian/Ubuntu `.deb` package.
+Download `Lite_0.0.1_linux_amd64.AppImage` for a portable app, `Lite_0.0.1_linux_amd64.deb` for Debian or Ubuntu, or the `.rpm` asset for Fedora-compatible distributions.
 
 ```bash
 # AppImage
-chmod +x Lite*.AppImage
-./Lite*.AppImage
+chmod +x Lite_0.0.1_linux_amd64.AppImage
+./Lite_0.0.1_linux_amd64.AppImage
 
 # Debian or Ubuntu
-sudo apt install ./Lite*.deb
+sudo apt install ./Lite_0.0.1_linux_amd64.deb
+
+# Fedora
+sudo dnf install ./Lite_0.0.1_linux_x86_64.rpm
 ```
 
 ## 🚀 First Run

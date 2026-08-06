@@ -29,18 +29,20 @@ jobs:
         run: |
           VERSION=$(cargo metadata --format-version 1 --no-deps --manifest-path src-tauri/Cargo.toml | jq -r '.packages[0].version')
           TAG="v$VERSION"
-          RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null || true)
+          RELEASE=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" | jq -s --arg tag "$TAG" 'map(.[]) | map(select(.tag_name == $tag)) | first // empty')
           if [ -n "$RELEASE" ]; then
             if [ "$(jq -r .draft <<< "$RELEASE")" != "true" ]; then
               echo "increment=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
             RELEASE_ID=$(jq -r .id <<< "$RELEASE")
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f target_commitish="$GITHUB_SHA" >/dev/null
           else
             RELEASE_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$TAG" \
               -f name="Lite $TAG" \
               -f body="Download the installer for your operating system below. Lite runs locally and uses your existing Claude Code and Codex authentication." \
+              -f target_commitish="$GITHUB_SHA" \
               -F draft=true \
               -F generate_release_notes=true \
               --jq .id)

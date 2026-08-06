@@ -4,12 +4,12 @@ use atomicwrites::{AllowOverwrite, AtomicFile};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{Condvar, Mutex},
     thread,
     time::Duration,
 };
@@ -52,6 +52,12 @@ struct Roots(Mutex<HashMap<String, PathBuf>>);
 
 #[derive(Default)]
 struct ProviderSessions(Mutex<HashMap<String, String>>);
+
+#[derive(Default)]
+struct CodexDiscovery {
+    running: Mutex<bool>,
+    ready: Condvar,
+}
 
 struct CodexServer(Mutex<CodexServerState>);
 
@@ -246,6 +252,14 @@ fn provider_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("provider-sessions"))
 }
 
+fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("last-directory"))
+}
+
 fn load_roots(app: &AppHandle) -> Roots {
     let roots = roots_path(app)
         .ok()
@@ -359,6 +373,37 @@ fn update_provider_session(
     Ok(())
 }
 
+fn grant_directory(
+    app: &AppHandle,
+    roots: &Roots,
+    path: PathBuf,
+) -> Result<DirectoryGrant, String> {
+    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    if is_sensitive_root(&path) {
+        return Err("Credential and configuration folders cannot be opened".into());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    update_roots(app, roots, |roots| {
+        roots.insert(id.clone(), path.clone());
+    })?;
+    Ok(DirectoryGrant {
+        id,
+        path: path_text(&path),
+    })
+}
+
+fn default_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(path) = last_directory_path(app)
+        .and_then(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
+    {
+        let path = PathBuf::from(path);
+        if path.is_dir() {
+            return Ok(path);
+        }
+    }
+    app.path().home_dir().map_err(|error| error.to_string())
+}
+
 #[cfg(unix)]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -448,31 +493,26 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn default_directory(app: AppHandle, roots: State<Roots>) -> Result<DirectoryGrant, String> {
+    grant_directory(&app, &roots, default_directory_path(&app)?)
+}
+
+#[tauri::command]
 async fn choose_directory(
     app: AppHandle,
     roots: State<'_, Roots>,
 ) -> Result<Option<DirectoryGrant>, String> {
-    let Some(path) = app
-        .dialog()
-        .file()
-        .set_title("Choose a project")
-        .blocking_pick_folder()
-    else {
+    let mut dialog = app.dialog().file().set_title("Choose a project");
+    if let Ok(path) = default_directory_path(&app) {
+        dialog = dialog.set_directory(path);
+    }
+    let Some(path) = dialog.blocking_pick_folder() else {
         return Ok(None);
     };
     let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
-    if is_sensitive_root(&path) {
-        return Err("Credential and configuration folders cannot be opened".into());
-    }
-    let id = uuid::Uuid::new_v4().to_string();
-    update_roots(&app, &roots, |roots| {
-        roots.insert(id.clone(), path.clone());
-    })?;
-    Ok(Some(DirectoryGrant {
-        id,
-        path: path_text(&path),
-    }))
+    write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
+    grant_directory(&app, &roots, path).map(Some)
 }
 
 #[tauri::command]
@@ -751,24 +791,27 @@ fn codex_usage(server: &CodexServer) -> Result<UsageSnapshot, String> {
     })
 }
 
-fn start_codex_thread(server: &CodexServer, cwd: &Path) -> Result<String, String> {
+fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>, String> {
     let responses = codex_requests(
         server,
         &[(
             3,
-            "thread/start",
-            serde_json::json!({"cwd": path_text(cwd), "serviceName": "ultralytics_lite"}),
+            "thread/list",
+            serde_json::json!({"cwd": path_text(cwd), "limit": 100}),
         )],
     )?;
-    responses
+    Ok(responses
         .get(&3)
-        .and_then(|response| response.pointer("/thread/id"))
-        .and_then(serde_json::Value::as_str)
+        .and_then(|response| response.get("data"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|thread| thread.get("id").and_then(serde_json::Value::as_str))
         .map(str::to_owned)
-        .ok_or("Codex app server did not return a thread ID".into())
+        .collect())
 }
 
-fn codex_thread_loaded(server: &CodexServer, thread_id: &str) -> Result<bool, String> {
+fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool, String> {
     codex_requests(
         server,
         &[(
@@ -780,20 +823,32 @@ fn codex_thread_loaded(server: &CodexServer, thread_id: &str) -> Result<bool, St
     .map(|responses| {
         responses
             .get(&4)
-            .is_some_and(|response| !response.is_null())
+            .and_then(|response| response.pointer("/thread/source"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|source| source == "cli" || source == "vscode")
     })
 }
 
-fn archive_codex_thread(server: &CodexServer, thread_id: &str) -> Result<(), String> {
-    codex_requests(
-        server,
-        &[(
-            3,
-            "thread/archive",
-            serde_json::json!({"threadId": thread_id}),
-        )],
-    )
-    .map(|_| ())
+fn begin_codex_discovery(discovery: &CodexDiscovery) -> Result<(), String> {
+    let mut running = discovery
+        .running
+        .lock()
+        .map_err(|error| error.to_string())?;
+    while *running {
+        running = discovery
+            .ready
+            .wait(running)
+            .map_err(|error| error.to_string())?;
+    }
+    *running = true;
+    Ok(())
+}
+
+fn finish_codex_discovery(discovery: &CodexDiscovery) {
+    if let Ok(mut running) = discovery.running.lock() {
+        *running = false;
+        discovery.ready.notify_one();
+    }
 }
 
 fn stop_codex_server(server: &CodexServer) {
@@ -847,11 +902,8 @@ fn agent_command(
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
-    codex_endpoint: Option<&str>,
     name: &str,
 ) -> Result<CommandBuilder, String> {
-    #[cfg(unix)]
-    let _ = codex_endpoint;
     let mut command = match agent {
         "claude" => {
             let mut command = CommandBuilder::new("claude");
@@ -865,17 +917,7 @@ fn agent_command(
         "codex" => {
             let mut command = CommandBuilder::new("codex");
             if let Some(provider_session_id) = provider_session_id {
-                #[cfg(unix)]
                 command.args(["resume", provider_session_id]);
-                #[cfg(windows)]
-                command.args([
-                    "--remote",
-                    codex_endpoint.expect("Codex server is running"),
-                    "resume",
-                    provider_session_id,
-                ]);
-            } else if resume {
-                return Err("Codex session ID is unavailable".into());
             }
             command
         }
@@ -895,6 +937,7 @@ async fn spawn_session(
     roots: State<'_, Roots>,
     provider_sessions: State<'_, ProviderSessions>,
     codex_server: State<'_, CodexServer>,
+    codex_discovery: State<'_, CodexDiscovery>,
     session_id: String,
     run_id: String,
     root_id: String,
@@ -937,9 +980,6 @@ async fn spawn_session(
         stop_pty(&mut session)?;
     }
 
-    if agent == "codex" && resume && provider_session_id.is_none() {
-        return Err("This Codex tab has no exact session ID. Start a new session instead.".into());
-    }
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -948,54 +988,21 @@ async fn spawn_session(
             pixel_height: 0,
         })
         .map_err(|error| error.to_string())?;
-    let mut codex_created = agent == "codex" && provider_session_id.is_none();
-    if codex_created {
-        provider_session_id = Some(start_codex_thread(&codex_server, &cwd)?);
-    } else if agent == "codex" {
-        if !codex_thread_loaded(
+    if agent == "codex"
+        && provider_session_id.is_some()
+        && !codex_thread_resumable(
             &codex_server,
             provider_session_id.as_deref().expect("restored above"),
-        )? {
-            provider_session_id = Some(start_codex_thread(&codex_server, &cwd)?);
-            codex_created = true;
-        }
+        )?
+    {
+        update_provider_session(&app, &provider_sessions, &session_id, None)?;
+        provider_session_id = None;
     }
-    if agent == "codex" {
-        let provider_session_id = provider_session_id
-            .as_ref()
-            .expect("created or restored above");
-        if let Err(error) = update_provider_session(
-            &app,
-            &provider_sessions,
-            &session_id,
-            Some(provider_session_id.clone()),
-        ) {
-            if codex_created {
-                archive_codex_thread(&codex_server, provider_session_id).map_err(|cleanup| {
-                    format!("{error}. Could not archive the new Codex thread: {cleanup}")
-                })?;
-            }
-            return Err(error);
-        }
-    }
-    let codex_endpoint = if agent == "codex" {
-        Some(
-            codex_server
-                .0
-                .lock()
-                .map_err(|error| error.to_string())?
-                .endpoint
-                .clone(),
-        )
-    } else {
-        None
-    };
     let mut command = agent_command(
         &agent,
         resume,
         &session_id,
         provider_session_id.as_deref(),
-        codex_endpoint.as_deref(),
         &name,
     )?;
     if agent == "claude" {
@@ -1004,9 +1011,24 @@ async fn spawn_session(
     }
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
+    let codex_threads = if agent == "codex" && provider_session_id.is_none() {
+        begin_codex_discovery(&codex_discovery)?;
+        match codex_thread_ids(&codex_server, &cwd) {
+            Ok(threads) => Some(threads),
+            Err(error) => {
+                finish_codex_discovery(&codex_discovery);
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
+            if codex_threads.is_some() {
+                finish_codex_discovery(&codex_discovery);
+            }
             return Err(if agent == "shell" {
                 error.to_string()
             } else {
@@ -1022,6 +1044,9 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
+            if codex_threads.is_some() {
+                finish_codex_discovery(&codex_discovery);
+            }
             return Err(error.to_string());
         }
     };
@@ -1030,22 +1055,33 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
+            if codex_threads.is_some() {
+                finish_codex_discovery(&codex_discovery);
+            }
             return Err(error.to_string());
         }
     };
-    sessions
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .insert(
-            session_id.clone(),
-            PtySession {
-                child,
-                master: pair.master,
-                writer,
-                run_id: run_id.clone(),
-            },
-        );
+    let mut running = match sessions.0.lock() {
+        Ok(running) => running,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            if codex_threads.is_some() {
+                finish_codex_discovery(&codex_discovery);
+            }
+            return Err(error.to_string());
+        }
+    };
+    running.insert(
+        session_id.clone(),
+        PtySession {
+            child,
+            master: pair.master,
+            writer,
+            run_id: run_id.clone(),
+        },
+    );
+    drop(running);
 
     let event_session_id = session_id.clone();
     let event_run_id = run_id.clone();
@@ -1096,6 +1132,37 @@ async fn spawn_session(
             },
         );
     });
+
+    if let Some(existing) = codex_threads {
+        let discovery_app = app.clone();
+        let discovery_session_id = session_id.clone();
+        thread::spawn(move || {
+            loop {
+                if let Ok(current) = codex_thread_ids(&discovery_app.state::<CodexServer>(), &cwd)
+                    && let Some(provider_session_id) = current.difference(&existing).next()
+                    && update_provider_session(
+                        &discovery_app,
+                        &discovery_app.state::<ProviderSessions>(),
+                        &discovery_session_id,
+                        Some(provider_session_id.clone()),
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
+                let running = discovery_app
+                    .state::<Sessions>()
+                    .0
+                    .lock()
+                    .is_ok_and(|sessions| sessions.contains_key(&discovery_session_id));
+                if !running {
+                    break;
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+            finish_codex_discovery(&discovery_app.state::<CodexDiscovery>());
+        });
+    }
 
     Ok(provider_session_id)
 }
@@ -1327,6 +1394,7 @@ async fn read_usage(
 pub fn run() {
     tauri::Builder::default()
         .manage(Sessions::default())
+        .manage(CodexDiscovery::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
@@ -1336,6 +1404,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             choose_directory,
+            default_directory,
             revoke_directory,
             spawn_session,
             write_session,

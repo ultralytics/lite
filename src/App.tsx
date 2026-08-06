@@ -99,22 +99,33 @@ function SessionRow({
           </span>
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={onSelect}
-          className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2 text-left"
-        >
-          <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
-            <ProviderIcon agent={session.agent} />
-            <span
-              className={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar ${session.running ? "bg-emerald-500" : "bg-muted-foreground/50"}`}
-            />
-          </span>
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 px-2 py-2">
+          <button type="button" onClick={onSelect} aria-label={`Open ${session.name}`}>
+            <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+              <ProviderIcon agent={session.agent} />
+              <span
+                className={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-sidebar ${session.running ? "bg-emerald-500" : "bg-muted-foreground/50"}`}
+              />
+            </span>
+          </button>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-xs font-medium">{session.name}</span>
-            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{session.cwd}</span>
+            <button
+              type="button"
+              className="block w-full truncate text-left text-xs font-medium hover:underline"
+              title="Rename session"
+              onClick={() => setRenaming(true)}
+            >
+              {session.name}
+            </button>
+            <button
+              type="button"
+              onClick={onSelect}
+              className="mt-0.5 block w-full truncate text-left text-[11px] text-muted-foreground"
+            >
+              {session.cwd}
+            </button>
           </span>
-        </button>
+        </div>
       )}
       <DropdownMenu>
         <DropdownMenuTrigger
@@ -328,14 +339,18 @@ function App() {
                       onClose={() => void closeSession(session)}
                     />
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => setNewSessionOpen(true)}
+                    className="flex w-full items-center gap-2.5 rounded-lg border border-dashed px-2 py-2 text-left text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                  >
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+                      <Plus className="size-4" />
+                    </span>
+                    <span className="text-xs font-medium">New session</span>
+                  </button>
                 </div>
               </ScrollArea>
-              <div className="border-t border-sidebar-border p-2">
-                <Button variant="ghost" className="w-full justify-start" onClick={() => setNewSessionOpen(true)}>
-                  <Plus />
-                  New session
-                </Button>
-              </div>
             </aside>
           </ResizablePanel>
           <ResizableHandle />
