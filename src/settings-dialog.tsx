@@ -88,9 +88,9 @@ export function SettingsDialog({
             return (
               <div key={option.id} className="flex items-center gap-3">
                 <ProviderIcon agent={option.agent} provider={option.provider} className="size-5 shrink-0" />
-                <span className="w-20 shrink-0">
+                <span className="w-32 shrink-0">
                   <span className="block text-sm font-medium">{option.label}</span>
-                  <span className="block truncate font-mono text-[10px] text-muted-foreground">{option.variable}</span>
+                  <span className="block font-mono text-[10px] text-muted-foreground">{option.variable}</span>
                 </span>
                 {stored ? (
                   <>
