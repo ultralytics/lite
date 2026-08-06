@@ -488,7 +488,7 @@ function App() {
           </div>
         </header>
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-          <ResizablePanel defaultSize="20%" minSize="15%" maxSize="30%">
+          <ResizablePanel defaultSize="20%" minSize="15%" maxSize="30%" collapsible collapsedSize="0%">
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
               <div className="flex h-9 shrink-0 items-center justify-between pr-1.5 pl-3">
                 <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Sessions</span>

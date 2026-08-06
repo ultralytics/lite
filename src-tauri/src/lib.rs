@@ -224,7 +224,7 @@ fn is_sensitive_path(root: &Path, path: &Path) -> bool {
 }
 
 fn command_output(directory: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
+    let output = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
         .arg("-C")
         .arg(path_text(directory))
         .args(args)
@@ -698,6 +698,12 @@ fn codex_requests_once(
     }
 }
 
+fn codex_executable() -> Result<PathBuf, String> {
+    resolve_executable("codex").ok_or_else(|| {
+        "Could not find the Codex CLI in your PATH. Install it, then reopen this tab.".to_owned()
+    })
+}
+
 fn ensure_codex_server(server: &CodexServer) -> Result<(), String> {
     let mut server = server.0.lock().map_err(|error| error.to_string())?;
     let endpoint = server.endpoint.clone();
@@ -720,7 +726,7 @@ fn ensure_codex_server(server: &CodexServer) -> Result<(), String> {
 
     #[cfg(windows)]
     {
-        let mut login = Command::new("codex");
+        let mut login = Command::new(codex_executable()?);
         login.args(["login", "status"]);
         if let Some(path) = user_path() {
             login.env("PATH", path);
@@ -740,7 +746,7 @@ fn ensure_codex_server(server: &CodexServer) -> Result<(), String> {
         );
         drop(listener);
     }
-    let mut command = Command::new("codex");
+    let mut command = Command::new(codex_executable()?);
     #[cfg(unix)]
     command.args(["app-server", "--listen", "unix://"]);
     #[cfg(windows)]
@@ -1070,22 +1076,28 @@ async fn delete_api_key(app: AppHandle, name: String) -> Result<(), String> {
     write_api_keys(&app, &keys)
 }
 
-fn executable_exists(name: &str) -> bool {
-    let Some(path) = user_path() else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|directory| {
+// A launched app inherits a bare PATH, and the PATH given to a child is not used to find the program
+// itself, so anything Lite runs has to be located in the user's own PATH first and run by full path.
+fn resolve_executable(name: &str) -> Option<PathBuf> {
+    let path = user_path()?;
+    std::env::split_paths(&path).find_map(|directory| {
         #[cfg(windows)]
         {
             ["exe", "cmd", "bat"]
                 .iter()
-                .any(|extension| directory.join(format!("{name}.{extension}")).is_file())
+                .map(|extension| directory.join(format!("{name}.{extension}")))
+                .find(|candidate| candidate.is_file())
         }
         #[cfg(unix)]
         {
-            directory.join(name).is_file()
+            let candidate = directory.join(name);
+            candidate.is_file().then_some(candidate)
         }
     })
+}
+
+fn executable_exists(name: &str) -> bool {
+    resolve_executable(name).is_some()
 }
 
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1849,7 +1861,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         Err(_) => return Ok(None),
     };
     let branch = command_output(&path, &["branch", "--show-current"])?;
-    let mut child = Command::new("git")
+    let mut child = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
         .arg("-C")
         .arg(path_text(&path))
         .args(["status", "--short"])
