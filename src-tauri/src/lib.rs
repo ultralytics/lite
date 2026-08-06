@@ -556,6 +556,30 @@ async fn choose_directory(
     grant_directory(&app, &roots, path).map(Some)
 }
 
+// A typed path is a folder like any other: it has to exist and it goes through the same grant.
+#[tauri::command]
+async fn use_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<DirectoryGrant, String> {
+    let path = path.trim();
+    let path = match path.strip_prefix('~') {
+        Some(rest) => app
+            .path()
+            .home_dir()
+            .map_err(|error| error.to_string())?
+            .join(rest.trim_start_matches(['/', '\\'])),
+        None => PathBuf::from(path),
+    };
+    if !path.is_dir() {
+        return Err("That folder does not exist".into());
+    }
+    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
+    grant_directory(&app, &roots, path)
+}
+
 #[tauri::command]
 fn revoke_directory(app: AppHandle, roots: State<Roots>, root_id: String) -> Result<(), String> {
     update_roots(&app, &roots, |roots| {
@@ -1959,6 +1983,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             choose_directory,
+            use_directory,
             default_directory,
             revoke_directory,
             spawn_session,

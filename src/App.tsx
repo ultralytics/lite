@@ -113,8 +113,8 @@ function SessionRow({
       className={`group flex items-center rounded-lg pr-1 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2">
-        <span className="relative flex size-8 shrink-0 items-center justify-center rounded-md border bg-background">
-          <ProviderIcon agent={session.agent} provider={session.provider} className="size-4.5" />
+        <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+          <ProviderIcon agent={session.agent} provider={session.provider} />
           {starting ? (
             <Spinner
               className={`absolute -right-1 -bottom-1 size-3 rounded-full bg-background text-muted-foreground ring-2 ${active ? "ring-sidebar-accent" : "ring-sidebar"}`}
@@ -436,10 +436,10 @@ function App() {
           data-tauri-drag-region
           className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[platform=macos]:pl-[86px]"
         >
-          <LiteLogomark className="size-6" />
+          <LiteLogomark className="size-5" />
           {selected ? (
             <>
-              <ProviderIcon agent={selected.agent} provider={selected.provider} className="size-6" />
+              <ProviderIcon agent={selected.agent} provider={selected.provider} />
               <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
             </>
@@ -452,21 +452,21 @@ function App() {
                 render={
                   <Button
                     variant="ghost"
-                    size="icon-lg"
+                    size="icon-sm"
                     className="relative"
                     onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
                     aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
                   />
                 }
               >
-                <Sun className="size-6 rotate-0 scale-100 transition-transform motion-reduce:transition-none dark:-rotate-90 dark:scale-0" />
-                <Moon className="absolute size-6 rotate-90 scale-0 transition-transform motion-reduce:transition-none dark:rotate-0 dark:scale-100" />
+                <Sun className="size-4 rotate-0 scale-100 transition-transform motion-reduce:transition-none dark:-rotate-90 dark:scale-0" />
+                <Moon className="absolute size-4 rotate-90 scale-0 transition-transform motion-reduce:transition-none dark:rotate-0 dark:scale-100" />
               </TooltipTrigger>
               <TooltipContent>{theme === "dark" ? "Light mode" : "Dark mode"}</TooltipContent>
             </Tooltip>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-lg" aria-label="Lite menu" />}>
-                <MoreHorizontal className="size-6" />
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Lite menu" />}>
+                <MoreHorizontal />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 {version ? (

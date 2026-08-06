@@ -62,6 +62,7 @@ export function NewSessionDialog({
 }) {
   const [choiceId, setChoiceId] = useState(choices[0].id);
   const [directory, setDirectory] = useState<DirectoryGrant>();
+  const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [error, setError] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
@@ -75,7 +76,10 @@ export function NewSessionDialog({
     void invoke<DirectoryGrant>("default_directory")
       .then((selected) => {
         if (disposed) void invoke("revoke_directory", { rootId: selected.id });
-        else setDirectory(selected);
+        else {
+          setDirectory(selected);
+          setPath(selected.path);
+        }
       })
       .catch((reason) => {
         if (!disposed) setError(String(reason));
@@ -100,9 +104,25 @@ export function NewSessionDialog({
       if (selected) {
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setDirectory(selected);
+        setPath(selected.path);
       }
     } catch (reason) {
       setError(String(reason));
+    }
+  }
+
+  async function grant(): Promise<DirectoryGrant | undefined> {
+    if (directory && directory.path === path.trim()) return directory;
+    try {
+      const selected = await invoke<DirectoryGrant>("use_directory", { path });
+      if (directory) void invoke("revoke_directory", { rootId: directory.id });
+      setDirectory(selected);
+      setPath(selected.path);
+      setError("");
+      return selected;
+    } catch (reason) {
+      setError(String(reason));
+      return undefined;
     }
   }
 
@@ -114,15 +134,16 @@ export function NewSessionDialog({
     onOpenChange(open);
   }
 
-  function create() {
-    if (!directory) return;
-    const project = directory.path.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
+  async function create() {
+    const folder = await grant();
+    if (!folder) return;
+    const project = folder.path.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
     onCreate({
       id: crypto.randomUUID(),
       agent: choice.agent,
       provider: choice.provider,
-      cwd: directory.path,
-      rootId: directory.id,
+      cwd: folder.path,
+      rootId: folder.id,
       name: project,
       running: false,
     });
@@ -132,7 +153,7 @@ export function NewSessionDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>New session</DialogTitle>
           <DialogDescription>Choose an agent and the folder it should work in.</DialogDescription>
@@ -173,16 +194,24 @@ export function NewSessionDialog({
         </div>
         <div className="flex gap-2">
           <Input
-            value={directory?.path ?? ""}
-            readOnly
-            className="font-mono text-xs"
-            placeholder="Choose a project folder"
+            value={path}
+            className="min-w-0 flex-1 font-mono text-xs"
+            placeholder="Type or choose a project folder"
             aria-label="Project folder"
+            onChange={(event) => setPath(event.target.value)}
+            onBlur={() => void grant()}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void grant();
+            }}
           />
-          <Button variant="outline" onClick={chooseFolder} disabled={!directory && !error}>
-            <FolderOpen />
-            Browse
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={<Button variant="outline" size="icon" onClick={chooseFolder} aria-label="Browse for a folder" />}
+            >
+              <FolderOpen />
+            </TooltipTrigger>
+            <TooltipContent>Browse</TooltipContent>
+          </Tooltip>
         </div>
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
         {status && !status.available ? <p className="text-xs text-muted-foreground">{status.detail}</p> : null}
@@ -201,7 +230,7 @@ export function NewSessionDialog({
               Open setup guide
             </Button>
           ) : (
-            <Button disabled={!directory || !status} onClick={create}>
+            <Button disabled={!path.trim() || !status} onClick={() => void create()}>
               {status ? null : <Spinner />}
               Start session
             </Button>
