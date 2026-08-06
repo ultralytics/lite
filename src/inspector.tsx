@@ -174,6 +174,8 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   const [selected, setSelected] = useState<FileEntry | null>(null);
   const [source, setSource] = useState("");
   const [error, setError] = useState("");
+  // Nothing here watches the disk, so rereading is the user's call and rebuilding the tree does it.
+  const [reading, setReading] = useState(0);
 
   async function openFile(entry: FileEntry) {
     setSelected(entry);
@@ -209,9 +211,22 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
     );
   }
   return (
-    <ScrollArea className="h-full">
-      <FileTree root={root} rootId={rootId} onOpen={(entry) => void openFile(entry)} />
-    </ScrollArea>
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex h-9 shrink-0 items-center justify-between border-b px-3 text-xs">
+        <span className="font-medium">Files</span>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => setReading((count) => count + 1)}
+          aria-label="Reread this folder"
+        >
+          <RefreshCw />
+        </Button>
+      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <FileTree key={reading} root={root} rootId={rootId} onOpen={(entry) => void openFile(entry)} />
+      </ScrollArea>
+    </div>
   );
 }
 
