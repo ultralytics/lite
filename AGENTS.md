@@ -42,9 +42,9 @@ After opening a PR:
 
 ```bash
 bun install
-bun run check       # Biome lint and native TypeScript check
-bun run format      # Biome write
-bun run build       # type check and production bundle
+bun run check  # Biome lint and native TypeScript check
+bun run format # Biome write
+bun run build  # type check and production bundle
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
 bun run tauri dev   # run the desktop app against the dev server

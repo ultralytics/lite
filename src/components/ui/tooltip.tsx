@@ -1,3 +1,5 @@
+// Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 "use client";
 
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
