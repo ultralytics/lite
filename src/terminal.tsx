@@ -72,6 +72,10 @@ function storedFontSize(): number {
 export function TerminalView({ sessionId, theme }: { sessionId: string; theme: Theme }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
+  // Read when a terminal is built, so switching sessions paints the new one in the current theme
+  // without rebuilding it every time the theme changes.
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -83,6 +87,7 @@ export function TerminalView({ sessionId, theme }: { sessionId: string; theme: T
       fontSize: storedFontSize(),
       lineHeight: 1.25,
       scrollback: 5000,
+      theme: themes[themeRef.current],
     });
     terminalRef.current = terminal;
     const fit = new FitAddon();
@@ -135,7 +140,6 @@ export function TerminalView({ sessionId, theme }: { sessionId: string; theme: T
     };
   }, [sessionId]);
 
-  // Applied in the same commit as the effect above, so a new terminal is painted with the current theme.
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = themes[theme];
   }, [theme]);

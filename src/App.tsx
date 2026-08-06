@@ -439,7 +439,7 @@ function App() {
           <LiteLogomark className="size-6" />
           {selected ? (
             <>
-              <ProviderIcon agent={selected.agent} provider={selected.provider} className="size-5" />
+              <ProviderIcon agent={selected.agent} provider={selected.provider} className="size-6" />
               <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
             </>
@@ -452,21 +452,21 @@ function App() {
                 render={
                   <Button
                     variant="ghost"
-                    size="icon-sm"
+                    size="icon-lg"
                     className="relative"
                     onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
                     aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
                   />
                 }
               >
-                <Sun className="size-4 rotate-0 scale-100 transition-transform motion-reduce:transition-none dark:-rotate-90 dark:scale-0" />
-                <Moon className="absolute size-4 rotate-90 scale-0 transition-transform motion-reduce:transition-none dark:rotate-0 dark:scale-100" />
+                <Sun className="size-6 rotate-0 scale-100 transition-transform motion-reduce:transition-none dark:-rotate-90 dark:scale-0" />
+                <Moon className="absolute size-6 rotate-90 scale-0 transition-transform motion-reduce:transition-none dark:rotate-0 dark:scale-100" />
               </TooltipTrigger>
               <TooltipContent>{theme === "dark" ? "Light mode" : "Dark mode"}</TooltipContent>
             </Tooltip>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Lite menu" />}>
-                <MoreHorizontal />
+              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-lg" aria-label="Lite menu" />}>
+                <MoreHorizontal className="size-6" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
                 {version ? (
