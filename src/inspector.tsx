@@ -1,8 +1,8 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ChevronRight, File, FileCode2, Folder, FolderTree, Gauge, GitBranch, RefreshCw, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

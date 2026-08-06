@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import * as React from "react";
 import { Input as InputPrimitive } from "@base-ui/react/input";
+import type * as React from "react";
 
 import { cn } from "@/lib/utils";
 

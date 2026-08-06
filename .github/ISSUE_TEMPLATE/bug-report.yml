@@ -21,7 +21,7 @@ body:
     attributes:
       label: Environment
       description: Include your OS, Lite version, and relevant Claude Code or Codex CLI version.
-      placeholder: "macOS 26.0 · Lite 0.1.0 · codex-cli 0.146.0"
+      placeholder: "macOS 26.0 · Lite version · codex-cli 0.146.0"
     validations:
       required: true
   - type: textarea

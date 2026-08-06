@@ -1,8 +1,8 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FolderOpen, TerminalSquare } from "lucide-react";
+import { useState } from "react";
 
 import { ClaudeLogomark, OpenAILogomark } from "@/brand-icons";
 import { Button } from "@/components/ui/button";

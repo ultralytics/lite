@@ -1,9 +1,9 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import { subscribeOutput } from "@/output-store";

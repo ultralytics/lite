@@ -1,0 +1,108 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# Build native installers and publish a GitHub release when Cargo.toml version changes
+
+name: Publish Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+
+jobs:
+  check:
+    if: github.repository == 'ultralytics/lite' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      increment: ${{ steps.release.outputs.increment }}
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(cargo metadata --format-version 1 --no-deps --manifest-path src-tauri/Cargo.toml | jq -r '.packages[0].version')
+          TAG="v$VERSION"
+          RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" 2>/dev/null || true)
+          if [ -n "$RELEASE" ]; then
+            if [ "$(jq -r .draft <<< "$RELEASE")" != "true" ]; then
+              echo "increment=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            RELEASE_ID=$(jq -r .id <<< "$RELEASE")
+          else
+            RELEASE_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$TAG" \
+              -f name="Lite $TAG" \
+              -f body="Download the installer for your operating system below. Lite runs locally and uses your existing Claude Code and Codex authentication." \
+              -F draft=true \
+              -F generate_release_notes=true \
+              --jq .id)
+          fi
+          echo "increment=true" >> "$GITHUB_OUTPUT"
+          echo "release_id=$RELEASE_ID" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.increment == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.platform }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+      - run: bun ci
+      - run: bun run check
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --target ${{ matrix.target }}
+          releaseId: ${{ needs.check.outputs.release_id }}
+          releaseDraft: true
+          releaseAssetNamePattern: Lite_[version]_[platform]_[arch][setup][ext]
+          retryAttempts: 2
+          tauriScript: bun run tauri
+          uploadUpdaterJson: false
+          uploadUpdaterSignatures: false
+
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.check.outputs.release_id }}
+        run: gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false

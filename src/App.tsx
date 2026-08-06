@@ -1,9 +1,9 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { Moon, MoreHorizontal, Plus, RotateCcw, SquareTerminal, Sun, X } from "lucide-react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { ClaudeLogomark, LiteLogomark, OpenAILogomark } from "@/brand-icons";
 import { Button } from "@/components/ui/button";

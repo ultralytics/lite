@@ -2,10 +2,10 @@
 
 [package]
 name = "lite"
-version = "0.1.0"
+version = "0.0.1"
 description = "A fast, local workspace for AI coding agents."
 authors = ["Ultralytics"]
-edition = "2021"
+edition = "2024"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

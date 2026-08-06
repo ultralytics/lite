@@ -1,6 +1,5 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { useMemo } from "react";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import cpp from "highlight.js/lib/languages/cpp";
@@ -20,6 +19,7 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
+import { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import "highlight.js/styles/github-dark.css";
@@ -44,7 +44,7 @@ const languages = {
   xml,
   yaml,
 };
-Object.entries(languages).forEach(([name, language]) => hljs.registerLanguage(name, language));
+for (const [name, language] of Object.entries(languages)) hljs.registerLanguage(name, language);
 
 const extensionLanguages: Record<string, string> = {
   bash: "bash",
@@ -80,7 +80,7 @@ const extensionLanguages: Record<string, string> = {
 function highlighted(source: string, language?: string) {
   if (source.length <= 200_000 && language && hljs.getLanguage(language))
     return hljs.highlight(source, { language }).value;
-  return source.replace(/[&<>]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]!);
+  return source.replace(/[&<>]/g, (character) => (character === "&" ? "&amp;" : character === "<" ? "&lt;" : "&gt;"));
 }
 
 function HighlightedCode({ source, language }: { source: string; language?: string }) {

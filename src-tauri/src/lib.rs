@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 use atomicwrites::{AllowOverwrite, AtomicFile};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -489,7 +489,7 @@ fn codex_exchange<S: Read + Write, F: FnOnce(&S) -> Result<(), String>>(
 ) -> Result<HashMap<u64, serde_json::Value>, String> {
     socket
         .send(Message::Text(
-            serde_json::json!({"method":"initialize","id":0,"params":{"clientInfo":{"name":"ultralytics_lite","title":"Lite","version":"0.1.0"}}})
+            serde_json::json!({"method":"initialize","id":0,"params":{"clientInfo":{"name":"ultralytics_lite","title":"Lite","version":env!("CARGO_PKG_VERSION")}}})
                 .to_string()
                 .into(),
         ))
@@ -1010,7 +1010,9 @@ async fn spawn_session(
             return Err(if agent == "shell" {
                 error.to_string()
             } else {
-                format!("Could not start {agent}. Install its CLI and make sure it is available in your PATH. {error}")
+                format!(
+                    "Could not start {agent}. Install its CLI and make sure it is available in your PATH. {error}"
+                )
             });
         }
     };

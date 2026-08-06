@@ -20,13 +20,13 @@ address every finding, and hand off only after a cold full-diff review on the li
 ## Commands
 
 ```bash
-pnpm install
-pnpm check
-pnpm build
+bun install
+bun run check
+bun run build
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
 cargo check --manifest-path src-tauri/Cargo.toml
-pnpm tauri dev
-pnpm tauri build
+bun run tauri dev
+bun run tauri build
 ```
 
 ## Architecture

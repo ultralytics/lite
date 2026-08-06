@@ -16,10 +16,11 @@ export function appendOutput(sessionId: string, data: number[]) {
   buffer.chunks.push(bytes);
   buffer.size += bytes.byteLength;
   while (buffer.size > MAX_BYTES && buffer.chunks.length > 1) {
-    buffer.size -= buffer.chunks.shift()!.byteLength;
+    const discarded = buffer.chunks.shift();
+    if (discarded) buffer.size -= discarded.byteLength;
   }
   buffers.set(sessionId, buffer);
-  listeners.get(sessionId)?.forEach((listener) => listener(bytes));
+  for (const listener of listeners.get(sessionId) ?? []) listener(bytes);
 }
 
 export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) => void) {
@@ -27,7 +28,9 @@ export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) 
   sessionListeners.add(listener);
   listeners.set(sessionId, sessionListeners);
   buffers.get(sessionId)?.chunks.forEach(listener);
-  return () => sessionListeners.delete(listener);
+  return () => {
+    sessionListeners.delete(listener);
+  };
 }
 
 export function clearOutput(sessionId: string) {

@@ -1,39 +1,117 @@
-# Lite
+<a href="https://www.ultralytics.com/"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/logo/Ultralytics_Logotype_Original.svg" width="320" alt="Ultralytics logo"></a>
 
-Lite is a fast, local workspace for Claude Code, Codex, and your shell. Keep multiple sessions together with the files
-and Git state that belong to them—without turning your computer into an indexing service.
+# ⚡ Ultralytics Lite
 
-## Product principles
+[![Ultralytics Actions](https://github.com/ultralytics/lite/actions/workflows/format.yml/badge.svg)](https://github.com/ultralytics/lite/actions/workflows/format.yml)
+[![CI](https://github.com/ultralytics/lite/actions/workflows/ci.yml/badge.svg)](https://github.com/ultralytics/lite/actions/workflows/ci.yml)
+[![Release](https://github.com/ultralytics/lite/actions/workflows/publish.yml/badge.svg)](https://github.com/ultralytics/lite/actions/workflows/publish.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/ultralytics/lite?logo=github)](https://github.com/ultralytics/lite/releases/latest)
+[![License](https://img.shields.io/github/license/ultralytics/lite)](LICENSE)
 
-- **Effortless:** Install, choose a folder, and start an agent. No account or setup wizard.
-- **Quiet:** Idle means idle. No repository indexing, background file watchers, telemetry, or cloud service.
-- **Local:** Commands run on your machine using your existing agent installations and credentials.
-- **Focused:** Sessions, a lazy file browser, a read-only file viewer, and essential Git context.
-- **Small:** Every feature must justify its interface, dependency, CPU, memory, and documentation cost.
+[![Ultralytics Discord](https://img.shields.io/discord/1089800235347353640?logo=discord&logoColor=white&label=Discord&color=blue)](https://discord.com/invite/ultralytics)
+[![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com/)
+[![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite targets macOS, Windows, and Linux with a shared Tauri, Rust, and React codebase.
+Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
 
-## MVP
+<div align="center">
+  <br>
+  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/ultralytics/lite/blob/005876813215ea52157027cee64ecd97a20e534a/lite-screenshot.png?raw=true" width="100%" alt="Ultralytics Lite desktop app"></a>
+  <br>
+</div>
 
-- Keep Claude Code, Codex, and ordinary shell sessions in one resizable workspace.
-- Resume dormant tabs after an app or system restart. Lite records only local session metadata; each provider stores its
-  own conversation history.
-- Reuse the normal Claude Code and Codex login. Authenticate in the provider CLI once and every later Lite session uses
-  that provider's existing local credentials—Lite never reads or stores tokens.
-- Browse folders on demand, preview popular source languages with syntax highlighting, and render Markdown safely.
-- See the current Git branch, worktree, and changed files without repository indexing.
-- Inspect per-session context when Claude reports it and provider-wide limits reported by Claude or Codex.
+## ✨ Features
 
-## Development
+- Run Claude Code, Codex, and shell sessions side by side
+- Resume session tabs after closing Lite or restarting your computer
+- Authenticate once with each provider and reuse its existing local credentials
+- Browse files on demand with syntax highlighting for popular languages
+- Preview rendered Markdown safely alongside source files
+- See the active Git branch, worktree, and changed files
+- Inspect per-session context and provider usage reported by Claude or Codex
+- Switch between light and dark themes
 
-Install [Rust](https://www.rust-lang.org/tools/install), the platform-specific
-[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), and pnpm, then run:
+Lite is intentionally quiet: idle means idle. It does not index your repository, watch every file, read provider tokens, or send telemetry.
+
+## 📦 Install
+
+Download Lite from the [latest GitHub Release](https://github.com/ultralytics/lite/releases/latest). Release assets are built from the same source for macOS, Windows, and Linux.
+
+### macOS
+
+1. Download the `.dmg` matching your Mac: `aarch64` for Apple silicon or `x86_64` for Intel.
+2. Open the disk image and drag **Lite** into **Applications**.
+3. Try to open Lite once. If macOS blocks it, open **System Settings → Privacy & Security**, select **Open Anyway** for Lite, then confirm.
+
+### Windows
+
+1. Download the Windows `.exe` installer.
+2. Run the installer, then open **Lite** from the Start menu.
+3. If Microsoft Defender SmartScreen appears for this early unsigned release, select **More info → Run anyway**.
+
+### Linux
+
+Download either the portable `.AppImage` or the Debian/Ubuntu `.deb` package.
 
 ```bash
-pnpm install
-pnpm tauri dev
+# AppImage
+chmod +x Lite*.AppImage
+./Lite*.AppImage
+
+# Debian or Ubuntu
+sudo apt install ./Lite*.deb
 ```
 
-Build an installer with `pnpm tauri build`.
+## 🚀 First Run
 
-Lite currently validates the macOS experience first while CI compiles installers on macOS, Windows, and Linux.
+Install the provider CLIs you want to use:
+
+- [Claude Code](https://code.claude.com/docs/en/setup)
+- [Codex](https://developers.openai.com/codex/cli)
+
+Open each provider in Lite and complete its normal sign-in once. Claude Code and Codex keep credentials in their standard local stores, so every later Lite session reuses the same authentication. Lite never copies or stores those tokens.
+
+Choose a project folder, create a session, and work. Lite saves only the local metadata needed to restore tabs; provider conversation history remains owned by the provider CLI.
+
+## 🛠️ Development
+
+Install [Bun](https://bun.sh/), [Rust](https://www.rust-lang.org/tools/install), and the platform-specific [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then run:
+
+```bash
+git clone https://github.com/ultralytics/lite
+cd lite
+bun install
+bun run tauri dev
+```
+
+Useful checks:
+
+```bash
+bun run check       # Biome and native TypeScript checks
+bun run tauri build # Native installer for the current operating system
+```
+
+The frontend uses React, shadcn/ui Nova with Base UI, Tailwind CSS, Biome, and `tsgo`. Tauri and Rust own local persistence, terminals, Git, files, and provider processes.
+
+## 💡 Contribute
+
+Bug reports and focused feature proposals are welcome in [GitHub Issues](https://github.com/ultralytics/lite/issues). Please keep Lite's core rule in mind: the simplest complete solution wins.
+
+[![Ultralytics open-source contributors](https://raw.githubusercontent.com/ultralytics/assets/main/im/image-contributors.png)](https://github.com/ultralytics/lite/graphs/contributors)
+
+## 📄 License
+
+Lite is available under the [AGPL-3.0 License](LICENSE). For commercial licensing, contact [Ultralytics Licensing](https://www.ultralytics.com/license).
+
+<br>
+<div align="center">
+  <a href="https://github.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-github.png" width="3%" alt="Ultralytics GitHub"></a>
+  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.linkedin.com/company/ultralytics/"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-linkedin.png" width="3%" alt="Ultralytics LinkedIn"></a>
+  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://twitter.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-twitter.png" width="3%" alt="Ultralytics Twitter"></a>
+  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.youtube.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-youtube.png" width="3%" alt="Ultralytics YouTube"></a>
+  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://discord.com/invite/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-discord.png" width="3%" alt="Ultralytics Discord"></a>
+</div>
