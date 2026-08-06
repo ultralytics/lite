@@ -1134,6 +1134,26 @@ fn kimi_workspace_key(app: &AppHandle, cwd: &Path) -> Option<String> {
         .map(|(key, _)| key.clone())
 }
 
+// Launching Kimi without an id attaches to whatever session the directory already has rather than making
+// one, so the session a tab is showing is that directory's most recent, and a tab records it by claiming
+// it. A second tab there attaches to the same session until `/new` gives it one of its own to claim.
+fn kimi_current_session(app: &AppHandle, cwd: &Path) -> Option<String> {
+    let key = kimi_workspace_key(app, cwd)?;
+    let home = kimi_home(app).ok()?;
+    fs::read_dir(home.join("sessions").join(key))
+        .ok()?
+        .flatten()
+        .filter_map(|session| {
+            let name = session.file_name().to_str()?.to_owned();
+            if !session.file_type().ok()?.is_dir() || !is_provider_session_id(&name) {
+                return None;
+            }
+            Some((session.metadata().ok()?.modified().ok()?, name))
+        })
+        .max_by(|left, right| left.0.cmp(&right.0))
+        .map(|(_, name)| name)
+}
+
 // Only this directory's group is read, so a Kimi session started elsewhere is never claimed by this tab.
 fn kimi_session_ids(app: &AppHandle, cwd: &Path) -> HashSet<String> {
     let mut ids = HashSet::new();
@@ -1481,17 +1501,15 @@ async fn spawn_session(
             "15;0"
         },
     );
+    // Codex records a new thread per launch, so its discovery watches for one the tab did not start with.
+    // Kimi attaches to the directory's session instead, so its discovery reads that session directly.
     let known_sessions =
         if !signing_in && provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
-            let known = if agent == "kimi" {
-                Ok(kimi_session_ids(&app, &cwd))
+            if agent == "kimi" {
+                Some(HashSet::new())
             } else {
-                codex_thread_ids(&codex_server, &cwd)
-            };
-            // Losing discovery costs exact resume, not the session, so a failure here still opens the terminal.
-            match known {
-                Ok(known) => Some(known),
-                Err(_) => None,
+                // Losing discovery costs exact resume, not the session, so a failure still opens the terminal.
+                codex_thread_ids(&codex_server, &cwd).ok()
             }
         } else {
             None
@@ -1600,14 +1618,17 @@ async fn spawn_session(
         let discovery_agent = agent.clone();
         thread::spawn(move || {
             loop {
-                let current = if discovery_agent == "kimi" {
-                    Ok(kimi_session_ids(&discovery_app, &cwd))
+                let candidates = if discovery_agent == "kimi" {
+                    Ok(kimi_current_session(&discovery_app, &cwd)
+                        .into_iter()
+                        .collect::<HashSet<_>>())
                 } else {
                     codex_thread_ids(&discovery_app.state::<CodexServer>(), &cwd)
+                        .map(|current| current.difference(&existing).cloned().collect())
                 };
-                // Any candidate another session already claimed is skipped, so overlapping launches settle.
-                if let Ok(current) = current
-                    && current.difference(&existing).any(|provider_session_id| {
+                // Whatever another tab already claimed is skipped, so overlapping launches settle apart.
+                if let Ok(candidates) = candidates
+                    && candidates.iter().any(|provider_session_id| {
                         update_provider_session(
                             &discovery_app,
                             &discovery_app.state::<ProviderSessions>(),
