@@ -1425,6 +1425,15 @@ async fn spawn_session(
             provider_session_id = Some(saved_provider_session_id);
         }
     }
+    // An id the tab already holds is recorded here too, so no other tab claims that same session.
+    if let Some(known) = provider_session_id.as_deref() {
+        let _ = update_provider_session(
+            &app,
+            &provider_sessions,
+            &session_id,
+            Some(known.to_owned()),
+        );
+    }
     let stale = {
         let mut running = sessions.0.lock().map_err(|error| error.to_string())?;
         if let Some(session) = running.get_mut(&session_id) {
