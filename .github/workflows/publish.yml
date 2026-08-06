@@ -106,8 +106,39 @@ jobs:
           uploadUpdaterJson: true
           uploadUpdaterSignatures: false
 
+  sbom:
+    needs: check
+    if: needs.check.outputs.increment == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: bun install --frozen-lockfile --production
+      - uses: anchore/sbom-action@v0.24.0
+        env:
+          SYFT_SOURCE_NAME: Lite
+          SYFT_SOURCE_VERSION: ${{ needs.check.outputs.tag }}
+        with:
+          format: spdx-json
+          output-file: sbom.spdx.json
+          path: .
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Validate and upload SBOM
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          jq -e --arg version "${TAG#v}" '.spdxVersion == "SPDX-2.3" and .name == "Lite" and any(.packages[]; .name == "lite" and .versionInfo == $version)' sbom.spdx.json >/dev/null
+          jq -e '[.packages[].externalRefs[]? | select(.referenceType == "purl") | .referenceLocator] | any(startswith("pkg:cargo/")) and any(startswith("pkg:npm/"))' sbom.spdx.json >/dev/null
+          gh release upload "$TAG" sbom.spdx.json --clobber
+
   publish:
-    needs: [check, build]
+    needs: [check, build, sbom]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -120,7 +151,7 @@ jobs:
         run: |
           ASSETS=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets")
           VERSION=${TAG#v}
-          jq -e --arg version "$VERSION" '([.[].name] | sort) == (["Lite_\($version)_darwin_aarch64.app.tar.gz", "Lite_\($version)_darwin_aarch64.dmg", "Lite_\($version)_linux_amd64.AppImage", "Lite_\($version)_windows_x64-setup.exe", "latest.json"] | sort)' <<< "$ASSETS" >/dev/null
+          jq -e --arg version "$VERSION" '([.[].name] | sort) == (["Lite_\($version)_darwin_aarch64.app.tar.gz", "Lite_\($version)_darwin_aarch64.dmg", "Lite_\($version)_linux_amd64.AppImage", "Lite_\($version)_windows_x64-setup.exe", "latest.json", "sbom.spdx.json"] | sort)' <<< "$ASSETS" >/dev/null
           LATEST_ID=$(jq -r 'map(select(.name == "latest.json")) | first.id // empty' <<< "$ASSETS")
           test -n "$LATEST_ID"
           gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$LATEST_ID" > "$RUNNER_TEMP/latest.json"
