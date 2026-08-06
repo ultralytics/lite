@@ -14,21 +14,12 @@ use std::{
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+use tungstenite::Message;
 
 const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
-const CODEX_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
-static CODEX_DAEMON_STARTED: Mutex<bool> = Mutex::new(false);
-
-struct ProcessGuard(std::process::Child);
-
-impl Drop for ProcessGuard {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct PtySession {
     child: Box<dyn Child + Send + Sync>,
@@ -60,6 +51,13 @@ struct Roots(Mutex<HashMap<String, PathBuf>>);
 
 #[derive(Default)]
 struct ProviderSessions(Mutex<HashMap<String, String>>);
+
+struct CodexServer(Mutex<CodexServerState>);
+
+struct CodexServerState {
+    child: Option<std::process::Child>,
+    endpoint: String,
+}
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -244,7 +242,7 @@ fn provider_sessions_path(app: &AppHandle) -> Result<PathBuf, String> {
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?
-        .join("provider-sessions.json"))
+        .join("provider-sessions"))
 }
 
 fn load_roots(app: &AppHandle) -> Roots {
@@ -257,12 +255,51 @@ fn load_roots(app: &AppHandle) -> Roots {
 }
 
 fn load_provider_sessions(app: &AppHandle) -> ProviderSessions {
-    let sessions = provider_sessions_path(app)
-        .ok()
-        .and_then(|path| fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice::<HashMap<String, String>>(&bytes).ok())
-        .unwrap_or_default();
+    let mut sessions = HashMap::new();
+    if let Ok(entries) = provider_sessions_path(app)
+        .and_then(|path| fs::read_dir(path).map_err(|error| error.to_string()))
+    {
+        for entry in entries.flatten() {
+            let Some(session_id) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if uuid::Uuid::parse_str(&session_id).is_err() {
+                continue;
+            }
+            if let Ok(provider_session_id) = fs::read_to_string(entry.path()) {
+                let provider_session_id = provider_session_id.trim();
+                if uuid::Uuid::parse_str(provider_session_id).is_ok() {
+                    sessions.insert(session_id, provider_session_id.to_owned());
+                }
+            }
+        }
+    }
     ProviderSessions(Mutex::new(sessions))
+}
+
+fn load_codex_server(app: &AppHandle) -> Result<CodexServer, String> {
+    #[cfg(unix)]
+    let endpoint = {
+        let home = std::env::var_os("CODEX_HOME")
+            .map(PathBuf::from)
+            .map(Ok)
+            .unwrap_or_else(|| {
+                app.path()
+                    .home_dir()
+                    .map(|home| home.join(".codex"))
+                    .map_err(|error| error.to_string())
+            })?;
+        format!(
+            "unix://{}",
+            path_text(&home.join("app-server-control/app-server-control.sock"))
+        )
+    };
+    #[cfg(windows)]
+    let endpoint = String::new();
+    Ok(CodexServer(Mutex::new(CodexServerState {
+        child: None,
+        endpoint,
+    })))
 }
 
 fn save_roots(app: &AppHandle, roots: &Roots) -> Result<(), String> {
@@ -284,21 +321,41 @@ fn update_provider_session(
     session_id: &str,
     provider_session_id: Option<String>,
 ) -> Result<(), String> {
-    let path = provider_sessions_path(app)?;
-    if let Some(directory) = path.parent() {
-        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
-    }
+    uuid::Uuid::parse_str(session_id).map_err(|_| "Invalid session ID")?;
+    let directory = provider_sessions_path(app)?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let path = directory.join(session_id);
     let mut sessions = sessions.0.lock().map_err(|error| error.to_string())?;
     if let Some(provider_session_id) = provider_session_id {
+        if let Some(existing) = sessions.get(session_id) {
+            if existing == &provider_session_id {
+                return Ok(());
+            }
+        }
+        let temporary = directory.join(format!(".{session_id}.tmp"));
+        let mut file = fs::File::create(&temporary).map_err(|error| error.to_string())?;
+        file.write_all(provider_session_id.as_bytes())
+            .and_then(|()| file.sync_all())
+            .map_err(|error| error.to_string())?;
+        #[cfg(windows)]
+        if path.exists() {
+            fs::remove_file(&path).map_err(|error| error.to_string())?;
+        }
+        fs::rename(&temporary, &path).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        fs::File::open(&directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| error.to_string())?;
         sessions.insert(session_id.to_owned(), provider_session_id);
     } else {
+        match fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
         sessions.remove(session_id);
     }
-    fs::write(
-        path,
-        serde_json::to_vec(&*sessions).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
+    Ok(())
 }
 
 #[cfg(unix)]
@@ -431,126 +488,220 @@ fn revoke_directory(app: AppHandle, roots: State<Roots>, root_id: String) -> Res
     save_roots(&app, &roots)
 }
 
-fn codex_requests(
+fn codex_exchange<S: Read + Write, F: FnOnce(&S) -> Result<(), String>>(
+    mut socket: tungstenite::WebSocket<S>,
     requests: &[(u64, &str, serde_json::Value)],
+    clear_read_timeout: F,
 ) -> Result<HashMap<u64, serde_json::Value>, String> {
-    let mut daemon_started = CODEX_DAEMON_STARTED
-        .lock()
+    socket
+        .send(Message::Text(
+            serde_json::json!({"method":"initialize","id":0,"params":{"clientInfo":{"name":"ultralytics_lite","title":"Lite","version":"0.1.0"}}})
+                .to_string()
+                .into(),
+        ))
         .map_err(|error| error.to_string())?;
-    if !*daemon_started {
-        let mut daemon = Command::new("codex");
-        daemon.args(["app-server", "daemon", "start"]);
-        if let Some(path) = user_path() {
-            daemon.env("PATH", path);
-        }
-        let daemon = daemon.output().map_err(|error| error.to_string())?;
-        if !daemon.status.success() {
-            let message = String::from_utf8_lossy(&daemon.stderr).trim().to_owned();
-            return Err(if message.is_empty() {
-                "Could not start the Codex app server".into()
-            } else {
-                message
-            });
-        }
-        *daemon_started = true;
-    }
-    drop(daemon_started);
-    let mut command = Command::new("codex");
-    command.args(["app-server", "proxy"]);
-    if let Some(path) = user_path() {
-        command.env("PATH", path);
-    }
-    let mut child = ProcessGuard(
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|error| format!("Could not start Codex app server: {error}"))?,
-    );
-    let mut stdin = child
-        .0
-        .stdin
-        .take()
-        .ok_or("Codex app server did not open stdin")?;
-    let stdout = child
-        .0
-        .stdout
-        .take()
-        .ok_or("Codex app server did not open stdout")?;
-    let (sender, receiver) = std::sync::mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            let Ok(message) = serde_json::from_str::<serde_json::Value>(&line) else {
-                continue;
-            };
-            let Some(id) = message.get("id").and_then(serde_json::Value::as_u64) else {
-                continue;
-            };
-            let response = if let Some(error) = message.get("error") {
-                Err(error.to_string())
-            } else {
-                Ok(message.get("result").cloned().unwrap_or_default())
-            };
-            if sender.send((id, response)).is_err() {
-                break;
-            }
-        }
-    });
-
-    writeln!(
-        stdin,
-        "{}",
-        serde_json::json!({"method":"initialize","id":0,"params":{"clientInfo":{"name":"ultralytics_lite","title":"Lite","version":"0.1.0"}}})
-    )
-    .map_err(|error| error.to_string())?;
-    stdin.flush().map_err(|error| error.to_string())?;
     loop {
-        let (id, response) = receiver
-            .recv_timeout(CODEX_RESPONSE_TIMEOUT)
-            .map_err(|_| "Codex app server did not initialize")?;
-        if id == 0 {
-            response
-                .map_err(|error| format!("Codex app server rejected initialization: {error}"))?;
+        let message = socket.read().map_err(|error| error.to_string())?;
+        let Ok(message) = message.to_text() else {
+            continue;
+        };
+        let response: serde_json::Value =
+            serde_json::from_str(message).map_err(|error| error.to_string())?;
+        if response.get("id").and_then(serde_json::Value::as_u64) == Some(0) {
+            if let Some(error) = response.get("error") {
+                return Err(format!("Codex app server rejected initialization: {error}"));
+            }
             break;
         }
     }
-    writeln!(
-        stdin,
-        "{}",
-        serde_json::json!({"method":"initialized","params":{}})
-    )
-    .map_err(|error| error.to_string())?;
-    for (id, method, params) in requests {
-        writeln!(
-            stdin,
-            "{}",
-            serde_json::json!({"method":method,"id":id,"params":params})
-        )
+    clear_read_timeout(socket.get_ref())?;
+    socket
+        .send(Message::Text(
+            serde_json::json!({"method":"initialized","params":{}})
+                .to_string()
+                .into(),
+        ))
         .map_err(|error| error.to_string())?;
+    for (id, method, params) in requests {
+        socket
+            .send(Message::Text(
+                serde_json::json!({"method":method,"id":id,"params":params})
+                    .to_string()
+                    .into(),
+            ))
+            .map_err(|error| error.to_string())?;
     }
-    stdin.flush().map_err(|error| error.to_string())?;
 
     let mut responses = HashMap::new();
     while responses.len() < requests.len() {
-        let (id, result) = receiver
-            .recv_timeout(CODEX_RESPONSE_TIMEOUT)
-            .map_err(|_| "Codex app server did not return a response")?;
+        let message = socket.read().map_err(|error| error.to_string())?;
+        let Ok(message) = message.to_text() else {
+            continue;
+        };
+        let message: serde_json::Value =
+            serde_json::from_str(message).map_err(|error| error.to_string())?;
+        let Some(id) = message.get("id").and_then(serde_json::Value::as_u64) else {
+            continue;
+        };
         if requests.iter().any(|request| request.0 == id) {
-            responses.insert(
-                id,
-                result.map_err(|error| format!("Codex app server request failed: {error}"))?,
-            );
+            if let Some(error) = message.get("error") {
+                let missing_thread = requests.iter().find(|request| request.0 == id).is_some_and(
+                    |(_, method, params)| {
+                        let Some(thread_id) =
+                            params.get("threadId").and_then(serde_json::Value::as_str)
+                        else {
+                            return false;
+                        };
+                        method == &"thread/read"
+                            && error.get("code").and_then(serde_json::Value::as_i64) == Some(-32600)
+                            && error.get("message").and_then(serde_json::Value::as_str)
+                                == Some(&format!("thread not loaded: {thread_id}"))
+                    },
+                );
+                if missing_thread {
+                    responses.insert(id, serde_json::Value::Null);
+                    continue;
+                }
+                return Err(format!("Codex app server request failed: {error}"));
+            }
+            responses.insert(id, message.get("result").cloned().unwrap_or_default());
         }
     }
     Ok(responses)
 }
 
-fn codex_usage() -> Result<UsageSnapshot, String> {
-    let responses = codex_requests(&[
-        (1, "account/rateLimits/read", serde_json::json!({})),
-        (2, "account/usage/read", serde_json::json!({})),
-    ])?;
+fn codex_requests_once(
+    endpoint: &str,
+    requests: &[(u64, &str, serde_json::Value)],
+) -> Result<HashMap<u64, serde_json::Value>, String> {
+    #[cfg(unix)]
+    {
+        let path = endpoint
+            .strip_prefix("unix://")
+            .ok_or("Invalid Codex endpoint")?;
+        let stream =
+            std::os::unix::net::UnixStream::connect(path).map_err(|error| error.to_string())?;
+        stream
+            .set_read_timeout(Some(CODEX_CONNECT_TIMEOUT))
+            .map_err(|error| error.to_string())?;
+        let (socket, _) =
+            tungstenite::client("ws://localhost/", stream).map_err(|error| error.to_string())?;
+        codex_exchange(socket, requests, |stream| {
+            stream
+                .set_read_timeout(None)
+                .map_err(|error| error.to_string())
+        })
+    }
+    #[cfg(windows)]
+    {
+        let (socket, _) = tungstenite::connect(endpoint).map_err(|error| error.to_string())?;
+        codex_exchange(socket, requests, |_| Ok(()))
+    }
+}
+
+fn ensure_codex_server(server: &CodexServer) -> Result<(), String> {
+    let mut server = server.0.lock().map_err(|error| error.to_string())?;
+    let endpoint = server.endpoint.clone();
+    if let Some(child) = server.child.as_mut() {
+        if child
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_none()
+            && codex_requests_once(&endpoint, &[]).is_ok()
+        {
+            return Ok(());
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        server.child = None;
+    }
+    if !server.endpoint.is_empty() && codex_requests_once(&server.endpoint, &[]).is_ok() {
+        return Ok(());
+    }
+
+    #[cfg(windows)]
+    {
+        let mut login = Command::new("codex");
+        login.args(["login", "status"]);
+        if let Some(path) = user_path() {
+            login.env("PATH", path);
+        }
+        if !login
+            .status()
+            .map_err(|error| format!("Could not check Codex login: {error}"))?
+            .success()
+        {
+            return Err("Sign in once with `codex login`, then reopen this tab".into());
+        }
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
+        server.endpoint = format!(
+            "ws://{}",
+            listener.local_addr().map_err(|error| error.to_string())?
+        );
+        drop(listener);
+    }
+    let mut command = Command::new("codex");
+    #[cfg(unix)]
+    command.args(["app-server", "--listen", "unix://"]);
+    #[cfg(windows)]
+    command.args(["app-server", "--listen", &server.endpoint]);
+    if let Some(path) = user_path() {
+        command.env("PATH", path);
+    }
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| format!("Could not start Codex app server: {error}"))?;
+    server.child = Some(child);
+    for _ in 0..100 {
+        let ready = codex_requests_once(&server.endpoint, &[]).is_ok();
+        let exited = server
+            .child
+            .as_mut()
+            .expect("stored above")
+            .try_wait()
+            .map_err(|error| error.to_string())?
+            .is_some();
+        if ready {
+            if exited {
+                server.child = None;
+            }
+            return Ok(());
+        }
+        if exited {
+            server.child = None;
+            return Err("Codex app server exited before it was ready".into());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Err("Codex app server did not become ready".into())
+}
+
+fn codex_requests(
+    server: &CodexServer,
+    requests: &[(u64, &str, serde_json::Value)],
+) -> Result<HashMap<u64, serde_json::Value>, String> {
+    ensure_codex_server(server)?;
+    let endpoint = server
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .endpoint
+        .clone();
+    codex_requests_once(&endpoint, requests)
+}
+
+fn codex_usage(server: &CodexServer) -> Result<UsageSnapshot, String> {
+    let responses = codex_requests(
+        server,
+        &[
+            (1, "account/rateLimits/read", serde_json::json!({})),
+            (2, "account/usage/read", serde_json::json!({})),
+        ],
+    )?;
     let rates = responses.get(&1);
     let summary = responses.get(&2);
 
@@ -606,12 +757,15 @@ fn codex_usage() -> Result<UsageSnapshot, String> {
     })
 }
 
-fn start_codex_thread(cwd: &Path) -> Result<String, String> {
-    let responses = codex_requests(&[(
-        3,
-        "thread/start",
-        serde_json::json!({"cwd": path_text(cwd), "serviceName": "ultralytics_lite"}),
-    )])?;
+fn start_codex_thread(server: &CodexServer, cwd: &Path) -> Result<String, String> {
+    let responses = codex_requests(
+        server,
+        &[(
+            3,
+            "thread/start",
+            serde_json::json!({"cwd": path_text(cwd), "serviceName": "ultralytics_lite"}),
+        )],
+    )?;
     responses
         .get(&3)
         .and_then(|response| response.pointer("/thread/id"))
@@ -620,22 +774,62 @@ fn start_codex_thread(cwd: &Path) -> Result<String, String> {
         .ok_or("Codex app server did not return a thread ID".into())
 }
 
-fn archive_codex_thread(thread_id: &str) {
-    let _ = codex_requests(&[(
-        3,
-        "thread/archive",
-        serde_json::json!({"threadId": thread_id}),
-    )]);
+fn codex_thread_loaded(server: &CodexServer, thread_id: &str) -> Result<bool, String> {
+    codex_requests(
+        server,
+        &[(
+            4,
+            "thread/read",
+            serde_json::json!({"threadId": thread_id, "includeTurns": false}),
+        )],
+    )
+    .map(|responses| {
+        responses
+            .get(&4)
+            .is_some_and(|response| !response.is_null())
+    })
 }
 
-fn rollback_codex_thread(
-    app: &AppHandle,
-    sessions: &ProviderSessions,
-    session_id: &str,
-    thread_id: &str,
-) {
-    archive_codex_thread(thread_id);
-    let _ = update_provider_session(app, sessions, session_id, None);
+fn archive_codex_thread(server: &CodexServer, thread_id: &str) -> Result<(), String> {
+    codex_requests(
+        server,
+        &[(
+            3,
+            "thread/archive",
+            serde_json::json!({"threadId": thread_id}),
+        )],
+    )
+    .map(|_| ())
+}
+
+fn stop_codex_server(server: &CodexServer) {
+    let Ok(mut server) = server.0.lock() else {
+        return;
+    };
+    let Some(mut child) = server.child.take() else {
+        return;
+    };
+    #[cfg(unix)]
+    {
+        for attempts in [500, 40] {
+            let _ = Command::new("kill")
+                .args(["-TERM", &child.id().to_string()])
+                .status();
+            for _ in 0..attempts {
+                if child.try_wait().ok().flatten().is_some() {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    #[cfg(windows)]
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 }
 
 #[cfg(unix)]
@@ -659,8 +853,11 @@ fn agent_command(
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
+    codex_endpoint: Option<&str>,
     name: &str,
 ) -> Result<CommandBuilder, String> {
+    #[cfg(unix)]
+    let _ = codex_endpoint;
     let mut command = match agent {
         "claude" => {
             let mut command = CommandBuilder::new("claude");
@@ -674,7 +871,15 @@ fn agent_command(
         "codex" => {
             let mut command = CommandBuilder::new("codex");
             if let Some(provider_session_id) = provider_session_id {
+                #[cfg(unix)]
                 command.args(["resume", provider_session_id]);
+                #[cfg(windows)]
+                command.args([
+                    "--remote",
+                    codex_endpoint.expect("Codex server is running"),
+                    "resume",
+                    provider_session_id,
+                ]);
             } else if resume {
                 return Err("Codex session ID is unavailable".into());
             }
@@ -695,6 +900,7 @@ async fn spawn_session(
     sessions: State<'_, Sessions>,
     roots: State<'_, Roots>,
     provider_sessions: State<'_, ProviderSessions>,
+    codex_server: State<'_, CodexServer>,
     session_id: String,
     run_id: String,
     root_id: String,
@@ -706,13 +912,16 @@ async fn spawn_session(
     rows: u16,
 ) -> Result<Option<String>, String> {
     let cwd = root_path(&roots, &root_id)?;
-    if agent == "codex" && provider_session_id.is_none() {
-        provider_session_id = provider_sessions
+    if agent == "codex" {
+        if let Some(saved_provider_session_id) = provider_sessions
             .0
             .lock()
             .map_err(|error| error.to_string())?
             .get(&session_id)
-            .cloned();
+            .cloned()
+        {
+            provider_session_id = Some(saved_provider_session_id);
+        }
     }
     let stale = {
         let mut running = sessions.0.lock().map_err(|error| error.to_string())?;
@@ -745,9 +954,17 @@ async fn spawn_session(
             pixel_height: 0,
         })
         .map_err(|error| error.to_string())?;
-    let codex_created = agent == "codex" && provider_session_id.is_none();
+    let mut codex_created = agent == "codex" && provider_session_id.is_none();
     if codex_created {
-        provider_session_id = Some(start_codex_thread(&cwd)?);
+        provider_session_id = Some(start_codex_thread(&codex_server, &cwd)?);
+    } else if agent == "codex" {
+        if !codex_thread_loaded(
+            &codex_server,
+            provider_session_id.as_deref().expect("restored above"),
+        )? {
+            provider_session_id = Some(start_codex_thread(&codex_server, &cwd)?);
+            codex_created = true;
+        }
     }
     if agent == "codex" {
         let provider_session_id = provider_session_id
@@ -760,16 +977,31 @@ async fn spawn_session(
             Some(provider_session_id.clone()),
         ) {
             if codex_created {
-                archive_codex_thread(provider_session_id);
+                archive_codex_thread(&codex_server, provider_session_id).map_err(|cleanup| {
+                    format!("{error}. Could not archive the new Codex thread: {cleanup}")
+                })?;
             }
             return Err(error);
         }
     }
+    let codex_endpoint = if agent == "codex" {
+        Some(
+            codex_server
+                .0
+                .lock()
+                .map_err(|error| error.to_string())?
+                .endpoint
+                .clone(),
+        )
+    } else {
+        None
+    };
     let mut command = agent_command(
         &agent,
         resume,
         &session_id,
         provider_session_id.as_deref(),
+        codex_endpoint.as_deref(),
         &name,
     )?;
     if agent == "claude" {
@@ -781,14 +1013,6 @@ async fn spawn_session(
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
-            if codex_created {
-                rollback_codex_thread(
-                    &app,
-                    &provider_sessions,
-                    &session_id,
-                    provider_session_id.as_deref().expect("created above"),
-                );
-            }
             return Err(if agent == "shell" {
                 error.to_string()
             } else {
@@ -802,14 +1026,6 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if codex_created {
-                rollback_codex_thread(
-                    &app,
-                    &provider_sessions,
-                    &session_id,
-                    provider_session_id.as_deref().expect("created above"),
-                );
-            }
             return Err(error.to_string());
         }
     };
@@ -818,14 +1034,6 @@ async fn spawn_session(
         Err(error) => {
             let _ = child.kill();
             let _ = child.wait();
-            if codex_created {
-                rollback_codex_thread(
-                    &app,
-                    &provider_sessions,
-                    &session_id,
-                    provider_session_id.as_deref().expect("created above"),
-                );
-            }
             return Err(error.to_string());
         }
     };
@@ -1094,6 +1302,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
 #[tauri::command]
 async fn read_usage(
     app: AppHandle,
+    codex_server: State<'_, CodexServer>,
     agent: String,
     session_id: String,
 ) -> Result<Option<UsageSnapshot>, String> {
@@ -1112,7 +1321,7 @@ async fn read_usage(
                 Err(error) => Err(error.to_string()),
             }
         }
-        "codex" => codex_usage().map(Some),
+        "codex" => codex_usage(&codex_server).map(Some),
         "shell" => Ok(None),
         _ => Err("Unknown session type".into()),
     }
@@ -1126,6 +1335,7 @@ pub fn run() {
         .setup(|app| {
             app.manage(load_roots(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
+            app.manage(load_codex_server(app.handle())?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1159,6 +1369,7 @@ pub fn run() {
                 for mut session in sessions {
                     let _ = stop_pty(&mut session);
                 }
+                stop_codex_server(&app.state::<CodexServer>());
             }
         });
 }
