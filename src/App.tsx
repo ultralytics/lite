@@ -203,6 +203,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [closing, setClosing] = useState<Session>();
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -221,7 +222,7 @@ function App() {
   sessionsRef.current = sessions;
   themeRef.current = theme;
   selectedRef.current = selected;
-  closeRef.current = (session) => void closeSession(session);
+  closeRef.current = setClosing;
 
   useEffect(() => {
     applyTheme(theme);
@@ -525,7 +526,7 @@ function App() {
                         )
                       }
                       onRestart={() => void restartSession(session)}
-                      onClose={() => void closeSession(session)}
+                      onClose={() => setClosing(session)}
                     />
                   ))}
                 </div>
@@ -637,6 +638,32 @@ function App() {
                 <Button onClick={() => void checkForUpdates()}>Try again</Button>
               </DialogFooter>
             ) : null}
+          </DialogContent>
+        </Dialog>
+        <Dialog open={Boolean(closing)} onOpenChange={(open) => !open && setClosing(undefined)}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Close {closing?.name}?</DialogTitle>
+              <DialogDescription>
+                {closing?.running
+                  ? "This stops the running session and removes the tab. The provider keeps its own conversation history."
+                  : "This removes the tab. The provider keeps its own conversation history."}
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setClosing(undefined)}>
+                Keep
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  if (closing) void closeSession(closing);
+                  setClosing(undefined);
+                }}
+              >
+                Close session
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
         <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
