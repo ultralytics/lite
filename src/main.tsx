@@ -8,8 +8,9 @@ import "./index.css";
 
 applyTheme(initialTheme());
 
-// macOS draws its window buttons over the top bar, so the bar reserves room for them there and nowhere else.
-if (navigator.userAgent.includes("Macintosh")) document.documentElement.dataset.platform = "macos";
+// macOS draws its window buttons over the top bar, so the bar reserves room for them there and nowhere
+// else. Fullscreen takes the buttons away, and App clears this when it does.
+if (navigator.userAgent.includes("Macintosh")) document.documentElement.dataset.titlebar = "overlay";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

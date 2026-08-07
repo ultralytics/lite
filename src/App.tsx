@@ -3,6 +3,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   KeyRound,
   Moon,
@@ -228,6 +229,18 @@ function App() {
     applyTheme(theme);
   }, [theme]);
 
+  // Fullscreen hides the window buttons, so the room the bar keeps for them goes with them.
+  useEffect(() => {
+    if (document.documentElement.dataset.titlebar === undefined) return;
+    const window = getCurrentWindow();
+    const sync = async () => {
+      document.documentElement.dataset.titlebar = (await window.isFullscreen()) ? "plain" : "overlay";
+    };
+    void sync();
+    const resized = window.onResized(() => void sync());
+    return () => void resized.then((unlisten) => unlisten());
+  }, []);
+
   // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -447,7 +460,7 @@ function App() {
         {/* The window buttons sit inside this bar on macOS, so it doubles as the title bar and drags the window. */}
         <header
           data-tauri-drag-region
-          className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[platform=macos]:pl-[86px]"
+          className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[titlebar=overlay]:pl-[86px]"
         >
           <LiteLogomark className="size-5" />
           {selected ? (
