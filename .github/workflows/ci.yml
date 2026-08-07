@@ -52,5 +52,9 @@ jobs:
       - name: Check Rust formatting
         run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 
+      # CI answers whether the app compiles and links, which installers it can be packed into is
+      # publish.yml's question. Packing them here cost more than everything else combined: on Linux
+      # one run spent 9 seconds compiling and 9 minutes 17 bundling, most of it rpm compressing an
+      # unoptimised binary carrying its debug info.
       - name: Build app
-        run: bun run tauri build --debug --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        run: bun run tauri build --debug --no-bundle
