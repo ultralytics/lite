@@ -45,7 +45,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
-import { appendOutput, clearOutput } from "@/output-store";
+import { appendOutput, clearOutput, subscribeOutput } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
 import { type Session, sessionLabel } from "@/types";
@@ -156,7 +156,7 @@ function SessionRow({
             title={session.cwd}
           >
             <span className="block truncate text-xs font-medium">{session.name}</span>
-            <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">{session.cwd}</span>
+            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{sessionLabel(session)}</span>
           </button>
         )}
       </div>
@@ -197,6 +197,28 @@ function SessionRow({
       </span>
     </div>
   );
+}
+
+// Kimi has no flag for starting a session: launching without an id joins the one the directory already
+// has, and only its own /new command makes another. So a restart asks for it the way a person would,
+// once the interface has drawn itself and can take the command.
+function startKimiConversation(sessionId: string) {
+  const decoder = new TextDecoder();
+  let seen = "";
+  let sent = false;
+  const send = () => {
+    if (sent) return;
+    sent = true;
+    unsubscribe();
+    clearTimeout(timer);
+    void invoke("write_session", { sessionId, data: Array.from(new TextEncoder().encode("/new\r")) });
+  };
+  const unsubscribe = subscribeOutput(sessionId, (data) => {
+    seen += decoder.decode(data, { stream: true });
+    if (seen.includes("Welcome to Kimi")) send();
+  });
+  // Its greeting may change; waiting forever for the words would be worse than asking a little late.
+  const timer = setTimeout(send, 15_000);
 }
 
 function App() {
@@ -402,6 +424,7 @@ function App() {
     setSelectedId(fresh.id);
     resumed.current = fresh.id;
     await launch(fresh, false);
+    if (fresh.agent === "kimi") startKimiConversation(fresh.id);
   }
 
   async function closeSession(session: Session) {
@@ -593,7 +616,7 @@ function App() {
                   <div>
                     <h1 className="text-sm font-medium">Start a session</h1>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Pick a project folder and open Claude Code, Codex, or your shell.
+                      Pick a project folder, then choose the agent that should work in it.
                     </p>
                   </div>
                   <Button onClick={() => setNewSessionOpen(true)}>
