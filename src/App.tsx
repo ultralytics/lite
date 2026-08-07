@@ -5,12 +5,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ChevronLeft,
+  ChevronRight,
   GitBranch,
   KeyRound,
   Moon,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
   Play,
   Plus,
   RefreshCw,
@@ -905,7 +905,7 @@ function App() {
                       aria-label="Expand sessions"
                       onClick={() => sidebarPanel.current?.resize(SIDES.sidebar.size)}
                     >
-                      <PanelLeftOpen />
+                      <ChevronRight />
                     </ActionIconButton>
                     <ActionIconButton
                       variant="ghost"
@@ -974,7 +974,7 @@ function App() {
                       aria-label="Collapse sessions"
                       onClick={() => sidebarPanel.current?.collapse()}
                     >
-                      <PanelLeftClose />
+                      <ChevronLeft />
                     </ActionIconButton>
                   </div>
                   <ScrollArea className="min-h-0 flex-1">

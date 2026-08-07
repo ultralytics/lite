@@ -3,12 +3,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   ChartNoAxesColumn,
+  ChevronLeft,
   ChevronRight,
   File,
   Folder,
   GitBranch,
   GitPullRequest,
-  PanelRightClose,
   RefreshCw,
   X,
 } from "lucide-react";
@@ -485,6 +485,16 @@ export function Inspector({
   // when it comes back, and a hidden panel reads nothing because nothing here reads without being asked.
   const rail = (
     <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
+      <ActionIconButton
+        variant="ghost"
+        size="icon-sm"
+        tooltip="Expand panel"
+        tooltipSide="left"
+        aria-label="Expand panel"
+        onClick={onExpand}
+      >
+        <ChevronLeft />
+      </ActionIconButton>
       {TABS.map(({ value, label, icon: Icon }) => (
         <ActionIconButton
           key={value}
@@ -539,7 +549,7 @@ export function Inspector({
                 aria-label="Collapse panel"
                 onClick={onCollapse}
               >
-                <PanelRightClose />
+                <ChevronRight />
               </ActionIconButton>
             </span>
           </div>
