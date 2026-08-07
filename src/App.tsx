@@ -372,12 +372,23 @@ function App() {
     void launch(session, false);
   }
 
+  // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
+  // session it resumed by id is forgotten first and the tab takes a new one.
   async function restartSession(session: Session) {
     runs.current.delete(session.id);
     setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
     await invoke("stop_session", { sessionId: session.id });
+    try {
+      await invoke("delete_session_data", { sessionId: session.id });
+    } catch (reason) {
+      setError(String(reason));
+    }
     clearOutput(session.id);
-    await launch({ ...session, running: false }, session.agent !== "codex" || Boolean(session.providerSessionId));
+    const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
+    setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
+    setSelectedId(fresh.id);
+    resumed.current = fresh.id;
+    await launch(fresh, false);
   }
 
   async function closeSession(session: Session) {
@@ -519,7 +530,11 @@ function App() {
                       session={session}
                       active={session.id === selectedId}
                       starting={startingIds.has(session.id)}
-                      onSelect={() => setSelectedId(session.id)}
+                      onSelect={() => {
+                        setSelectedId(session.id);
+                        // Picking a session that stopped is a request to start it, however it stopped.
+                        if (!session.running) void launch(session, true);
+                      }}
                       onRename={(name) =>
                         setSessions((current) =>
                           current.map((item) => (item.id === session.id ? { ...item, name } : item)),

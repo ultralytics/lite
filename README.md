@@ -80,7 +80,7 @@ Open each provider in Lite and complete its normal sign-in once. Every CLI keeps
 If you would rather use API keys, open **API keys** in the Lite menu and paste one per provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`). Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/2955ffef-6003-43d1-a5c0-51c58e2612c9" width="70%" alt="Saving provider API keys in Lite">
+  <img src="https://github.com/user-attachments/assets/2955ffef-6003-43d1-a5c0-51c58e2612c9" width="100%" alt="Saving provider API keys in Lite">
 </div>
 
 **Codex · DeepSeek** runs the Codex harness against DeepSeek instead of OpenAI. Saving a DeepSeek key in Lite is enough — Lite then defines the provider for that launch only. To configure it yourself instead, use your own [Codex configuration](https://api-docs.deepseek.com/quick_start/agent_integrations/codex); a `deepseek.config.toml` profile in `$CODEX_HOME` is cleanest:
