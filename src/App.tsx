@@ -63,19 +63,17 @@ import { type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
-// The width each side collapses to: one icon button and the room around it.
+// The width each side collapses to: one icon button and the room around it. It is also the width a
+// side cannot be dragged past, so a side narrows all the way to its rail under the pointer and stops
+// there. A collapsible panel would instead pin at a minimum and jump the rest of the way, which is a
+// jump no transition can smooth because it happens while the pointer is being tracked exactly.
 const RAIL = 44;
-// What each side is doing. "floor" is the pause the library builds in: a collapsible panel stops at its
-// minimum and stays there until the drag passes half the remaining gap, so without a word from the
-// handle the drag that is about to collapse it looks exactly like one that is doing nothing.
-type SideState = "open" | "floor" | "shut";
+// The width below which a side has no room to be anything but its rail.
+const SHUT = 140;
 const SIDES = {
-  sidebar: { size: "20%", min: "15%", max: "30%" },
-  inspector: { size: "25%", min: "18%", max: "40%" },
+  sidebar: { size: "20%", max: "30%" },
+  inspector: { size: "25%", max: "40%" },
 } as const;
-// Held at the minimum, the handle says that one more nudge collapses the side.
-const ARMED =
-  "data-[separator=active]:bg-primary data-[separator=active]:[&>div]:h-10 data-[separator=active]:[&>div]:bg-primary";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
 // The version is known from the start, so the badge shows it throughout and only its color waits on
 // the answer: grey while asking, which is quieter than a spinner that would resize a chip this small.
@@ -383,7 +381,7 @@ function App() {
   const [query, setQuery] = useState("");
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
-  const [sides, setSides] = useState<Record<keyof typeof SIDES, SideState>>({ sidebar: "open", inspector: "open" });
+  const [shut, setShut] = useState({ sidebar: false, inspector: false });
   const sidebarPanel = useRef<PanelImperativeHandle>(null);
   const inspectorPanel = useRef<PanelImperativeHandle>(null);
   // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
@@ -426,24 +424,19 @@ function App() {
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
-  const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number; asPercentage: number }) => {
-    // Both halves matter: a window narrow enough for the minimum itself to be under the rail width
-    // would otherwise report a panel sitting on its floor as shut.
-    const min = Number.parseFloat(SIDES[side].min);
-    const next: SideState =
-      size.inPixels <= RAIL + 1 && size.asPercentage < min ? "shut" : size.asPercentage <= min + 0.5 ? "floor" : "open";
+  const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number }) => {
+    const next = size.inPixels < SHUT;
     // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
     // leaving the rail and the number shortcuts counting two different lists.
-    if (side === "sidebar" && next === "shut") setQuery("");
-    setSides((current) => (current[side] === next ? current : { ...current, [side]: next }));
+    if (side === "sidebar" && next) setQuery("");
+    setShut((current) => (current[side] === next ? current : { ...current, [side]: next }));
   }, []);
 
   // The inspector panel goes away with the last session and comes back at its default width, so what
   // the sides remember about it is reset with it rather than corrected by the first measurement.
   const hasSelection = Boolean(selected);
   useEffect(() => {
-    if (!hasSelection)
-      setSides((current) => (current.inspector === "open" ? current : { ...current, inspector: "open" }));
+    if (!hasSelection) setShut((current) => (current.inspector ? { ...current, inspector: false } : current));
   }, [hasSelection]);
 
   useEffect(() => {
@@ -878,14 +871,12 @@ function App() {
           <ResizablePanel
             panelRef={sidebarPanel}
             defaultSize={SIDES.sidebar.size}
-            minSize={SIDES.sidebar.min}
+            minSize={RAIL}
             maxSize={SIDES.sidebar.max}
-            collapsible
-            collapsedSize={RAIL}
             onResize={(size) => rail("sidebar", size)}
           >
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-              {sides.sidebar === "shut" ? (
+              {shut.sidebar ? (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
                     <ActionIconButton
@@ -894,7 +885,7 @@ function App() {
                       tooltip="Expand sessions"
                       tooltipSide="right"
                       aria-label="Expand sessions"
-                      onClick={() => sidebarPanel.current?.expand()}
+                      onClick={() => sidebarPanel.current?.resize(SIDES.sidebar.size)}
                     >
                       <ChevronRight />
                     </ActionIconButton>
@@ -987,7 +978,7 @@ function App() {
               )}
             </aside>
           </ResizablePanel>
-          <ResizableHandle withHandle className={sides.sidebar === "floor" ? ARMED : ""} />
+          <ResizableHandle withHandle />
           <ResizablePanel defaultSize="55%" minSize="38%">
             <section className="flex h-full min-w-0 flex-col">
               {selected ? (
@@ -1058,22 +1049,20 @@ function App() {
           </ResizablePanel>
           {selected ? (
             <>
-              <ResizableHandle withHandle className={sides.inspector === "floor" ? ARMED : ""} />
+              <ResizableHandle withHandle />
               <ResizablePanel
                 panelRef={inspectorPanel}
                 defaultSize={SIDES.inspector.size}
-                minSize={SIDES.inspector.min}
+                minSize={RAIL}
                 maxSize={SIDES.inspector.max}
-                collapsible
-                collapsedSize={RAIL}
                 onResize={(size) => rail("inspector", size)}
               >
                 <aside className="h-full border-l">
                   <PanelBoundary key={selected.id}>
                     <Inspector
                       session={selected}
-                      collapsed={sides.inspector === "shut"}
-                      onExpand={() => inspectorPanel.current?.expand()}
+                      collapsed={shut.inspector}
+                      onExpand={() => inspectorPanel.current?.resize(SIDES.inspector.size)}
                     />
                   </PanelBoundary>
                 </aside>
