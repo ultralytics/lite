@@ -673,29 +673,38 @@ fn codex_requests_once(
     endpoint: &str,
     requests: &[(u64, &str, serde_json::Value)],
 ) -> Result<HashMap<u64, serde_json::Value>, String> {
+    // Each platform opens the stream itself so there is something for the read timeouts to apply to.
+    // Handing the address straight to the websocket leaves the stream out of reach, and a server that
+    // stops answering then holds the session tab open with nothing left to time it out.
     #[cfg(unix)]
-    {
-        let path = endpoint
-            .strip_prefix("unix://")
-            .ok_or("Invalid Codex endpoint")?;
-        let stream =
-            std::os::unix::net::UnixStream::connect(path).map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(CODEX_CONNECT_TIMEOUT))
-            .map_err(|error| error.to_string())?;
-        let (socket, _) =
-            tungstenite::client("ws://localhost/", stream).map_err(|error| error.to_string())?;
-        codex_exchange(socket, requests, |stream| {
-            stream
-                .set_read_timeout(Some(CODEX_REQUEST_TIMEOUT))
-                .map_err(|error| error.to_string())
-        })
-    }
+    let (address, stream) = (
+        "ws://localhost/",
+        std::os::unix::net::UnixStream::connect(
+            endpoint
+                .strip_prefix("unix://")
+                .ok_or("Invalid Codex endpoint")?,
+        )
+        .map_err(|error| error.to_string())?,
+    );
     #[cfg(windows)]
-    {
-        let (socket, _) = tungstenite::connect(endpoint).map_err(|error| error.to_string())?;
-        codex_exchange(socket, requests, |_| Ok(()))
-    }
+    let (address, stream) = (
+        endpoint,
+        std::net::TcpStream::connect(
+            endpoint
+                .strip_prefix("ws://")
+                .ok_or("Invalid Codex endpoint")?,
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    stream
+        .set_read_timeout(Some(CODEX_CONNECT_TIMEOUT))
+        .map_err(|error| error.to_string())?;
+    let (socket, _) = tungstenite::client(address, stream).map_err(|error| error.to_string())?;
+    codex_exchange(socket, requests, |stream| {
+        stream
+            .set_read_timeout(Some(CODEX_REQUEST_TIMEOUT))
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn codex_executable() -> Result<PathBuf, String> {
