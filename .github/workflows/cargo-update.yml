@@ -26,7 +26,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          token: ${{ secrets._GITHUB_TOKEN }} # PAT so the PR triggers ci.yml
+          token: ${{ secrets._GITHUB_TOKEN }} # UltralyticsAssistant PAT so the PR triggers ci.yml
+
+      - name: Git config
+        run: |
+          git config --global user.name "UltralyticsAssistant"
+          git config --global user.email "web@ultralytics.com"
 
       - uses: dtolnay/rust-toolchain@stable
 
