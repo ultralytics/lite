@@ -930,15 +930,35 @@ fn stop_codex_server(server: &CodexServer) {
     }
 }
 
+// An interactive login shell is what loads the configuration that puts version-manager directories on
+// PATH, so it is the only lookup that finds a CLI installed through nvm. Bash reads its login profile
+// instead of its rc file when it is both, and nvm installs into the rc file, so Bash sources that file
+// itself. NULs fence the PATH off from whatever startup files print ahead of it and exit traps print
+// after it.
 #[cfg(unix)]
-fn user_path() -> Option<String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+fn shell_path(shell: &str) -> Option<String> {
     Command::new(shell)
-        .args(["-lc", "printf %s \"$PATH\""])
+        .args([
+            "-lic",
+            "[ -n \"$BASH_VERSION\" ] && [ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"; printf '\\0%s\\0' \"$PATH\"",
+        ])
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .and_then(|output| {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.split('\0')
+                .nth(1)
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+// An account shell that does not speak this command leaves nothing usable, so the search falls back to
+// the POSIX shell rather than losing every provider CLI.
+#[cfg(unix)]
+fn user_path() -> Option<String> {
+    shell_path(&CommandBuilder::new_default_prog().get_shell()).or_else(|| shell_path("/bin/sh"))
 }
 
 #[cfg(windows)]
