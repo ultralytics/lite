@@ -2160,37 +2160,26 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart()
 }
 
-// Tauri builds the About panel from the bundle config, which carries only the name, version,
-// copyright and publisher, so the panel read as bare. Everything else it can show has to be handed
-// over here. macOS only: it is the one platform with an application menu, and the installers carry
-// the same details from tauri.conf.json on Windows and Linux, where adding a menu would put a native
-// menu bar on a window that draws its own chrome.
+// Tauri fills the About panel from the bundle config, which reaches it with only a name and version,
+// so the panel read as bare. macOS only: it is the one platform Tauri gives an application menu, and
+// setting one on Windows or Linux would put a native menu bar on a window that draws its own chrome.
+// Those platforms carry the same details in the installer metadata from tauri.conf.json instead.
+//
+// Only the fields NSAboutPanel actually renders are set. It ignores authors, comments, license and
+// website, so setting those here would look thorough and show nothing.
 #[cfg(target_os = "macos")]
 fn describe_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{AboutMetadata, Menu, MenuItemKind, PredefinedMenuItem};
 
-    // The macOS panel renders credits as plain text, so the links read rather than click.
-    const CREDITS: &str = concat!(
-        "Runs Claude Code, Codex on OpenAI or DeepSeek, Kimi Code, and your shell side by side ",
-        "with your files, Git status, and provider usage.\n\n",
-        "Everything stays on this machine. No repository indexing, no telemetry, no cloud service.\n\n",
-        "Source\tgithub.com/ultralytics/lite\n",
-        "Issues\tgithub.com/ultralytics/lite/issues\n",
-        "Discord\tdiscord.com/invite/ultralytics\n",
-        "Forums\tcommunity.ultralytics.com\n",
-        "Licensing\tultralytics.com/license",
-    );
-
     let about = AboutMetadata {
         name: Some("Lite".into()),
         version: Some(app.package_info().version.to_string()),
-        authors: Some(vec!["Ultralytics".into()]),
-        comments: Some("A fast, local workspace for AI coding agents.".into()),
         copyright: Some("© 2026 Ultralytics Inc.".into()),
-        license: Some("AGPL-3.0".into()),
-        website: Some("https://www.ultralytics.com".into()),
-        website_label: Some("ultralytics.com".into()),
-        credits: Some(CREDITS.into()),
+        // Credits are a plain NSAttributedString in a short scroll view: no link attributes, so a URL
+        // is dead text, and more than a line or two becomes a wall behind a scrollbar. The panel
+        // already states the name, version and copyright, so this only says what Lite is. The
+        // clickable way to the repository is the logomark in the top bar.
+        credits: Some("A fast, local workspace for AI coding agents.".into()),
         ..Default::default()
     };
 
