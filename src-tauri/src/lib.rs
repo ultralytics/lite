@@ -1246,6 +1246,20 @@ fn codex_declares_deepseek(app: &AppHandle) -> bool {
         .any(|line| line.trim() == "[model_providers.deepseek]")
 }
 
+// A catalog is a replacement rather than a merge, so one the user configured is left to win.
+fn codex_declares_catalog(app: &AppHandle) -> bool {
+    let Ok(home) = codex_home(app) else {
+        return false;
+    };
+    let Ok(file) = fs::File::open(home.join("config.toml")) else {
+        return false;
+    };
+    BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .any(|line| line.trim_start().starts_with("model_catalog_json"))
+}
+
 fn deepseek_profile_exists(app: &AppHandle) -> bool {
     codex_home(app).is_ok_and(|home| {
         home.join(format!("{DEEPSEEK_PROFILE}.config.toml"))
@@ -1374,7 +1388,10 @@ fn agent_command(
                     }
                     command.args(["-c", "model_provider=\"deepseek\""]);
                     command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
-                    if let Some(catalog) = deepseek_catalog(app) {
+                    if let Some(catalog) = (!codex_declares_catalog(app))
+                        .then(|| deepseek_catalog(app))
+                        .flatten()
+                    {
                         // A Windows path is full of backslashes, which TOML reads as escapes.
                         let catalog = path_text(&catalog)
                             .replace('\\', "\\\\")
