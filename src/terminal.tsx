@@ -60,6 +60,11 @@ const themes: Record<Theme, ITheme> = {
   },
 };
 
+// A control sequence is an escape followed by a string terminator for OSC and DCS, a final byte for
+// CSI and SS3, or a single byte for the rest.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
+const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\d;?]*[ -/]*[@-~]|O[@-~]|[\s\S])/g;
+
 const FONT_SIZE_KEY = "lite.terminal.fontSize";
 const MIN_FONT_SIZE = 9;
 const MAX_FONT_SIZE = 24;
@@ -113,19 +118,19 @@ export function TerminalView({
     terminal.open(container);
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
-    // The terminal answers the program's cursor, focus, and color queries on this same channel and
-    // those replies are printable, so a chunk carrying an escape is never someone typing.
+    // Typing, pasting, and the terminal's own answers to the program's cursor, focus, and color
+    // queries all arrive here, and an answer is printable once its escape is dropped, so the escape
+    // sequences are removed and only what a person actually typed is left to read.
     let typed = "";
     const input = terminal.onData((data) => {
-      if (!data.includes("\u001b"))
-        for (const character of data) {
-          if (character === "\r" || character === "\n") {
-            const line = typed.trim();
-            typed = "";
-            if (line) promptRef.current(line);
-          } else if (character === "\u007f") typed = typed.slice(0, -1);
-          else if (character >= " ") typed += character;
-        }
+      for (const character of data.replace(SEQUENCES, "")) {
+        if (character === "\r" || character === "\n") {
+          const line = typed.trim();
+          typed = "";
+          if (line) promptRef.current(line);
+        } else if (character === "\u007f") typed = typed.slice(0, -1);
+        else if (character >= " ") typed += character;
+      }
       void invoke("write_session", {
         sessionId,
         data: Array.from(new TextEncoder().encode(data)),
