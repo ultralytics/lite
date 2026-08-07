@@ -951,13 +951,14 @@ fn user_path() -> Option<String> {
 // bundle and not the data directory. A key is handed to a session through the environment variable its
 // CLI already reads, so nothing is copied into provider configuration.
 // Codex only knows the models in its own catalog, and it warns and guesses the limits for any other
-// one. It reads a replacement catalog from a file, so the installed catalog is read back and the
-// DeepSeek model appended to it: cloning an entry keeps whatever shape that Codex version expects, and
-// keeping the built-in models leaves the rest of Codex working. Every failure here returns None and
-// simply leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
+// one. It reads a replacement catalog from a file, so the bundled catalog is read back and the DeepSeek
+// model appended to it: cloning an entry keeps whatever shape that Codex version expects, and keeping
+// the built-in models leaves the rest of Codex working. The bundled catalog is asked for by name so a
+// launch never waits on Codex refreshing its models over the network. Every failure here returns None
+// and leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
 fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
     let output = Command::new(resolve_executable("codex")?)
-        .args(["debug", "models"])
+        .args(["debug", "models", "--bundled"])
         .output()
         .ok()
         .filter(|output| output.status.success())?;
@@ -1312,10 +1313,11 @@ fn agent_command(
                     command.args(["-c", "model_provider=\"deepseek\""]);
                     command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
                     if let Some(catalog) = deepseek_catalog(app) {
-                        command.args([
-                            "-c",
-                            &format!("model_catalog_json=\"{}\"", path_text(&catalog)),
-                        ]);
+                        // A Windows path is full of backslashes, which TOML reads as escapes.
+                        let catalog = path_text(&catalog)
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"");
+                        command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
                     }
                 } else if deepseek_profile_exists(app) {
                     command.args(["--profile", DEEPSEEK_PROFILE]);

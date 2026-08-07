@@ -65,6 +65,11 @@ const themes: Record<Theme, ITheme> = {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]|O[@-~]|[\s\S])/g;
 
+// The same sequence introduced but not yet terminated. A lone escape is deliberately not one of these:
+// it is the Escape key, and holding it back would swallow the next character typed.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
+const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$/;
+
 const FONT_SIZE_KEY = "lite.terminal.fontSize";
 const MIN_FONT_SIZE = 9;
 const MAX_FONT_SIZE = 24;
@@ -122,8 +127,13 @@ export function TerminalView({
     // queries all arrive here, and an answer is printable once its escape is dropped, so the escape
     // sequences are removed and only what a person actually typed is left to read.
     let typed = "";
+    // An event can end mid-sequence, so an unfinished tail waits for the rest instead of being read.
+    let pending = "";
     const input = terminal.onData((data) => {
-      for (const character of data.replace(SEQUENCES, "")) {
+      const buffer = pending + data;
+      const partial = buffer.match(PARTIAL);
+      pending = partial?.[0] ?? "";
+      for (const character of buffer.slice(0, partial?.index ?? buffer.length).replace(SEQUENCES, "")) {
         if (character === "\r" || character === "\n") {
           const line = typed.trim();
           typed = "";
