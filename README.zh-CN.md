@@ -79,6 +79,10 @@ chmod +x Lite_0.0.2_linux_amd64.AppImage
 
 如果你更愿意使用 API key，在 Lite 菜单中打开 **API keys**，为每个 provider 粘贴一个 key。Lite 会把它们保存在自己数据目录下仅属主可读的文件中——与 Codex 和 Kimi 保存自身凭据的方式一致——并通过该 CLI 本来就会读取的环境变量（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`）把 key 传给会话。不会写入任何 provider 配置文件；删除 key 会在下次启动时生效；应用更新也不会丢失该文件，因为更新程序替换的是应用包而不是你的数据。
 
+<div align="center">
+  <img src="https://github.com/user-attachments/assets/2955ffef-6003-43d1-a5c0-51c58e2612c9" width="70%" alt="在 Lite 中保存 provider API key">
+</div>
+
 **Codex · DeepSeek** 使用 Codex 作为 harness，但把请求发往 DeepSeek 而不是 OpenAI。在 Lite 中保存 DeepSeek key 即可——Lite 只会为该次启动定义这个 provider。如果你想自己配置，请使用你自己的 [Codex 配置](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)；在 `$CODEX_HOME` 中放一个 `deepseek.config.toml` profile 最为干净：
 
 ```toml
