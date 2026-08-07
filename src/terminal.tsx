@@ -183,5 +183,15 @@ export function TerminalView({
     if (terminalRef.current) terminalRef.current.options.theme = themes[theme];
   }, [theme]);
 
-  return <div ref={containerRef} className="h-full w-full bg-background p-3" />;
+  // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
+  // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
+  // and it only subtracts padding declared on the terminal's own element. Padding here would be
+  // counted as usable space, so the terminal laid out a row and three columns more than fit and hung
+  // them past the edge, which also left the last row below the viewport where the scrollbar could
+  // neither show nor reach it.
+  return (
+    <div className="h-full w-full bg-background p-3">
+      <div ref={containerRef} className="h-full w-full" />
+    </div>
+  );
 }
