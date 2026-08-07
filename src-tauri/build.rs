@@ -17,6 +17,12 @@ fn main() {
         && !commit.is_empty()
     {
         println!("cargo:rustc-env=LITE_COMMIT={commit}");
+        // Where it was built, so it can ask that tree whether it has moved on.
+        if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR")
+            && let Some(repo) = std::path::Path::new(&manifest).parent()
+        {
+            println!("cargo:rustc-env=LITE_REPO={}", repo.display());
+        }
     }
     tauri_build::build()
 }

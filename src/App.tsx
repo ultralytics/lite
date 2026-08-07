@@ -55,7 +55,7 @@ import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
-type UpdateStatus = "checking" | "available" | "current" | "installing" | "error";
+type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
 
 function loadSessions(): Session[] {
   try {
@@ -485,9 +485,10 @@ function App() {
     setUpdateStatus("checking");
     setUpdateError("");
     try {
-      const next = await invoke<string | null>("check_update");
+      // A release would replace this build rather than update it, so a local build asks its own tree.
+      const next = await invoke<string | null>(commit ? "local_update" : "check_update");
       setAvailableVersion(next ?? "");
-      setUpdateStatus(next ? "available" : "current");
+      setUpdateStatus(next ? (commit ? "rebuild" : "available") : "current");
     } catch (reason) {
       setUpdateError(String(reason));
       setUpdateStatus("error");
@@ -718,11 +719,22 @@ function App() {
             <DialogHeader>
               <DialogTitle>Lite updates</DialogTitle>
               <DialogDescription aria-live="polite">
-                {updateStatus === "checking" ? "Checking GitHub for the latest release…" : null}
+                {updateStatus === "checking"
+                  ? commit
+                    ? "Comparing this build with the tree it was built from…"
+                    : "Checking GitHub for the latest release…"
+                  : null}
                 {updateStatus === "available"
                   ? `Lite ${availableVersion} is ready. Updating stops running sessions; their tabs resume after restart.`
                   : null}
-                {updateStatus === "current" ? "You have the latest version of Lite." : null}
+                {updateStatus === "rebuild"
+                  ? `This build is ${commit} and the tree is now ${availableVersion}. Run bun run local to rebuild.`
+                  : null}
+                {updateStatus === "current"
+                  ? commit
+                    ? "This build matches the tree it was built from."
+                    : "You have the latest version of Lite."
+                  : null}
                 {updateStatus === "installing" ? "Downloading and installing the update…" : null}
                 {updateStatus === "error" ? `Update failed: ${updateError}` : null}
               </DialogDescription>
@@ -738,7 +750,7 @@ function App() {
                 <Button onClick={() => void installUpdate()}>Install and restart</Button>
               </DialogFooter>
             ) : null}
-            {updateStatus === "current" ? (
+            {updateStatus === "current" || updateStatus === "rebuild" ? (
               <DialogFooter>
                 <Button onClick={() => changeUpdateOpen(false)}>Done</Button>
               </DialogFooter>

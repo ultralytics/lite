@@ -1970,6 +1970,17 @@ fn stop_runtime(app: &AppHandle) {
 // A local build shares its name, version, and data folder with an install, so it names the commit it
 // came from instead of the version it would otherwise be mistaken for. A release returns nothing and
 // the window shows its version.
+// A release cannot update a local build, and installing one would replace the very build being tried
+// out, so a local build asks the working tree it came from whether that tree has moved on instead.
+#[tauri::command]
+fn local_update() -> Result<Option<String>, String> {
+    let built = option_env!("LITE_COMMIT").ok_or("This is not a local build")?;
+    let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
+    let head = command_output(Path::new(repo), &["rev-parse", "--short", "HEAD"])
+        .map_err(|_| format!("Could not read {repo}"))?;
+    Ok((head != built).then_some(head))
+}
+
 #[tauri::command]
 fn local_commit() -> Option<&'static str> {
     option_env!("LITE_COMMIT")
@@ -2043,7 +2054,8 @@ pub fn run() {
             delete_api_key,
             check_update,
             install_update,
-            local_commit
+            local_commit,
+            local_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lite")
