@@ -957,8 +957,13 @@ fn user_path() -> Option<String> {
 // launch never waits on Codex refreshing its models over the network. Every failure here returns None
 // and leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
 fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
-    let output = Command::new(resolve_executable("codex")?)
-        .args(["debug", "models", "--bundled"])
+    let mut probe = Command::new(resolve_executable("codex")?);
+    probe.args(["debug", "models", "--bundled"]);
+    // The CLI is a Node launcher, so without the user PATH its shebang cannot find Node.
+    if let Some(path) = user_path() {
+        probe.env("PATH", path);
+    }
+    let output = probe
         .output()
         .ok()
         .filter(|output| output.status.success())?;
@@ -994,6 +999,24 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
         ("supports_search_tool", serde_json::json!(false)),
         ("support_verbosity", serde_json::json!(false)),
         ("default_verbosity", serde_json::Value::Null),
+        ("supports_image_detail_original", serde_json::json!(false)),
+        (
+            "supports_reasoning_summary_parameter",
+            serde_json::json!(false),
+        ),
+        ("default_reasoning_summary", serde_json::json!("none")),
+        ("web_search_tool_type", serde_json::json!("text")),
+        (
+            "include_skills_usage_instructions",
+            serde_json::json!(false),
+        ),
+        (
+            "include_plugin_usage_instructions",
+            serde_json::json!(false),
+        ),
+        ("include_apps_usage_instructions", serde_json::json!(false)),
+        // DeepSeek documents parallel tool calls, and the entry states that rather than inheriting it.
+        ("supports_parallel_tool_calls", serde_json::json!(true)),
         ("additional_speed_tiers", serde_json::json!([])),
         ("service_tiers", serde_json::json!([])),
     ] {
@@ -1001,20 +1024,17 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
             entry.insert(key.to_owned(), value);
         }
     }
-    // Reasoning levels are the cloned model's own capability, and DeepSeek documents low, high, and
-    // max. Filtering rather than replacing keeps the descriptions Codex already uses and can only ever
-    // drop a level, so the entry never advertises an effort the provider would be sent and reject.
-    if let Some(levels) = entry
-        .get_mut("supported_reasoning_levels")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        levels.retain(|level| {
-            matches!(
-                level.get("effort").and_then(serde_json::Value::as_str),
-                Some("low" | "high" | "max")
-            )
-        });
-    }
+    // Reasoning levels describe the provider, not the model this entry was cloned from, so they are
+    // stated rather than inherited: DeepSeek documents these three and a template missing one of them
+    // would otherwise leave it unreachable.
+    entry.insert(
+        "supported_reasoning_levels".to_owned(),
+        serde_json::json!([
+            {"effort": "low", "description": "Fast responses with lighter reasoning"},
+            {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+            {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"},
+        ]),
+    );
     models.push(model);
     let path = app.path().app_data_dir().ok()?.join("codex-models.json");
     if let Some(parent) = path.parent() {
