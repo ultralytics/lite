@@ -1,7 +1,5 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-"use client";
-
 import { Tabs as TabsPrimitive } from "@base-ui/react/tabs";
 import { cva, type VariantProps } from "class-variance-authority";
 
@@ -12,14 +10,17 @@ function Tabs({ className, orientation = "horizontal", ...props }: TabsPrimitive
     <TabsPrimitive.Root
       data-slot="tabs"
       data-orientation={orientation}
-      className={cn("group/tabs flex min-w-0 max-w-full gap-8 data-horizontal:flex-col", className)}
+      // Base UI reports orientation only as data-orientation, and the variants below key off the
+      // shorter attribute, so it is set here instead of rewriting every class shadcn ships.
+      {...{ [`data-${orientation}`]: "" }}
+      className={cn("group/tabs flex gap-2 data-horizontal:flex-col", className)}
       {...props}
     />
   );
 }
 
 const tabsListVariants = cva(
-  "group/tabs-list inline-flex w-fit max-w-full items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-horizontal/tabs:justify-start group-data-horizontal/tabs:overflow-x-auto group-data-horizontal/tabs:overscroll-x-contain group-data-horizontal/tabs:touch-pan-x group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col sm:group-data-horizontal/tabs:overflow-visible data-[variant=line]:rounded-none",
+  "group/tabs-list inline-flex w-fit items-center justify-center rounded-lg p-[3px] text-muted-foreground group-data-horizontal/tabs:h-8 group-data-vertical/tabs:h-fit group-data-vertical/tabs:flex-col data-[variant=line]:rounded-none",
   {
     variants: {
       variant: {
@@ -66,11 +67,7 @@ function TabsTrigger({ className, ...props }: TabsPrimitive.Tab.Props) {
 
 function TabsContent({ className, ...props }: TabsPrimitive.Panel.Props) {
   return (
-    <TabsPrimitive.Panel
-      data-slot="tabs-content"
-      className={cn("min-w-0 max-w-full flex-1 text-sm outline-none", className)}
-      {...props}
-    />
+    <TabsPrimitive.Panel data-slot="tabs-content" className={cn("flex-1 text-sm outline-none", className)} {...props} />
   );
 }
 

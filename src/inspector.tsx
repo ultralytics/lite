@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronRight, File, Folder, GitBranch, RefreshCw, X } from "lucide-react";
+import { ChartNoAxesColumn, ChevronRight, File, Folder, GitBranch, RefreshCw, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -390,9 +390,15 @@ export function Inspector({ session }: { session: Session }) {
     <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
         <TabsList variant="line">
-          <TabsTrigger value="files">Files</TabsTrigger>
-          <TabsTrigger value="git">Git</TabsTrigger>
-          <TabsTrigger value="usage">Usage</TabsTrigger>
+          <TabsTrigger value="files" aria-label="Files">
+            <Folder />
+          </TabsTrigger>
+          <TabsTrigger value="git" aria-label="Git">
+            <GitBranch />
+          </TabsTrigger>
+          <TabsTrigger value="usage" aria-label="Usage">
+            <ChartNoAxesColumn />
+          </TabsTrigger>
         </TabsList>
         {tab === "usage" && session.agent === "shell" ? null : (
           <Button

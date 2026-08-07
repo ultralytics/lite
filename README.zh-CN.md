@@ -115,6 +115,7 @@ bun run tauri dev
 
 ```bash
 bun run check       # Biome 与原生 TypeScript 检查
+bun run local       # 可直接双击运行的应用包，并标记为本地构建
 bun run tauri build # 为当前操作系统构建原生安装包
 ```
 

@@ -115,6 +115,7 @@ Useful checks:
 
 ```bash
 bun run check       # Biome and native TypeScript checks
+bun run local       # App bundle you can double-click, marked as a local build
 bun run tauri build # Native installer for the current operating system
 ```
 
