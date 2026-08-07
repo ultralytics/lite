@@ -5,11 +5,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  ChevronRight,
   GitBranch,
   KeyRound,
   Moon,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Plus,
   RefreshCw,
@@ -63,13 +64,14 @@ import { type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
-// The width each side collapses to: one icon button and the room around it. It is also the width a
-// side cannot be dragged past, so a side narrows all the way to its rail under the pointer and stops
-// there. A collapsible panel would instead pin at a minimum and jump the rest of the way, which is a
-// jump no transition can smooth because it happens while the pointer is being tracked exactly.
+// The width each side collapses to: one icon button and the room around it.
 const RAIL = 44;
-// The width below which a side has no room to be anything but its rail.
+// Where a side stops following the pointer. It has no room to be anything but its rail by here, so it
+// becomes one and collapses the rest of the way itself, in one eased step.
 const SHUT = 140;
+// A transition only runs when the property was already transitionable before the value changed, so the
+// ease is armed on the approach rather than at the moment it is needed, which is one commit too late.
+const ARM = 240;
 const SIDES = {
   sidebar: { size: "20%", max: "30%" },
   inspector: { size: "25%", max: "40%" },
@@ -382,8 +384,10 @@ function App() {
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
+  const [armed, setArmed] = useState({ sidebar: false, inspector: false });
   const sidebarPanel = useRef<PanelImperativeHandle>(null);
   const inspectorPanel = useRef<PanelImperativeHandle>(null);
+  const panels = useRef({ sidebar: sidebarPanel, inspector: inspectorPanel }).current;
   // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
   const [remote, setRemote] = useState("");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -424,13 +428,24 @@ function App() {
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
-  const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number }) => {
-    const next = size.inPixels < SHUT;
-    // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
-    // leaving the rail and the number shortcuts counting two different lists.
-    if (side === "sidebar" && next) setQuery("");
-    setShut((current) => (current[side] === next ? current : { ...current, [side]: next }));
-  }, []);
+  const rail = useCallback(
+    (side: keyof typeof SIDES, size: { inPixels: number }) => {
+      const next = size.inPixels <= SHUT + 1;
+      // Reaching the point where a side is only a rail is the whole decision, so the side takes the rest
+      // of the way itself rather than asking for another half of it. The library holds it there against
+      // the pointer, and the ease armed on the way in carries it.
+      if (next) panels[side].current?.collapse();
+      // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
+      // leaving the rail and the number shortcuts counting two different lists.
+      if (side === "sidebar" && next) setQuery("");
+      setShut((current) => (current[side] === next ? current : { ...current, [side]: next }));
+      setArmed((current) => {
+        const arm = size.inPixels <= ARM;
+        return current[side] === arm ? current : { ...current, [side]: arm };
+      });
+    },
+    [panels],
+  );
 
   // The inspector panel goes away with the last session and comes back at its default width, so what
   // the sides remember about it is reset with it rather than corrected by the first measurement.
@@ -871,8 +886,11 @@ function App() {
           <ResizablePanel
             panelRef={sidebarPanel}
             defaultSize={SIDES.sidebar.size}
-            minSize={RAIL}
+            minSize={SHUT}
             maxSize={SIDES.sidebar.max}
+            collapsible
+            collapsedSize={RAIL}
+            data-ease={armed.sidebar || undefined}
             onResize={(size) => rail("sidebar", size)}
           >
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
@@ -887,7 +905,7 @@ function App() {
                       aria-label="Expand sessions"
                       onClick={() => sidebarPanel.current?.resize(SIDES.sidebar.size)}
                     >
-                      <ChevronRight />
+                      <PanelLeftOpen />
                     </ActionIconButton>
                     <ActionIconButton
                       variant="ghost"
@@ -948,6 +966,15 @@ function App() {
                       onClick={() => setNewSessionOpen(true)}
                     >
                       <Plus />
+                    </ActionIconButton>
+                    <ActionIconButton
+                      variant="ghost"
+                      size="icon-sm"
+                      tooltip="Collapse sessions"
+                      aria-label="Collapse sessions"
+                      onClick={() => sidebarPanel.current?.collapse()}
+                    >
+                      <PanelLeftClose />
                     </ActionIconButton>
                   </div>
                   <ScrollArea className="min-h-0 flex-1">
@@ -1053,8 +1080,11 @@ function App() {
               <ResizablePanel
                 panelRef={inspectorPanel}
                 defaultSize={SIDES.inspector.size}
-                minSize={RAIL}
+                minSize={SHUT}
                 maxSize={SIDES.inspector.max}
+                collapsible
+                collapsedSize={RAIL}
+                data-ease={armed.inspector || undefined}
                 onResize={(size) => rail("inspector", size)}
               >
                 <aside className="h-full border-l">
@@ -1063,6 +1093,7 @@ function App() {
                       session={selected}
                       collapsed={shut.inspector}
                       onExpand={() => inspectorPanel.current?.resize(SIDES.inspector.size)}
+                      onCollapse={() => inspectorPanel.current?.collapse()}
                     />
                   </PanelBoundary>
                 </aside>

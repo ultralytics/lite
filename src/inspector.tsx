@@ -1,7 +1,17 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { ChartNoAxesColumn, ChevronRight, File, Folder, GitBranch, GitPullRequest, RefreshCw, X } from "lucide-react";
+import {
+  ChartNoAxesColumn,
+  ChevronRight,
+  File,
+  Folder,
+  GitBranch,
+  GitPullRequest,
+  PanelRightClose,
+  RefreshCw,
+  X,
+} from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -458,10 +468,12 @@ export function Inspector({
   session,
   collapsed,
   onExpand,
+  onCollapse,
 }: {
   session: Session;
   collapsed: boolean;
   onExpand: () => void;
+  onCollapse: () => void;
 }) {
   const [tab, setTab] = useState<string>(TABS[0].value);
   // A tab already names the panel it shows, so the panel does not name itself again. One button beside
@@ -508,17 +520,28 @@ export function Inspector({
                 </Tooltip>
               ))}
             </TabsList>
-            {tab === "usage" && session.agent === "shell" ? null : (
+            <span className="flex items-center">
+              {tab === "usage" && session.agent === "shell" ? null : (
+                <ActionIconButton
+                  variant="ghost"
+                  size="icon-sm"
+                  tooltip="Refresh"
+                  aria-label="Refresh"
+                  onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
+                >
+                  <RefreshCw />
+                </ActionIconButton>
+              )}
               <ActionIconButton
                 variant="ghost"
                 size="icon-sm"
-                tooltip="Refresh"
-                aria-label="Refresh"
-                onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
+                tooltip="Collapse panel"
+                aria-label="Collapse panel"
+                onClick={onCollapse}
               >
-                <RefreshCw />
+                <PanelRightClose />
               </ActionIconButton>
-            )}
+            </span>
           </div>
           <TabsContent value="files" className="min-h-0 overflow-hidden">
             <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
