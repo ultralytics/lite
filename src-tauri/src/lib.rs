@@ -2049,6 +2049,35 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
     }))
 }
 
+// A remote is stored the way the repository was cloned, and only its https form opens in a browser.
+// Anything else is left alone rather than guessed at, so a link is offered only when it will work.
+fn browse_url(remote: &str) -> Option<String> {
+    let remote = remote.trim().trim_end_matches('/');
+    let remote = remote.strip_suffix(".git").unwrap_or(remote);
+    if let Some(rest) = remote.strip_prefix("git@") {
+        let (host, repository) = rest.split_once(':')?;
+        return Some(format!("https://{host}/{repository}"));
+    }
+    if let Some(rest) = remote.strip_prefix("ssh://") {
+        let address = rest.split_once('@').map_or(rest, |(_, tail)| tail);
+        return Some(format!("https://{address}"));
+    }
+    remote.starts_with("https://").then(|| remote.to_owned())
+}
+
+// The repository a folder was cloned from, asked for on its own: naming it costs one git call, where
+// the full status reads the whole worktree.
+#[tauri::command]
+async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<String>, String> {
+    let path = root_path(&roots, &root_id)?;
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    Ok(
+        command_output(&git, &path, &["remote", "get-url", "origin"])
+            .ok()
+            .and_then(|remote| browse_url(&remote)),
+    )
+}
+
 #[tauri::command]
 async fn read_usage(
     app: AppHandle,
@@ -2225,6 +2254,7 @@ pub fn run() {
             list_directory,
             read_text_file,
             git_status,
+            git_remote,
             read_usage,
             agent_availability,
             open_setup_docs,

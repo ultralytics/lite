@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  GitBranch,
   KeyRound,
   Moon,
   MoreHorizontal,
@@ -324,6 +325,11 @@ function folderName(cwd: string) {
   return cwd.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
 }
 
+// A remote names a repository; the scheme and host that reach it are the tooltip's job.
+function repoName(url: string) {
+  return url.replace(/^https:\/\/[^/]+\//, "");
+}
+
 // Paths truncate from the right, which hides the part that identifies the folder, so only its tail shows.
 function shortPath(cwd: string) {
   const parts = cwd.split(/[\\/]/).filter(Boolean);
@@ -349,6 +355,8 @@ function App() {
   // session that is working from one that is merely connected.
   const [working, setWorking] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
+  const [remote, setRemote] = useState("");
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [version, setVersion] = useState("");
   // Undefined until asked: an empty string is a release, anything else is the commit it was built from.
@@ -589,6 +597,24 @@ function App() {
     void launch(selected, true);
   }, [selected, launch]);
 
+  // Which repository a folder was cloned from is a fact about the folder, so it is asked for once when
+  // the folder changes and never watched. Keyed by the grant rather than the session, so switching
+  // between sessions in one folder does not ask again.
+  const rootId = selected?.rootId ?? "";
+  useEffect(() => {
+    setRemote("");
+    if (!rootId) return;
+    let cancelled = false;
+    void invoke<string | null>("git_remote", { rootId })
+      .then((url) => {
+        if (!cancelled) setRemote(url ?? "");
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [rootId]);
+
   async function signIn(agent: Session["agent"]) {
     setSettingsOpen(false);
     try {
@@ -724,6 +750,23 @@ function App() {
               <ProviderIcon agent={selected.agent} provider={selected.provider} />
               <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
               <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
+              {remote ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <button
+                        type="button"
+                        className="flex max-w-56 shrink-0 items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                        onClick={() => void invoke("open_url", { url: remote })}
+                      />
+                    }
+                  >
+                    <GitBranch className="size-3.5 shrink-0" />
+                    <span className="truncate font-mono text-[11px]">{repoName(remote)}</span>
+                  </TooltipTrigger>
+                  <TooltipContent>Open {remote}</TooltipContent>
+                </Tooltip>
+              ) : null}
             </>
           ) : (
             <span className="text-sm font-semibold">Lite</span>
