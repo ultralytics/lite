@@ -263,11 +263,16 @@ function App() {
   const sessionsRef = useRef<Session[]>([]);
   const selectedRef = useRef<Session>(undefined);
   const closeRef = useRef<(session: Session) => void>(() => {});
+  const openRef = useRef<(session: Session) => void>(() => {});
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
   sessionsRef.current = sessions;
   themeRef.current = theme;
   selectedRef.current = selected;
   closeRef.current = setClosing;
+  openRef.current = (session) => {
+    setSelectedId(session.id);
+    if (!session.running) void launch(session, true);
+  };
 
   useEffect(() => {
     applyTheme(theme);
@@ -295,7 +300,8 @@ function App() {
       else if (event.key >= "1" && event.key <= "9") {
         const target = sessionsRef.current[Number(event.key) - 1];
         if (!target) return;
-        setSelectedId(target.id);
+        // Reaching a session by number is the same act as clicking it, including bringing it back.
+        openRef.current(target);
       } else return;
       event.preventDefault();
     }
@@ -588,11 +594,7 @@ function App() {
                       session={session}
                       active={session.id === selectedId}
                       starting={startingIds.has(session.id)}
-                      onSelect={() => {
-                        setSelectedId(session.id);
-                        // Picking a session that stopped is a request to start it, however it stopped.
-                        if (!session.running) void launch(session, true);
-                      }}
+                      onSelect={() => openRef.current(session)}
                       onRename={(name) =>
                         setSessions((current) =>
                           current.map((item) => (item.id === session.id ? { ...item, name } : item)),
