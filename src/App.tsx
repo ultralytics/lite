@@ -73,6 +73,63 @@ const RELEASE_NOTE = {
 
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
 
+// A local build names its commit and is red, so it is never mistaken for the installed copy.
+// A release names its version and says at a glance whether it is the current one. The top bar and the
+// update dialog render this one badge, so the version, the release date and the link to it are stated
+// in exactly one place and cannot drift apart.
+function VersionBadge({
+  version,
+  commit,
+  built,
+  release,
+  onCheck,
+}: {
+  version: string;
+  commit: string | undefined;
+  built: string;
+  release: keyof typeof BADGE_VARIANT;
+  onCheck: () => void;
+}) {
+  if (!commit && !version) return null;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Badge
+            variant={commit ? "error" : BADGE_VARIANT[release]}
+            render={<button type="button" onClick={onCheck} />}
+          >
+            {commit || version}
+          </Badge>
+        }
+      />
+      <TooltipContent>
+        {commit ? (
+          `Local build${built ? ` from ${built}` : ""} · click to compare with your working tree`
+        ) : (
+          <span className="flex flex-col gap-0.5">
+            <span>
+              {`Lite ${version}${RELEASE_NOTE[release]}`}
+              {built ? ` · released ${built}` : ""}
+            </span>
+            <button
+              type="button"
+              className="underline underline-offset-2"
+              onClick={() =>
+                void invoke("open_url", {
+                  url: `https://github.com/ultralytics/lite/releases/tag/v${version}`,
+                })
+              }
+            >
+              View this release on GitHub
+            </button>
+          </span>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function loadSessions(): Session[] {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Session[];
@@ -349,6 +406,23 @@ function App() {
       .catch(() => setCommit(""));
   }, []);
 
+  // One owner for the release question, so the startup check and a manual one cannot contradict each
+  // other: the ask that started last is the only one still allowed to answer, and a slow startup reply
+  // can no longer land on top of a fresh manual result.
+  const releaseAsk = useRef(0);
+  const askRelease = useCallback(async () => {
+    const ask = ++releaseAsk.current;
+    setRelease("checking");
+    try {
+      const next = await invoke<string | null>("check_update");
+      if (ask === releaseAsk.current) setRelease(next ? "behind" : "current");
+      return next;
+    } catch (reason) {
+      if (ask === releaseAsk.current) setRelease("unknown");
+      throw reason;
+    }
+  }, []);
+
   // Only a release can be behind a release. Asking costs a network round trip that is never worth
   // delaying a paint or a restored session for, so it waits for the window to go idle and is dropped
   // if the window goes away first.
@@ -356,14 +430,7 @@ function App() {
     if (commit !== "") return;
     let cancelled = false;
     const check = () => {
-      if (cancelled) return;
-      void invoke<string | null>("check_update")
-        .then((next) => {
-          if (!cancelled) setRelease(next ? "behind" : "current");
-        })
-        .catch(() => {
-          if (!cancelled) setRelease("unknown");
-        });
+      if (!cancelled) void askRelease().catch(() => {});
     };
     const idle = typeof window.requestIdleCallback === "function";
     const handle = idle ? window.requestIdleCallback(check, { timeout: 10000 }) : window.setTimeout(check, 3000);
@@ -372,7 +439,7 @@ function App() {
       if (idle) window.cancelIdleCallback(handle);
       else window.clearTimeout(handle);
     };
-  }, [commit]);
+  }, [commit, askRelease]);
 
   useEffect(() => {
     let disposed = false;
@@ -528,12 +595,15 @@ function App() {
   }
 
   async function checkForUpdates() {
+    // The dialog owns an install once it has started one. Re-entering here would reset it out of
+    // sight and offer a second install while the first is still running.
+    if (updateOpen && (updateStatus === "checking" || updateStatus === "installing")) return;
     setUpdateOpen(true);
     setUpdateStatus("checking");
     setUpdateError("");
     try {
       // A release would replace this build rather than update it, so a local build asks its own tree.
-      const next = await invoke<string | null>(commit ? "local_update" : "check_update");
+      const next = commit ? await invoke<string | null>("local_update") : await askRelease();
       setAvailableVersion(next ?? "");
       setUpdateStatus(next ? (commit ? "rebuild" : "available") : "current");
     } catch (reason) {
@@ -566,46 +636,28 @@ function App() {
           data-tauri-drag-region
           className="flex h-9 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[titlebar=overlay]:pl-[86px]"
         >
-          <LiteLogomark className="size-5" />
-          {/* A local build names its commit and is red, so it is never mistaken for the installed copy.
-              A release names its version and says at a glance whether it is the current one. */}
-          {commit || version ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Badge
-                    variant={commit ? "error" : BADGE_VARIANT[release]}
-                    render={<button type="button" onClick={() => void checkForUpdates()} />}
-                  >
-                    {commit || version}
-                  </Badge>
-                }
-              />
-              <TooltipContent>
-                {commit ? (
-                  `Local build${built ? ` from ${built}` : ""} · click to compare with your working tree`
-                ) : (
-                  <span className="flex flex-col gap-0.5">
-                    <span>
-                      {`Lite ${version}${RELEASE_NOTE[release]}`}
-                      {built ? ` · released ${built}` : ""}
-                    </span>
-                    <button
-                      type="button"
-                      className="underline underline-offset-2"
-                      onClick={() =>
-                        void invoke("open_url", {
-                          url: `https://github.com/ultralytics/lite/releases/tag/v${version}`,
-                        })
-                      }
-                    >
-                      View this release on GitHub
-                    </button>
-                  </span>
-                )}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  type="button"
+                  className="shrink-0"
+                  aria-label="Lite on GitHub"
+                  onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+                />
+              }
+            >
+              <LiteLogomark className="size-5" />
+            </TooltipTrigger>
+            <TooltipContent>View Lite on GitHub</TooltipContent>
+          </Tooltip>
+          <VersionBadge
+            version={version}
+            commit={commit}
+            built={built}
+            release={release}
+            onCheck={() => void checkForUpdates()}
+          />
           {selected ? (
             <>
               <Separator orientation="vertical" className="mx-1 h-4" />
@@ -787,7 +839,16 @@ function App() {
         <Dialog open={updateOpen} onOpenChange={changeUpdateOpen}>
           <DialogContent showCloseButton={updateStatus !== "checking" && updateStatus !== "installing"}>
             <DialogHeader>
-              <DialogTitle>Lite updates</DialogTitle>
+              <div className="flex items-center gap-2">
+                <DialogTitle>Lite updates</DialogTitle>
+                <VersionBadge
+                  version={version}
+                  commit={commit}
+                  built={built}
+                  release={release}
+                  onCheck={() => void checkForUpdates()}
+                />
+              </div>
               <DialogDescription aria-live="polite">
                 {updateStatus === "checking"
                   ? commit
