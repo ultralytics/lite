@@ -2100,7 +2100,8 @@ fn stop_runtime(app: &AppHandle) {
 fn local_update() -> Result<Option<String>, String> {
     let built = option_env!("LITE_COMMIT").ok_or("This is not a local build")?;
     let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
-    let head = command_output(Path::new(repo), &["rev-parse", "--short", "HEAD"])
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let head = command_output(&git, Path::new(repo), &["rev-parse", "--short", "HEAD"])
         .map_err(|_| format!("Could not read {repo}"))?;
     Ok((head != built).then_some(head))
 }
