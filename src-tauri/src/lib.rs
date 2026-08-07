@@ -9,7 +9,7 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{Mutex, OnceLock},
     thread,
     time::Duration,
 };
@@ -930,14 +930,26 @@ fn stop_codex_server(server: &CodexServer) {
     }
 }
 
+// An interactive login shell is what loads the configuration that puts version-manager directories on
+// PATH, so it is the only lookup that finds a CLI installed through nvm. It costs a shell startup and
+// the PATH cannot change under a running app, so the answer is resolved once. A NUL separates the PATH
+// from anything the interactive startup files printed ahead of it.
 #[cfg(unix)]
 fn user_path() -> Option<String> {
-    Command::new(CommandBuilder::new_default_prog().get_shell())
-        .args(["-lic", "printf %s \"$PATH\""])
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+    static USER_PATH: OnceLock<Option<String>> = OnceLock::new();
+    USER_PATH
+        .get_or_init(|| {
+            Command::new(CommandBuilder::new_default_prog().get_shell())
+                .args(["-lic", "printf '\\0%s' \"$PATH\""])
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| {
+                    let output = String::from_utf8_lossy(&output.stdout);
+                    output.rsplit('\0').next().unwrap_or_default().to_owned()
+                })
+        })
+        .clone()
 }
 
 #[cfg(windows)]
