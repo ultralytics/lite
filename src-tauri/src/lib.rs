@@ -950,6 +950,66 @@ fn user_path() -> Option<String> {
 // CLIs already do with their own credentials, and it survives updates because the updater replaces the
 // bundle and not the data directory. A key is handed to a session through the environment variable its
 // CLI already reads, so nothing is copied into provider configuration.
+// Codex only knows the models in its own catalog, and it warns and guesses the limits for any other
+// one. It reads a replacement catalog from a file, so the installed catalog is read back and the
+// DeepSeek model appended to it: cloning an entry keeps whatever shape that Codex version expects, and
+// keeping the built-in models leaves the rest of Codex working. Every failure here returns None and
+// simply leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
+fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
+    let output = Command::new(resolve_executable("codex")?)
+        .args(["debug", "models"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let mut catalog: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let models = catalog.get_mut("models")?.as_array_mut()?;
+    if models
+        .iter()
+        .any(|model| model.get("slug").and_then(serde_json::Value::as_str) == Some(DEEPSEEK_MODEL))
+    {
+        return None;
+    }
+    let mut model = models.first()?.clone();
+    let entry = model.as_object_mut()?;
+    for (key, value) in [
+        ("slug", serde_json::json!(DEEPSEEK_MODEL)),
+        ("display_name", serde_json::json!("DeepSeek-V4-Flash")),
+        (
+            "description",
+            serde_json::json!("DeepSeek V4 Flash, served by the DeepSeek API."),
+        ),
+        ("context_window", serde_json::json!(1_048_576)),
+        ("max_context_window", serde_json::json!(1_048_576)),
+        ("default_reasoning_level", serde_json::json!("high")),
+        ("visibility", serde_json::json!("hide")),
+        ("input_modalities", serde_json::json!(["text"])),
+        // Capabilities and cache keys that belong to the model this entry was cloned from.
+        ("comp_hash", serde_json::Value::Null),
+        ("availability_nux", serde_json::Value::Null),
+        ("upgrade", serde_json::Value::Null),
+        ("tool_mode", serde_json::Value::Null),
+        ("multi_agent_version", serde_json::Value::Null),
+        ("use_responses_lite", serde_json::json!(false)),
+        ("supports_search_tool", serde_json::json!(false)),
+        ("additional_speed_tiers", serde_json::json!([])),
+        ("service_tiers", serde_json::json!([])),
+    ] {
+        if entry.contains_key(key) {
+            entry.insert(key.to_owned(), value);
+        }
+    }
+    models.push(model);
+    let path = app.path().app_data_dir().ok()?.join("codex-models.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok()?;
+    }
+    let text = serde_json::to_string(&catalog).ok()?;
+    AtomicFile::new(&path, AllowOverwrite)
+        .write(|file| file.write_all(text.as_bytes()))
+        .ok()?;
+    Some(path)
+}
+
 fn api_keys_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
@@ -1251,6 +1311,12 @@ fn agent_command(
                     }
                     command.args(["-c", "model_provider=\"deepseek\""]);
                     command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
+                    if let Some(catalog) = deepseek_catalog(app) {
+                        command.args([
+                            "-c",
+                            &format!("model_catalog_json=\"{}\"", path_text(&catalog)),
+                        ]);
+                    }
                 } else if deepseek_profile_exists(app) {
                     command.args(["--profile", DEEPSEEK_PROFILE]);
                 } else {
