@@ -11,8 +11,8 @@ name: Cargo Update
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # Weekly on Monday at 06:00 UTC
-  workflow_dispatch:
+    - cron: "0 6 1 * *" # Monthly on the 1st at 06:00 UTC
+  workflow_dispatch: # Manual run from the Actions tab
 
 concurrency:
   group: ${{ github.workflow }}
@@ -57,6 +57,14 @@ jobs:
             --label dependencies)
           echo "PR opened: $pr_url"
 
-          sleep 60 # Let format.yml and ci.yml register their checks before --watch
-          gh pr checks "$pr_url" --watch --fail-fast
-          gh pr merge "$pr_url" --squash --delete-branch --admin
+          sleep 30 # Let ci.yml and format.yml register their checks before --watch
+
+          # format.yml pushes an auto-format commit on synchronize, which would leave a newer head
+          # unvalidated. Re-watch until the head stops moving, so the merged SHA is the tested one.
+          sha=""
+          until [ "$sha" = "$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid)" ]; do
+            sha=$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid)
+            gh pr checks "$pr_url" --watch --fail-fast
+          done
+
+          gh pr merge "$pr_url" --squash --delete-branch
