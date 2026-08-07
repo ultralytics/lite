@@ -2059,8 +2059,15 @@ fn browse_url(remote: &str) -> Option<String> {
         return Some(format!("https://{host}/{repository}"));
     }
     if let Some(rest) = remote.strip_prefix("ssh://") {
-        let address = rest.split_once('@').map_or(rest, |(_, tail)| tail);
-        return Some(format!("https://{address}"));
+        let (authority, repository) = rest.split_once('/')?;
+        let host = authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, host)| host);
+        // A port here is the port sshd answers on, which reaches nothing a browser can read.
+        if host.contains(':') {
+            return None;
+        }
+        return Some(format!("https://{host}/{repository}"));
     }
     remote.starts_with("https://").then(|| remote.to_owned())
 }

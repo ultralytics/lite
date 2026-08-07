@@ -470,73 +470,80 @@ export function Inspector({
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
 
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
-  // on. Nothing behind it is mounted meanwhile, so a shut panel reads nothing.
-  if (collapsed)
-    return (
-      <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
-        {TABS.map(({ value, label, icon: Icon }) => (
-          <Tooltip key={value}>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={label}
-                  onClick={() => {
-                    setTab(value);
-                    onExpand();
-                  }}
-                />
-              }
-            >
-              <Icon />
-            </TooltipTrigger>
-            <TooltipContent side="left">{label}</TooltipContent>
-          </Tooltip>
-        ))}
-      </div>
-    );
+  // on. What it was showing is hidden rather than thrown away, so the file you had open is still open
+  // when it comes back, and a hidden panel reads nothing because nothing here reads without being asked.
+  const rail = (
+    <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
+      {TABS.map(({ value, label, icon: Icon }) => (
+        <Tooltip key={value}>
+          <TooltipTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={label}
+                onClick={() => {
+                  setTab(value);
+                  onExpand();
+                }}
+              />
+            }
+          >
+            <Icon />
+          </TooltipTrigger>
+          <TooltipContent side="left">{label}</TooltipContent>
+        </Tooltip>
+      ))}
+    </div>
+  );
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
-      <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
-        <TabsList variant="line">
-          {TABS.map(({ value, label, icon: Icon }) => (
-            <Tooltip key={value}>
-              <TooltipTrigger render={<TabsTrigger value={value} aria-label={label} />}>
-                <Icon />
-              </TooltipTrigger>
-              <TooltipContent>{label}</TooltipContent>
-            </Tooltip>
-          ))}
-        </TabsList>
-        {tab === "usage" && session.agent === "shell" ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
-                  aria-label="Refresh"
-                />
-              }
-            >
-              <RefreshCw />
-            </TooltipTrigger>
-            <TooltipContent>Refresh</TooltipContent>
-          </Tooltip>
-        )}
+    <>
+      {collapsed ? rail : null}
+      <div className={collapsed ? "hidden" : "h-full"}>
+        <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
+          <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
+            <TabsList variant="line">
+              {TABS.map(({ value, label, icon: Icon }) => (
+                <Tooltip key={value}>
+                  <TooltipTrigger render={<TabsTrigger value={value} aria-label={label} />}>
+                    <Icon />
+                  </TooltipTrigger>
+                  <TooltipContent>{label}</TooltipContent>
+                </Tooltip>
+              ))}
+            </TabsList>
+            {tab === "usage" && session.agent === "shell" ? null : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() =>
+                        setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))
+                      }
+                      aria-label="Refresh"
+                    />
+                  }
+                >
+                  <RefreshCw />
+                </TooltipTrigger>
+                <TooltipContent>Refresh</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+          <TabsContent value="files" className="min-h-0 overflow-hidden">
+            <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
+          </TabsContent>
+          <TabsContent value="git" className="min-h-0 overflow-hidden">
+            <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} />
+          </TabsContent>
+          <TabsContent value="usage" className="min-h-0 overflow-hidden">
+            <UsagePanel key={reload.usage} session={session} />
+          </TabsContent>
+        </Tabs>
       </div>
-      <TabsContent value="files" className="min-h-0 overflow-hidden">
-        <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
-      </TabsContent>
-      <TabsContent value="git" className="min-h-0 overflow-hidden">
-        <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} />
-      </TabsContent>
-      <TabsContent value="usage" className="min-h-0 overflow-hidden">
-        <UsagePanel key={reload.usage} session={session} />
-      </TabsContent>
-    </Tabs>
+    </>
   );
 }

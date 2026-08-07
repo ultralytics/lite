@@ -154,7 +154,14 @@ export function TerminalView({
         rows: terminal.rows,
       });
     };
-    const observer = new ResizeObserver(() => requestAnimationFrame(resize));
+    // A width change arrives as a stream of frames: a drag, or the ease a collapsing panel runs
+    // through. Fitting on each one rewraps the scrollback and hands the child a window size it is
+    // never shown at, so the terminal is fitted once the size has settled.
+    let settle = 0;
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(resize, 100);
+    });
     observer.observe(container);
     // Command and the zoom keys resize the type, as they do in a terminal app.
     terminal.attachCustomKeyEventHandler((event) => {
@@ -171,6 +178,7 @@ export function TerminalView({
     terminal.focus();
 
     return () => {
+      window.clearTimeout(settle);
       observer.disconnect();
       input.dispose();
       unsubscribe();

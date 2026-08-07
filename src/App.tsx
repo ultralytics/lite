@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ChevronRight,
   GitBranch,
   KeyRound,
   Moon,
@@ -73,7 +74,8 @@ const SIDES = {
   inspector: { size: "25%", min: "18%", max: "40%" },
 } as const;
 // Held at the minimum, the handle says that one more nudge collapses the side.
-const ARMED = "active:bg-primary active:[&>div]:h-10 active:[&>div]:bg-primary";
+const ARMED =
+  "data-[separator=active]:bg-primary data-[separator=active]:[&>div]:h-10 data-[separator=active]:[&>div]:bg-primary";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
 // The version is known from the start, so the badge shows it throughout and only its color waits on
 // the answer: grey while asking, which is quieter than a spinner that would resize a chip this small.
@@ -437,16 +439,25 @@ function App() {
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
   const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number; asPercentage: number }) => {
-    setSides((current) => {
-      const next: SideState =
-        size.inPixels <= RAIL + 1
-          ? "shut"
-          : size.asPercentage <= Number.parseFloat(SIDES[side].min) + 0.5
-            ? "floor"
-            : "open";
-      return current[side] === next ? current : { ...current, [side]: next };
-    });
+    const next: SideState =
+      size.inPixels <= RAIL + 1
+        ? "shut"
+        : size.asPercentage <= Number.parseFloat(SIDES[side].min) + 0.5
+          ? "floor"
+          : "open";
+    // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
+    // leaving the rail and the number shortcuts counting two different lists.
+    if (side === "sidebar" && next === "shut") setQuery("");
+    setSides((current) => (current[side] === next ? current : { ...current, [side]: next }));
   }, []);
+
+  // The inspector panel goes away with the last session and comes back at its default width, so what
+  // the sides remember about it is reset with it rather than corrected by the first measurement.
+  const hasSelection = Boolean(selected);
+  useEffect(() => {
+    if (!hasSelection)
+      setSides((current) => (current.inspector === "open" ? current : { ...current, inspector: "open" }));
+  }, [hasSelection]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -890,6 +901,21 @@ function App() {
               {sides.sidebar === "shut" ? (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => sidebarPanel.current?.expand()}
+                            aria-label="Expand sessions"
+                          />
+                        }
+                      >
+                        <ChevronRight />
+                      </TooltipTrigger>
+                      <TooltipContent side="right">Expand sessions</TooltipContent>
+                    </Tooltip>
                     <Tooltip>
                       <TooltipTrigger
                         render={
