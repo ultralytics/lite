@@ -55,6 +55,22 @@ import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
+// The version is known from the start, so the badge shows it throughout and only its colour waits on
+// the answer: grey while asking, which is quieter than a spinner that would resize a chip this small.
+const BADGE_VARIANT = {
+  checking: "secondary",
+  current: "success",
+  behind: "warning",
+  unknown: "outline",
+} as const;
+
+const RELEASE_NOTE = {
+  checking: "",
+  current: " · up to date",
+  behind: " · an update is available",
+  unknown: "",
+} as const;
+
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
 
 function loadSessions(): Session[] {
@@ -254,9 +270,10 @@ function App() {
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [version, setVersion] = useState("");
-  const [commit, setCommit] = useState("");
+  // Undefined until asked: an empty string is a release, anything else is the commit it was built from.
+  const [commit, setCommit] = useState<string>();
   const [built, setBuilt] = useState("");
-  const [behind, setBehind] = useState<boolean>();
+  const [release, setRelease] = useState<"checking" | "current" | "behind" | "unknown">("checking");
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [availableVersion, setAvailableVersion] = useState("");
@@ -328,16 +345,34 @@ function App() {
       .then((value) => setBuilt(value ?? ""))
       .catch(() => setBuilt(""));
     void invoke<string | null>("local_commit")
-      .then((value) => {
-        setCommit(value ?? "");
-        // A local build is never the released one, so only a release asks whether it is behind.
-        if (value) return;
-        return invoke<string | null>("check_update")
-          .then((next) => setBehind(Boolean(next)))
-          .catch(() => setBehind(undefined));
-      })
+      .then((value) => setCommit(value ?? ""))
       .catch(() => setCommit(""));
   }, []);
+
+  // Only a release can be behind a release. Asking costs a network round trip that is never worth
+  // delaying a paint or a restored session for, so it waits for the window to go idle and is dropped
+  // if the window goes away first.
+  useEffect(() => {
+    if (commit !== "") return;
+    let cancelled = false;
+    const check = () => {
+      if (cancelled) return;
+      void invoke<string | null>("check_update")
+        .then((next) => {
+          if (!cancelled) setRelease(next ? "behind" : "current");
+        })
+        .catch(() => {
+          if (!cancelled) setRelease("unknown");
+        });
+    };
+    const idle = typeof window.requestIdleCallback === "function";
+    const handle = idle ? window.requestIdleCallback(check, { timeout: 10000 }) : window.setTimeout(check, 3000);
+    return () => {
+      cancelled = true;
+      if (idle) window.cancelIdleCallback(handle);
+      else window.clearTimeout(handle);
+    };
+  }, [commit]);
 
   useEffect(() => {
     let disposed = false;
@@ -539,7 +574,7 @@ function App() {
               <TooltipTrigger
                 render={
                   <Badge
-                    variant={commit ? "error" : behind === undefined ? "outline" : behind ? "warning" : "success"}
+                    variant={commit ? "error" : BADGE_VARIANT[release]}
                     render={<button type="button" onClick={() => void checkForUpdates()} />}
                   >
                     {commit || version}
@@ -552,11 +587,7 @@ function App() {
                 ) : (
                   <span className="flex flex-col gap-0.5">
                     <span>
-                      {behind === undefined
-                        ? `Lite ${version}`
-                        : behind
-                          ? `Lite ${version} · an update is available`
-                          : `Lite ${version} · up to date`}
+                      {`Lite ${version}${RELEASE_NOTE[release]}`}
                       {built ? ` · released ${built}` : ""}
                     </span>
                     <button
