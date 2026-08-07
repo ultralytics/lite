@@ -12,6 +12,7 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
+  Search,
   SquareTerminal,
   Sun,
   Trash2,
@@ -255,7 +256,8 @@ function SessionRow({
           </button>
         )}
       </div>
-      <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 group-focus-within:opacity-100">
+      {/* Hidden rather than transparent, so a name gets the whole row until the pointer arrives. */}
+      <span className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
         <Tooltip>
           <TooltipTrigger
             render={
@@ -344,6 +346,7 @@ function App() {
   // Sessions whose terminal has written something recently, which is what separates a connected
   // session that is working from one that is merely connected.
   const [working, setWorking] = useState<Set<string>>(new Set());
+  const [query, setQuery] = useState("");
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [version, setVersion] = useState("");
   // Undefined until asked: an empty string is a release, anything else is the commit it was built from.
@@ -358,12 +361,20 @@ function App() {
   const workTimers = useRef(new Map<string, number>());
   const resumed = useRef("");
   const themeRef = useRef<Theme>("dark");
-  const sessionsRef = useRef<Session[]>([]);
+  const visibleRef = useRef<Session[]>([]);
   const selectedRef = useRef<Session>(undefined);
   const closeRef = useRef<(session: Session) => void>(() => {});
   const openRef = useRef<(session: Session) => void>(() => {});
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
-  sessionsRef.current = sessions;
+  // A session is found by what names it: the subject it was given and the folder it works in.
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return sessions;
+    return sessions.filter(
+      (session) => session.name.toLowerCase().includes(needle) || session.cwd.toLowerCase().includes(needle),
+    );
+  }, [sessions, query]);
+  visibleRef.current = visible;
   themeRef.current = theme;
   selectedRef.current = selected;
   closeRef.current = setClosing;
@@ -396,7 +407,8 @@ function App() {
       else if (event.key === ",") setSettingsOpen(true);
       else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
       else if (event.key >= "1" && event.key <= "9") {
-        const target = sessionsRef.current[Number(event.key) - 1];
+        // The numbers count the sessions the sidebar is showing, so a search narrows them with the list.
+        const target = visibleRef.current[Number(event.key) - 1];
         if (!target) return;
         // Reaching a session by number is the same act as clicking it, including bringing it back.
         openRef.current(target);
@@ -760,14 +772,27 @@ function App() {
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
           <ResizablePanel defaultSize="20%" minSize="15%" maxSize="30%" collapsible collapsedSize="0%">
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-              <div className="flex h-9 shrink-0 items-center justify-between pr-1.5 pl-3">
-                <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Sessions</span>
+              {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
+              <div className="flex h-9 shrink-0 items-center gap-1 pr-1.5 pl-2">
+                <span className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={query}
+                    className="h-7 pl-7 text-xs md:text-xs"
+                    placeholder="Search sessions"
+                    aria-label="Search sessions"
+                    onChange={(event) => setQuery(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setQuery("");
+                    }}
+                  />
+                </span>
                 <Tooltip>
                   <TooltipTrigger
                     render={
                       <Button
                         variant="ghost"
-                        size="icon-xs"
+                        size="icon-sm"
                         onClick={() => setNewSessionOpen(true)}
                         aria-label="New session"
                       />
@@ -780,7 +805,10 @@ function App() {
               </div>
               <ScrollArea className="min-h-0 flex-1">
                 <div className="space-y-0.5 px-2 pb-2">
-                  {sessions.map((session) => (
+                  {query && !visible.length ? (
+                    <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
+                  ) : null}
+                  {visible.map((session) => (
                     <SessionRow
                       key={session.id}
                       session={session}

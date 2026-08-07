@@ -1,13 +1,15 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { FolderOpen } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, FolderOpen } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -41,6 +43,9 @@ const choices: Choice[] = [
   { id: "shell", agent: "shell", description: "Open your default shell" },
 ];
 
+// The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
+const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
+
 interface DirectoryGrant {
   id: string;
   path: string;
@@ -67,6 +72,8 @@ export function NewSessionDialog({
   const [error, setError] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
+  // An agent that is not installed cannot take a session yet, so the dialog offers its setup guide instead.
+  const missing = status && !status.available ? status : undefined;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -151,91 +158,99 @@ export function NewSessionDialog({
     onOpenChange(false);
   }
 
+  // The form owns the one action the dialog is for, so Enter from the folder field starts the session.
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    if (missing)
+      void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
+        setError(String(reason)),
+      );
+    else void create();
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New session</DialogTitle>
-          <DialogDescription>Choose an agent and the folder it should work in.</DialogDescription>
-        </DialogHeader>
-        <div className="-mx-1 space-y-1">
-          {choices.map((option) => {
-            const state = availability[option.id];
-            const row = (
-              <button
-                type="button"
-                aria-pressed={option.id === choiceId}
-                onClick={() => setChoiceId(option.id)}
-                className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${option.id === choiceId ? "border-foreground bg-muted" : "border-transparent hover:bg-muted/60"}`}
-              >
-                <ProviderIcon agent={option.agent} provider={option.provider} className="size-5 shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
-                </span>
-                {state && !state.available ? (
-                  <span className="shrink-0 text-[11px] text-muted-foreground">Not set up</span>
-                ) : null}
-              </button>
-            );
-            return (
-              <div key={option.id}>
-                {option.note ? (
-                  <Tooltip>
-                    <TooltipTrigger render={row} />
-                    <TooltipContent className="max-w-64">{option.note}</TooltipContent>
-                  </Tooltip>
-                ) : (
-                  row
-                )}
+      <DialogContent size="lg">
+        <form onSubmit={submit}>
+          <DialogHeader>
+            <DialogTitle>New session</DialogTitle>
+            <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="space-y-1.5">
+              <label htmlFor="project-folder" className={SECTION}>
+                Project folder
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  id="project-folder"
+                  value={path}
+                  className="min-w-0 flex-1 font-mono"
+                  placeholder="Type or choose a project folder"
+                  onChange={(event) => setPath(event.target.value)}
+                />
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button variant="outline" size="icon" onClick={chooseFolder} aria-label="Browse for a folder" />
+                    }
+                  >
+                    <FolderOpen />
+                  </TooltipTrigger>
+                  <TooltipContent>Browse</TooltipContent>
+                </Tooltip>
               </div>
-            );
-          })}
-        </div>
-        <div className="flex gap-2">
-          <Input
-            value={path}
-            className="min-w-0 flex-1 font-mono"
-            placeholder="Type or choose a project folder"
-            aria-label="Project folder"
-            onChange={(event) => setPath(event.target.value)}
-            onBlur={() => void grant()}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void grant();
-            }}
-          />
-          <Tooltip>
-            <TooltipTrigger
-              render={<Button variant="outline" size="icon" onClick={chooseFolder} aria-label="Browse for a folder" />}
-            >
-              <FolderOpen />
-            </TooltipTrigger>
-            <TooltipContent>Browse</TooltipContent>
-          </Tooltip>
-        </div>
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        {status && !status.available ? <p className="text-xs text-muted-foreground">{status.detail}</p> : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => changeOpen(false)}>
-            Cancel
-          </Button>
-          {status && !status.available ? (
-            <Button
-              onClick={() =>
-                void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
-                  setError(String(reason)),
-                )
-              }
-            >
-              Open setup guide
+              {error ? <p className="text-xs text-destructive">{error}</p> : null}
+            </div>
+            <fieldset className="space-y-1.5">
+              <legend className={SECTION}>Agent</legend>
+              <div className="space-y-1">
+                {choices.map((option) => {
+                  const state = availability[option.id];
+                  const active = option.id === choiceId;
+                  const row = (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setChoiceId(option.id)}
+                      className={`flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors ${active ? "border-ring bg-accent" : "border-transparent hover:bg-muted/60"}`}
+                    >
+                      {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
+                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+                        <ProviderIcon agent={option.agent} provider={option.provider} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
+                        <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
+                      </span>
+                      {state && !state.available ? <Badge variant="outline">Not set up</Badge> : null}
+                      <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
+                    </button>
+                  );
+                  return option.note ? (
+                    <Tooltip key={option.id}>
+                      <TooltipTrigger render={row} />
+                      <TooltipContent className="max-w-64">{option.note}</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    row
+                  );
+                })}
+              </div>
+              {missing ? <p className="text-xs text-muted-foreground">{missing.detail}</p> : null}
+            </fieldset>
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => changeOpen(false)}>
+              Cancel
             </Button>
-          ) : (
-            <Button disabled={!path.trim() || !status} onClick={() => void create()}>
+            <Button type="submit" disabled={!missing && (!path.trim() || !status)}>
               {status ? null : <Spinner />}
-              Start session
+              {missing ? "Open setup guide" : "Start session"}
             </Button>
-          )}
-        </DialogFooter>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
