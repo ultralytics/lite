@@ -425,6 +425,15 @@ function App() {
     if (!session.running) void launch(session, true);
   };
 
+  // A drag reports every frame, so a side changes state only when the answer changes: handing back the
+  // same object leaves React with nothing to redraw while the divider moves.
+  const rail = useCallback((side: "sidebar" | "inspector", size: { inPixels: number }) => {
+    setCollapsed((current) => {
+      const shut = size.inPixels <= RAIL + 1;
+      return current[side] === shut ? current : { ...current, [side]: shut };
+    });
+  }, []);
+
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
@@ -861,49 +870,51 @@ function App() {
             maxSize="30%"
             collapsible
             collapsedSize={RAIL}
-            onResize={(size) => setCollapsed((current) => ({ ...current, sidebar: size.inPixels <= RAIL + 1 }))}
+            onResize={(size) => rail("sidebar", size)}
           >
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
               {collapsed.sidebar ? (
-                <div className="flex flex-col items-center gap-1 py-1.5">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => setNewSessionOpen(true)}
-                          aria-label="New session"
-                        />
-                      }
-                    >
-                      <Plus />
-                    </TooltipTrigger>
-                    <TooltipContent side="right">New session</TooltipContent>
-                  </Tooltip>
-                  {sessions.map((session) => (
-                    <Tooltip key={session.id}>
+                <ScrollArea className="min-h-0 flex-1">
+                  <div className="flex flex-col items-center gap-1 py-1.5">
+                    <Tooltip>
                       <TooltipTrigger
                         render={
-                          <button
-                            type="button"
-                            aria-pressed={session.id === selectedId}
-                            className={`rounded-lg p-1 ${session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"}`}
-                            onClick={() => openRef.current(session)}
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setNewSessionOpen(true)}
+                            aria-label="New session"
                           />
                         }
                       >
-                        <SessionBadge
-                          session={session}
-                          active={session.id === selectedId}
-                          starting={startingIds.has(session.id)}
-                          working={working.has(session.id)}
-                        />
+                        <Plus />
                       </TooltipTrigger>
-                      <TooltipContent side="right">{session.name}</TooltipContent>
+                      <TooltipContent side="right">New session</TooltipContent>
                     </Tooltip>
-                  ))}
-                </div>
+                    {sessions.map((session) => (
+                      <Tooltip key={session.id}>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              aria-pressed={session.id === selectedId}
+                              className={`rounded-lg p-1 ${session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"}`}
+                              onClick={() => openRef.current(session)}
+                            />
+                          }
+                        >
+                          <SessionBadge
+                            session={session}
+                            active={session.id === selectedId}
+                            starting={startingIds.has(session.id)}
+                            working={working.has(session.id)}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent side="right">{session.name}</TooltipContent>
+                      </Tooltip>
+                    ))}
+                  </div>
+                </ScrollArea>
               ) : (
                 <>
                   {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
@@ -1044,7 +1055,7 @@ function App() {
                 maxSize="40%"
                 collapsible
                 collapsedSize={RAIL}
-                onResize={(size) => setCollapsed((current) => ({ ...current, inspector: size.inPixels <= RAIL + 1 }))}
+                onResize={(size) => rail("inspector", size)}
               >
                 <aside className="h-full border-l">
                   {collapsed.inspector ? (
