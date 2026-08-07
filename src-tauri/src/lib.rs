@@ -1299,16 +1299,22 @@ fn agent_command(
             let mut command = CommandBuilder::new("codex");
             // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
             if provider == Some("deepseek") {
-                if saved_api_key(app, agent, provider).is_some() {
-                    // A key held by Lite defines the provider inline and is read from the environment,
-                    // so no Codex configuration file has to exist or be written.
-                    for override_value in [
-                        "model_providers.deepseek.name=\"deepseek\"",
-                        "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
-                        "model_providers.deepseek.wire_api=\"responses\"",
-                        "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
-                    ] {
-                        command.args(["-c", override_value]);
+                let key = saved_api_key(app, agent, provider).is_some();
+                if !key && deepseek_profile_exists(app) {
+                    // A profile the user wrote owns the whole model configuration, catalog included.
+                    command.args(["--profile", DEEPSEEK_PROFILE]);
+                } else {
+                    if key {
+                        // A key held by Lite defines the provider inline and is read from the
+                        // environment, so no Codex configuration file has to exist or be written.
+                        for override_value in [
+                            "model_providers.deepseek.name=\"deepseek\"",
+                            "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
+                            "model_providers.deepseek.wire_api=\"responses\"",
+                            "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
+                        ] {
+                            command.args(["-c", override_value]);
+                        }
                     }
                     command.args(["-c", "model_provider=\"deepseek\""]);
                     command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
@@ -1319,11 +1325,6 @@ fn agent_command(
                             .replace('"', "\\\"");
                         command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
                     }
-                } else if deepseek_profile_exists(app) {
-                    command.args(["--profile", DEEPSEEK_PROFILE]);
-                } else {
-                    command.args(["-c", "model_provider=\"deepseek\""]);
-                    command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
                 }
             }
             if let Some(provider_session_id) = provider_session_id {
