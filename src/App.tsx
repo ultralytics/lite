@@ -69,9 +69,38 @@ const RAIL = 44;
 // Where a side stops following the pointer. It has no room to be anything but its rail by here, so it
 // becomes one and collapses the rest of the way itself, in one eased step.
 const SHUT = 140;
-// A transition only runs when the property was already transitionable before the value changed, so the
-// ease is armed on the approach rather than at the moment it is needed, which is one commit too late.
-const ARM = 240;
+// A side reopens to the share of the window it started with, in the pixels a glide is measured in.
+function share(panel: PanelImperativeHandle | null, portion: string) {
+  const size = panel?.getSize();
+  if (!size || !size.asPercentage) return 0;
+  return Math.round((size.inPixels / size.asPercentage) * Number.parseFloat(portion));
+}
+
+// How long a side takes to open or close under its own power.
+const GLIDE_MS = 200;
+
+// The library reads every size back off the elements it laid out, so a CSS transition on a panel feeds
+// its own animation into the next layout and the two fight — measurably: an expanding panel is read as
+// one being dragged shut and pulled closed again. The ease is driven here instead, a resize per frame,
+// so what the library measures is always what it was last told. A drag owns the panel outright, so a
+// glide gets out of the way the moment one starts.
+function glide(panel: PanelImperativeHandle | null, to: number) {
+  if (!panel) return;
+  const from = panel.getSize().inPixels;
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || from === to) {
+    panel.resize(`${to}px`);
+    return;
+  }
+  const started = performance.now();
+  const step = (now: number) => {
+    if (document.querySelector("[data-separator=active]")) return;
+    const part = Math.min(1, (now - started) / GLIDE_MS);
+    // Ease out: fastest at the start, so the side answers the click before it settles.
+    panel.resize(`${Math.round(from + (to - from) * (1 - (1 - part) ** 3))}px`);
+    if (part < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 const SIDES = {
   sidebar: { size: "20%", max: "30%" },
   inspector: { size: "25%", max: "40%" },
@@ -384,10 +413,8 @@ function App() {
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
-  const [armed, setArmed] = useState({ sidebar: false, inspector: false });
   const sidebarPanel = useRef<PanelImperativeHandle>(null);
   const inspectorPanel = useRef<PanelImperativeHandle>(null);
-  const panels = useRef({ sidebar: sidebarPanel, inspector: inspectorPanel }).current;
   // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
   const [remote, setRemote] = useState("");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -428,24 +455,13 @@ function App() {
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
-  const rail = useCallback(
-    (side: keyof typeof SIDES, size: { inPixels: number }) => {
-      const next = size.inPixels <= SHUT + 1;
-      // Reaching the point where a side is only a rail is the whole decision, so the side takes the rest
-      // of the way itself rather than asking for another half of it. The library holds it there against
-      // the pointer, and the ease armed on the way in carries it.
-      if (next) panels[side].current?.collapse();
-      // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
-      // leaving the rail and the number shortcuts counting two different lists.
-      if (side === "sidebar" && next) setQuery("");
-      setShut((current) => (current[side] === next ? current : { ...current, [side]: next }));
-      setArmed((current) => {
-        const arm = size.inPixels <= ARM;
-        return current[side] === arm ? current : { ...current, [side]: arm };
-      });
-    },
-    [panels],
-  );
+  const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number }) => {
+    const next = size.inPixels <= SHUT + 1;
+    // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
+    // leaving the rail and the number shortcuts counting two different lists.
+    if (side === "sidebar" && next) setQuery("");
+    setShut((current) => (current[side] === next ? current : { ...current, [side]: next }));
+  }, []);
 
   // The inspector panel goes away with the last session and comes back at its default width, so what
   // the sides remember about it is reset with it rather than corrected by the first measurement.
@@ -453,6 +469,20 @@ function App() {
   useEffect(() => {
     if (!hasSelection) setShut((current) => (current.inspector ? { ...current, inspector: false } : current));
   }, [hasSelection]);
+
+  // A side dragged under the width where it can only be a rail is a side being closed, so it closes
+  // the rest of the way once the pointer lets go of it rather than sitting at whatever width the hand
+  // happened to stop at. Under the pointer it stays exactly where the pointer put it.
+  useEffect(() => {
+    const settle = () => {
+      for (const panel of [sidebarPanel.current, inspectorPanel.current]) {
+        const width = panel?.getSize().inPixels;
+        if (panel && width !== undefined && width < SHUT && width > RAIL) glide(panel, RAIL);
+      }
+    };
+    window.addEventListener("pointerup", settle);
+    return () => window.removeEventListener("pointerup", settle);
+  }, []);
 
   useEffect(() => {
     applyTheme(theme);
@@ -886,11 +916,8 @@ function App() {
           <ResizablePanel
             panelRef={sidebarPanel}
             defaultSize={SIDES.sidebar.size}
-            minSize={SHUT}
+            minSize={RAIL}
             maxSize={SIDES.sidebar.max}
-            collapsible
-            collapsedSize={RAIL}
-            data-ease={armed.sidebar || undefined}
             onResize={(size) => rail("sidebar", size)}
           >
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
@@ -903,7 +930,7 @@ function App() {
                       tooltip="Expand sessions"
                       tooltipSide="right"
                       aria-label="Expand sessions"
-                      onClick={() => sidebarPanel.current?.resize(SIDES.sidebar.size)}
+                      onClick={() => glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size))}
                     >
                       <ChevronRight />
                     </ActionIconButton>
@@ -972,7 +999,7 @@ function App() {
                       size="icon-sm"
                       tooltip="Collapse sessions"
                       aria-label="Collapse sessions"
-                      onClick={() => sidebarPanel.current?.collapse()}
+                      onClick={() => glide(sidebarPanel.current, RAIL)}
                     >
                       <ChevronLeft />
                     </ActionIconButton>
@@ -1080,11 +1107,8 @@ function App() {
               <ResizablePanel
                 panelRef={inspectorPanel}
                 defaultSize={SIDES.inspector.size}
-                minSize={SHUT}
+                minSize={RAIL}
                 maxSize={SIDES.inspector.max}
-                collapsible
-                collapsedSize={RAIL}
-                data-ease={armed.inspector || undefined}
                 onResize={(size) => rail("inspector", size)}
               >
                 <aside className="h-full border-l">
@@ -1092,8 +1116,10 @@ function App() {
                     <Inspector
                       session={selected}
                       collapsed={shut.inspector}
-                      onExpand={() => inspectorPanel.current?.resize(SIDES.inspector.size)}
-                      onCollapse={() => inspectorPanel.current?.collapse()}
+                      onExpand={() =>
+                        glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size))
+                      }
+                      onCollapse={() => glide(inspectorPanel.current, RAIL)}
                     />
                   </PanelBoundary>
                 </aside>

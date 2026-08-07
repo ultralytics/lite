@@ -8,24 +8,11 @@ function ResizablePanelGroup({ className, ...props }: ResizablePrimitive.GroupPr
   return (
     <ResizablePrimitive.Group
       data-slot="resizable-panel-group"
-      className={cn(
-        "group/panels flex h-full w-full aria-[orientation=vertical]:flex-col",
-        // Width is carried by flex-grow on the panel element the library owns, and a panel's own
-        // className lands on a nested div whose flex-grow never changes, so the ease is declared here
-        // against the child that actually carries the size.
-        "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-out",
-        // A separator being dragged has to track the pointer exactly, so the ease stands aside for it.
-        // The library publishes that state on data-separator, which a keyboard resize sets too and
-        // :active never would.
-        "has-[[data-separator=active]]:[&>[data-panel]]:transition-none",
-        // Except for the one panel that is collapsing. A collapsible panel stops at its minimum and
-        // then covers the rest of the way to its collapsed size in a single step, mid-drag, and that
-        // step is the whole reason to ease anything. A panel says so on data-ease before it can
-        // happen, because it has to be sitting at that minimum first.
-        "has-[[data-separator=active]]:[&>[data-panel][data-ease]]:transition-[flex-grow]",
-        "motion-reduce:[&>[data-panel]]:transition-none!",
-        className,
-      )}
+      // A panel's width is never eased in CSS: the library reads every size back off the elements it
+      // laid out, so an animating width is fed straight back into its own constraints and the two
+      // fight until one of them wins. Motion is driven from App instead, a resize per frame, which
+      // leaves what the library measures equal to what it has just been told.
+      className={cn("flex h-full w-full aria-[orientation=vertical]:flex-col", className)}
       {...props}
     />
   );

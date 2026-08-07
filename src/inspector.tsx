@@ -519,7 +519,16 @@ export function Inspector({
       {collapsed ? rail : null}
       <div className={collapsed ? "hidden" : "h-full"}>
         <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
-          <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
+          <div className="flex h-11 shrink-0 items-center gap-1 border-b px-3">
+            <ActionIconButton
+              variant="ghost"
+              size="icon-sm"
+              tooltip="Collapse panel"
+              aria-label="Collapse panel"
+              onClick={onCollapse}
+            >
+              <ChevronRight />
+            </ActionIconButton>
             <TabsList variant="line">
               {TABS.map(({ value, label, icon: Icon }) => (
                 <Tooltip key={value}>
@@ -530,7 +539,7 @@ export function Inspector({
                 </Tooltip>
               ))}
             </TabsList>
-            <span className="flex items-center">
+            <span className="ml-auto flex items-center">
               {tab === "usage" && session.agent === "shell" ? null : (
                 <ActionIconButton
                   variant="ghost"
@@ -542,15 +551,6 @@ export function Inspector({
                   <RefreshCw />
                 </ActionIconButton>
               )}
-              <ActionIconButton
-                variant="ghost"
-                size="icon-sm"
-                tooltip="Collapse panel"
-                aria-label="Collapse panel"
-                onClick={onCollapse}
-              >
-                <ChevronRight />
-              </ActionIconButton>
             </span>
           </div>
           <TabsContent value="files" className="min-h-0 overflow-hidden">
