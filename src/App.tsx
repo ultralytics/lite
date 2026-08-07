@@ -20,6 +20,7 @@ import {
 import { Component, lazy, type ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { LiteLogomark, ProviderIcon } from "@/brand-icons";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -253,6 +254,7 @@ function App() {
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [version, setVersion] = useState("");
+  const [local, setLocal] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [availableVersion, setAvailableVersion] = useState("");
@@ -320,6 +322,9 @@ function App() {
     void getVersion()
       .then(setVersion)
       .catch(() => setVersion(""));
+    void invoke<boolean>("local_build")
+      .then(setLocal)
+      .catch(() => setLocal(false));
   }, []);
 
   useEffect(() => {
@@ -514,6 +519,12 @@ function App() {
           className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[titlebar=overlay]:pl-[86px]"
         >
           <LiteLogomark className="size-5" />
+          {/* An unlabelled local build is indistinguishable from an install, and they share a data folder. */}
+          {local ? (
+            <Badge variant="outline" className="font-mono text-[10px] tracking-wide uppercase">
+              Local
+            </Badge>
+          ) : null}
           {selected ? (
             <>
               <Separator orientation="vertical" className="mx-1 h-4" />
@@ -549,7 +560,7 @@ function App() {
               <DropdownMenuContent align="end" className="w-48">
                 {version ? (
                   <DropdownMenuGroup>
-                    <DropdownMenuLabel>Lite {version}</DropdownMenuLabel>
+                    <DropdownMenuLabel>{local ? `Lite ${version} · local build` : `Lite ${version}`}</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                   </DropdownMenuGroup>
                 ) : null}

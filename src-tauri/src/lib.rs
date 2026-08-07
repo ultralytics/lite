@@ -1967,6 +1967,13 @@ fn stop_runtime(app: &AppHandle) {
     stop_codex_server(&app.state::<CodexServer>());
 }
 
+// A release is built by the publish workflow, so a build made without it came off someone's machine
+// and says so in the window, where an unlabelled copy is otherwise indistinguishable from an install.
+#[tauri::command]
+fn local_build() -> bool {
+    option_env!("GITHUB_ACTIONS").is_none()
+}
+
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
     app.updater_builder()
@@ -2034,7 +2041,8 @@ pub fn run() {
             save_api_key,
             delete_api_key,
             check_update,
-            install_update
+            install_update,
+            local_build
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lite")
