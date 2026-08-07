@@ -62,12 +62,15 @@ jobs:
 
           sleep 30 # Let ci.yml and format.yml register their checks before --watch
 
-          # format.yml pushes an auto-format commit on synchronize, which would leave a newer head
-          # unvalidated. Re-watch until the head stops moving, so the merged SHA is the tested one.
+          # main's ruleset requires an approving review but no status checks, so CI has to be waited
+          # on here or --auto would merge without it. format.yml pushes an auto-format commit on
+          # synchronize, so re-watch until the head stops moving and the merged SHA is the tested one.
           sha=""
           until [ "$sha" = "$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid)" ]; do
             sha=$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid)
             gh pr checks "$pr_url" --watch --fail-fast
           done
 
-          gh pr merge "$pr_url" --squash --delete-branch
+          # --auto rather than a plain merge: the review the ruleset wants may not have landed yet,
+          # and this leaves the PR open for a human instead of failing the run when it has not.
+          gh pr merge "$pr_url" --auto --squash --delete-branch
