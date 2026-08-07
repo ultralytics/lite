@@ -223,8 +223,8 @@ fn is_sensitive_path(root: &Path, path: &Path) -> bool {
     })
 }
 
-fn command_output(directory: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
+fn command_output(git: &Path, directory: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(git)
         .arg("-C")
         .arg(path_text(directory))
         .args(args)
@@ -1856,12 +1856,14 @@ async fn read_text_file(
 #[tauri::command]
 async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<GitStatus>, String> {
     let path = root_path(&roots, &root_id)?;
-    let root = match command_output(&path, &["rev-parse", "--show-toplevel"]) {
+    // Locating Git runs a login shell, so one refresh resolves it once rather than once per command.
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let root = match command_output(&git, &path, &["rev-parse", "--show-toplevel"]) {
         Ok(root) => root,
         Err(_) => return Ok(None),
     };
-    let branch = command_output(&path, &["branch", "--show-current"])?;
-    let mut child = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
+    let branch = command_output(&git, &path, &["branch", "--show-current"])?;
+    let mut child = Command::new(&git)
         .arg("-C")
         .arg(path_text(&path))
         .args(["status", "--short"])
