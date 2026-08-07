@@ -992,12 +992,28 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
         ("multi_agent_version", serde_json::Value::Null),
         ("use_responses_lite", serde_json::json!(false)),
         ("supports_search_tool", serde_json::json!(false)),
+        ("support_verbosity", serde_json::json!(false)),
+        ("default_verbosity", serde_json::Value::Null),
         ("additional_speed_tiers", serde_json::json!([])),
         ("service_tiers", serde_json::json!([])),
     ] {
         if entry.contains_key(key) {
             entry.insert(key.to_owned(), value);
         }
+    }
+    // Reasoning levels are the cloned model's own capability, and DeepSeek documents low, high, and
+    // max. Filtering rather than replacing keeps the descriptions Codex already uses and can only ever
+    // drop a level, so the entry never advertises an effort the provider would be sent and reject.
+    if let Some(levels) = entry
+        .get_mut("supported_reasoning_levels")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        levels.retain(|level| {
+            matches!(
+                level.get("effort").and_then(serde_json::Value::as_str),
+                Some("low" | "high" | "max")
+            )
+        });
     }
     models.push(model);
     let path = app.path().app_data_dir().ok()?.join("codex-models.json");
