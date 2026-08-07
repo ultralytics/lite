@@ -148,10 +148,12 @@ function SessionRow({
             />
           </span>
         ) : (
+          /* Clicking a session opens it; clicking the one already open edits its name, so a name is
+             reachable without a menu and a click never surprises you with a text field. */
           <button
             type="button"
             className="min-w-0 flex-1 py-0.5 text-left"
-            onClick={onSelect}
+            onClick={() => (active ? setRenaming(true) : onSelect())}
             onDoubleClick={() => setRenaming(true)}
             title={session.cwd}
           >
