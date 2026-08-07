@@ -2170,6 +2170,11 @@ pub fn run() {
             app.manage(load_roots(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
             app.manage(load_codex_server(app.handle())?);
+            // A relaunch inherits no activation from the process it replaces, so the build installed
+            // by an update came back behind every other window with nothing to show it had finished.
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_focus();
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
