@@ -223,8 +223,8 @@ fn is_sensitive_path(root: &Path, path: &Path) -> bool {
     })
 }
 
-fn command_output(directory: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
+fn command_output(git: &Path, directory: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(git)
         .arg("-C")
         .arg(path_text(directory))
         .args(args)
@@ -970,6 +970,103 @@ fn user_path() -> Option<String> {
 // CLIs already do with their own credentials, and it survives updates because the updater replaces the
 // bundle and not the data directory. A key is handed to a session through the environment variable its
 // CLI already reads, so nothing is copied into provider configuration.
+// Codex only knows the models in its own catalog, and it warns and guesses the limits for any other
+// one. It reads a replacement catalog from a file, so the bundled catalog is read back and the DeepSeek
+// model appended to it: cloning an entry keeps whatever shape that Codex version expects, and keeping
+// the built-in models leaves the rest of Codex working. The bundled catalog is asked for by name so a
+// launch never waits on Codex refreshing its models over the network. Every failure here returns None
+// and leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
+fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
+    let mut probe = Command::new(resolve_executable("codex")?);
+    probe.args(["debug", "models", "--bundled"]);
+    // The CLI is a Node launcher, so without the user PATH its shebang cannot find Node.
+    if let Some(path) = user_path() {
+        probe.env("PATH", path);
+    }
+    let output = probe
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let mut catalog: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let models = catalog.get_mut("models")?.as_array_mut()?;
+    if models
+        .iter()
+        .any(|model| model.get("slug").and_then(serde_json::Value::as_str) == Some(DEEPSEEK_MODEL))
+    {
+        return None;
+    }
+    let mut model = models.first()?.clone();
+    let entry = model.as_object_mut()?;
+    for (key, value) in [
+        ("slug", serde_json::json!(DEEPSEEK_MODEL)),
+        ("display_name", serde_json::json!("DeepSeek-V4-Flash")),
+        (
+            "description",
+            serde_json::json!("DeepSeek V4 Flash, served by the DeepSeek API."),
+        ),
+        ("context_window", serde_json::json!(1_048_576)),
+        ("max_context_window", serde_json::json!(1_048_576)),
+        ("default_reasoning_level", serde_json::json!("high")),
+        ("visibility", serde_json::json!("hide")),
+        ("input_modalities", serde_json::json!(["text"])),
+        // Capabilities and cache keys that belong to the model this entry was cloned from.
+        ("comp_hash", serde_json::Value::Null),
+        ("availability_nux", serde_json::Value::Null),
+        ("upgrade", serde_json::Value::Null),
+        ("tool_mode", serde_json::Value::Null),
+        ("multi_agent_version", serde_json::Value::Null),
+        ("use_responses_lite", serde_json::json!(false)),
+        ("supports_search_tool", serde_json::json!(false)),
+        ("support_verbosity", serde_json::json!(false)),
+        ("default_verbosity", serde_json::Value::Null),
+        ("supports_image_detail_original", serde_json::json!(false)),
+        (
+            "supports_reasoning_summary_parameter",
+            serde_json::json!(false),
+        ),
+        ("default_reasoning_summary", serde_json::json!("none")),
+        ("web_search_tool_type", serde_json::json!("text")),
+        (
+            "include_skills_usage_instructions",
+            serde_json::json!(false),
+        ),
+        (
+            "include_plugin_usage_instructions",
+            serde_json::json!(false),
+        ),
+        ("include_apps_usage_instructions", serde_json::json!(false)),
+        // DeepSeek documents parallel tool calls, and the entry states that rather than inheriting it.
+        ("supports_parallel_tool_calls", serde_json::json!(true)),
+        ("additional_speed_tiers", serde_json::json!([])),
+        ("service_tiers", serde_json::json!([])),
+    ] {
+        if entry.contains_key(key) {
+            entry.insert(key.to_owned(), value);
+        }
+    }
+    // Reasoning levels describe the provider, not the model this entry was cloned from, so they are
+    // stated rather than inherited: DeepSeek documents these three and a template missing one of them
+    // would otherwise leave it unreachable.
+    entry.insert(
+        "supported_reasoning_levels".to_owned(),
+        serde_json::json!([
+            {"effort": "low", "description": "Fast responses with lighter reasoning"},
+            {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+            {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"},
+        ]),
+    );
+    models.push(model);
+    let path = app.path().app_data_dir().ok()?.join("codex-models.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok()?;
+    }
+    let text = serde_json::to_string(&catalog).ok()?;
+    AtomicFile::new(&path, AllowOverwrite)
+        .write(|file| file.write_all(text.as_bytes()))
+        .ok()?;
+    Some(path)
+}
+
 fn api_keys_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
@@ -1149,6 +1246,20 @@ fn codex_declares_deepseek(app: &AppHandle) -> bool {
         .any(|line| line.trim() == "[model_providers.deepseek]")
 }
 
+// A catalog is a replacement rather than a merge, so one the user configured is left to win.
+fn codex_declares_catalog(app: &AppHandle) -> bool {
+    let Ok(home) = codex_home(app) else {
+        return false;
+    };
+    let Ok(file) = fs::File::open(home.join("config.toml")) else {
+        return false;
+    };
+    BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .any(|line| line.trim_start().starts_with("model_catalog_json"))
+}
+
 fn deepseek_profile_exists(app: &AppHandle) -> bool {
     codex_home(app).is_ok_and(|home| {
         home.join(format!("{DEEPSEEK_PROFILE}.config.toml"))
@@ -1258,24 +1369,35 @@ fn agent_command(
             let mut command = CommandBuilder::new("codex");
             // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
             if provider == Some("deepseek") {
-                if saved_api_key(app, agent, provider).is_some() {
-                    // A key held by Lite defines the provider inline and is read from the environment,
-                    // so no Codex configuration file has to exist or be written.
-                    for override_value in [
-                        "model_providers.deepseek.name=\"deepseek\"",
-                        "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
-                        "model_providers.deepseek.wire_api=\"responses\"",
-                        "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
-                    ] {
-                        command.args(["-c", override_value]);
+                let key = saved_api_key(app, agent, provider).is_some();
+                if !key && deepseek_profile_exists(app) {
+                    // A profile the user wrote owns the whole model configuration, catalog included.
+                    command.args(["--profile", DEEPSEEK_PROFILE]);
+                } else {
+                    if key {
+                        // A key held by Lite defines the provider inline and is read from the
+                        // environment, so no Codex configuration file has to exist or be written.
+                        for override_value in [
+                            "model_providers.deepseek.name=\"deepseek\"",
+                            "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
+                            "model_providers.deepseek.wire_api=\"responses\"",
+                            "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
+                        ] {
+                            command.args(["-c", override_value]);
+                        }
                     }
                     command.args(["-c", "model_provider=\"deepseek\""]);
                     command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
-                } else if deepseek_profile_exists(app) {
-                    command.args(["--profile", DEEPSEEK_PROFILE]);
-                } else {
-                    command.args(["-c", "model_provider=\"deepseek\""]);
-                    command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
+                    if let Some(catalog) = (!codex_declares_catalog(app))
+                        .then(|| deepseek_catalog(app))
+                        .flatten()
+                    {
+                        // A Windows path is full of backslashes, which TOML reads as escapes.
+                        let catalog = path_text(&catalog)
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"");
+                        command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
+                    }
                 }
             }
             if let Some(provider_session_id) = provider_session_id {
@@ -1876,12 +1998,14 @@ async fn read_text_file(
 #[tauri::command]
 async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<GitStatus>, String> {
     let path = root_path(&roots, &root_id)?;
-    let root = match command_output(&path, &["rev-parse", "--show-toplevel"]) {
+    // Locating Git runs a login shell, so one refresh resolves it once rather than once per command.
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let root = match command_output(&git, &path, &["rev-parse", "--show-toplevel"]) {
         Ok(root) => root,
         Err(_) => return Ok(None),
     };
-    let branch = command_output(&path, &["branch", "--show-current"])?;
-    let mut child = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
+    let branch = command_output(&git, &path, &["branch", "--show-current"])?;
+    let mut child = Command::new(&git)
         .arg("-C")
         .arg(path_text(&path))
         .args(["status", "--short"])
