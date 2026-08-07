@@ -15,7 +15,7 @@ Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claud
 
 <div align="center">
   <br>
-  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/ultralytics/lite/blob/eeb99328e396cbb55508a7d34fce96f6cf0e86f1/lite-product-full.png?raw=true" width="100%" alt="Ultralytics Lite 桌面应用"></a>
+  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/user-attachments/assets/b4664fe2-fd5b-450f-92e1-bdc83cdab468" width="100%" alt="Ultralytics Lite 桌面应用"></a>
   <br>
 </div>
 

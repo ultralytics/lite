@@ -15,7 +15,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 
 <div align="center">
   <br>
-  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/ultralytics/lite/blob/eeb99328e396cbb55508a7d34fce96f6cf0e86f1/lite-product-full.png?raw=true" width="100%" alt="Ultralytics Lite desktop app"></a>
+  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/user-attachments/assets/b4664fe2-fd5b-450f-92e1-bdc83cdab468" width="100%" alt="Ultralytics Lite desktop app"></a>
   <br>
 </div>
 
