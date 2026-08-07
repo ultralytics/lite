@@ -2160,6 +2160,50 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart()
 }
 
+// Tauri builds the About panel from the bundle config, which carries only the name, version,
+// copyright and publisher, so the panel read as bare. Everything else it can show has to be handed
+// over here. macOS only: it is the one platform with an application menu, and the installers carry
+// the same details from tauri.conf.json on Windows and Linux, where adding a menu would put a native
+// menu bar on a window that draws its own chrome.
+#[cfg(target_os = "macos")]
+fn describe_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItemKind, PredefinedMenuItem};
+
+    // The macOS panel renders credits as plain text, so the links read rather than click.
+    const CREDITS: &str = concat!(
+        "Runs Claude Code, Codex on OpenAI or DeepSeek, Kimi Code, and your shell side by side ",
+        "with your files, Git status, and provider usage.\n\n",
+        "Everything stays on this machine. No repository indexing, no telemetry, no cloud service.\n\n",
+        "Source\tgithub.com/ultralytics/lite\n",
+        "Issues\tgithub.com/ultralytics/lite/issues\n",
+        "Discord\tdiscord.com/invite/ultralytics\n",
+        "Forums\tcommunity.ultralytics.com\n",
+        "Licensing\tultralytics.com/license",
+    );
+
+    let about = AboutMetadata {
+        name: Some("Lite".into()),
+        version: Some(app.package_info().version.to_string()),
+        authors: Some(vec!["Ultralytics".into()]),
+        comments: Some("A fast, local workspace for AI coding agents.".into()),
+        copyright: Some("© 2026 Ultralytics Inc.".into()),
+        license: Some("AGPL-3.0".into()),
+        website: Some("https://www.ultralytics.com".into()),
+        website_label: Some("ultralytics.com".into()),
+        credits: Some(CREDITS.into()),
+        ..Default::default()
+    };
+
+    let menu = Menu::default(app)?;
+    // About is the first item of the application submenu, which is the first submenu on macOS.
+    if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
+        app_menu.remove_at(0)?;
+        app_menu.insert(&PredefinedMenuItem::about(app, None, Some(about))?, 0)?;
+    }
+    app.set_menu(menu)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2175,6 +2219,8 @@ pub fn run() {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
             }
+            #[cfg(target_os = "macos")]
+            describe_app(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
