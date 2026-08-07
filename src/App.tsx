@@ -55,7 +55,7 @@ import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
-// The version is known from the start, so the badge shows it throughout and only its colour waits on
+// The version is known from the start, so the badge shows it throughout and only its color waits on
 // the answer: grey while asking, which is quieter than a spinner that would resize a chip this small.
 const BADGE_VARIANT = {
   checking: "secondary",
