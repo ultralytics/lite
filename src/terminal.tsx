@@ -69,8 +69,19 @@ function storedFontSize(): number {
   return saved >= MIN_FONT_SIZE && saved <= MAX_FONT_SIZE ? saved : 13;
 }
 
-export function TerminalView({ sessionId, theme }: { sessionId: string; theme: Theme }) {
+export function TerminalView({
+  sessionId,
+  theme,
+  onPrompt,
+}: {
+  sessionId: string;
+  theme: Theme;
+  onPrompt: (text: string) => void;
+}) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // Held in a ref so a new prompt handler never rebuilds the terminal underneath the session.
+  const promptRef = useRef(onPrompt);
+  promptRef.current = onPrompt;
   const terminalRef = useRef<Terminal | null>(null);
   // Read when a terminal is built, so switching sessions paints the new one in the current theme
   // without rebuilding it every time the theme changes.
@@ -101,7 +112,17 @@ export function TerminalView({ sessionId, theme }: { sessionId: string; theme: T
     );
     terminal.open(container);
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
+    // What the user types before the first Enter is the closest thing a session has to a subject.
+    let typed = "";
     const input = terminal.onData((data) => {
+      for (const character of data) {
+        if (character === "\r" || character === "\n") {
+          const line = typed.trim();
+          typed = "";
+          if (line) promptRef.current(line);
+        } else if (character === "\u007f") typed = typed.slice(0, -1);
+        else if (character >= " ") typed += character;
+      }
       void invoke("write_session", {
         sessionId,
         data: Array.from(new TextEncoder().encode(data)),

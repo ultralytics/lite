@@ -156,7 +156,9 @@ function SessionRow({
             title={session.cwd}
           >
             <span className="block truncate text-xs font-medium">{session.name}</span>
-            <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">{sessionLabel(session)}</span>
+            <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
+              {shortPath(session.cwd)}
+            </span>
           </button>
         )}
       </div>
@@ -219,6 +221,23 @@ function startKimiConversation(sessionId: string) {
   });
   // Its greeting may change; waiting forever for the words would be worse than asking a little late.
   const timer = setTimeout(send, 15_000);
+}
+
+function folderName(cwd: string) {
+  return cwd.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
+}
+
+// Paths truncate from the right, which hides the part that identifies the folder, so only its tail shows.
+function shortPath(cwd: string) {
+  const parts = cwd.split(/[\\/]/).filter(Boolean);
+  return parts.slice(-2).join("/");
+}
+
+// A tab named after its folder says nothing, and several in one folder say the same nothing, so the
+// first thing asked of the session becomes its subject. A name the user chose is left alone.
+function promptName(text: string) {
+  const words = text.replace(/\s+/g, " ").trim();
+  return words.length > 40 ? `${words.slice(0, 40).trimEnd()}…` : words;
 }
 
 function App() {
@@ -591,7 +610,19 @@ function App() {
                 <div className="min-h-0 flex-1">
                   {selected.running ? (
                     <Suspense fallback={<div className="h-full bg-background" />}>
-                      <TerminalView sessionId={selected.id} theme={theme} />
+                      <TerminalView
+                        sessionId={selected.id}
+                        theme={theme}
+                        onPrompt={(text) =>
+                          setSessions((current) =>
+                            current.map((item) =>
+                              item.id === selected.id && item.name === folderName(item.cwd)
+                                ? { ...item, name: promptName(text) }
+                                : item,
+                            ),
+                          )
+                        }
+                      />
                     </Suspense>
                   ) : startingIds.has(selected.id) ? (
                     <div className="flex h-full flex-col items-center justify-center gap-3">
