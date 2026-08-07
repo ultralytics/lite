@@ -931,19 +931,30 @@ fn stop_codex_server(server: &CodexServer) {
 }
 
 #[cfg(unix)]
+fn account_shell() -> Option<String> {
+    let output = if cfg!(target_os = "macos") {
+        Command::new("/usr/bin/id").arg("-P").output().ok()?
+    } else {
+        let uid = Command::new("/usr/bin/id").arg("-u").output().ok()?;
+        Command::new("/usr/bin/getent")
+            .args(["passwd", String::from_utf8(uid.stdout).ok()?.trim()])
+            .output()
+            .ok()?
+    };
+    String::from_utf8(output.stdout)
+        .ok()?
+        .trim()
+        .rsplit(':')
+        .next()
+        .filter(|shell| !shell.is_empty())
+        .map(str::to_owned)
+}
+
+#[cfg(unix)]
 fn user_path() -> Option<String> {
     let shell = std::env::var("SHELL")
         .ok()
-        .or_else(|| {
-            let output = Command::new("/usr/bin/id").arg("-P").output().ok()?;
-            String::from_utf8(output.stdout)
-                .ok()?
-                .trim()
-                .rsplit(':')
-                .next()
-                .filter(|shell| !shell.is_empty())
-                .map(str::to_owned)
-        })
+        .or_else(account_shell)
         .unwrap_or_else(|| "/bin/sh".into());
     Command::new(shell)
         .args(["-lic", "printf %s \"$PATH\""])
