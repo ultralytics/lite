@@ -1,22 +1,13 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-# Update every dependency Lite declares, in one PR, on one schedule.
-#
-# This replaces Dependabot's version updates, which are no longer configured. Dependabot's cargo
-# ecosystem only bumped the handful of crates named in Cargo.toml and left the ~485 transitive crates
-# behind tauri to drift, and splitting the frontend and the Rust side across separate bots produced
-# PRs that had never been built against each other. CI here builds the whole app on all three
-# operating systems with both halves updated together.
-#
-# Security alerts are unaffected: they are a repository setting rather than dependabot.yml, so
-# vulnerability alerts still fire and can still be actioned.
+# Daily scheduled automation — consolidates recurring maintenance into single PRs instead of per-PR commits.
 
 name: Dependencies
 
 on:
   schedule:
-    - cron: "0 6 1 * *" # Monthly on the 1st at 06:00 UTC
-  workflow_dispatch: # Manual run from the Actions tab
+    - cron: "0 6 * * *" # Daily at 06:00 UTC
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}
@@ -26,29 +17,30 @@ jobs:
   update:
     if: github.repository == 'ultralytics/lite'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - name: Checkout
+        uses: actions/checkout@v7
         with:
-          token: ${{ secrets._GITHUB_TOKEN }} # UltralyticsAssistant PAT so the PR triggers ci.yml
+          token: ${{ secrets._GITHUB_TOKEN }}
 
       - name: Git config
         run: |
           git config --global user.name "UltralyticsAssistant"
           git config --global user.email "web@ultralytics.com"
 
-      - uses: oven-sh/setup-bun@v2
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
+          bun-version: latest
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Update dependencies
-        # --latest is required: without it bun keeps the locked version even when package.json already
-        # allows a newer one, so a plain `bun update` reports no changes against a stale lockfile.
-        # It crosses major versions and rewrites the ranges, so a version ceiling belongs in a root
-        # "overrides" block, which survives --latest. cargo update stays inside the declared ranges,
-        # which is where the transitive drift actually is.
+        # Without --latest, bun keeps the locked version even when the declared range allows a newer
+        # one, so `bun update` reports "no changes" against an outdated lockfile.
+        # Version ceilings belong in the root "overrides" block — it survives --latest.
         run: |
           bun update --latest
           cargo update --manifest-path src-tauri/Cargo.toml
@@ -57,35 +49,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets._GITHUB_TOKEN }}
         run: |
-          if git diff --quiet; then
-            echo "Every dependency is already current - skipping PR."
+          branch="chore/daily-dependencies-$(date +%Y%m%d%H%M%S)"
+          git checkout -b "$branch"
+          git add -u
+          if git diff --staged --quiet; then
+            echo "No dependency updates available — skipping PR."
             exit 0
           fi
-
-          branch="chore/dependencies-$(date +%Y%m%d%H%M%S)"
-          git checkout -b "$branch"
-          git commit -am "Auto-update dependencies"
+          git commit -m "Auto-update dependencies"
           git push origin "$branch"
 
           pr_url=$(gh pr create \
             --title "Auto-update dependencies" \
-            --body "Monthly \`bun update --latest\` and \`cargo update\`. The frontend bump crosses major versions, so review those; the Rust bump stays inside the ranges declared in Cargo.toml." \
+            --body "Daily automated \`bun update --latest\` and \`cargo update\`. Crosses semver ranges, so review majors. Version ceilings live in the root \`overrides\` block." \
             --base main \
             --head "$branch" \
             --label dependencies)
           echo "PR opened: $pr_url"
 
-          sleep 30 # Let ci.yml and format.yml register their checks before --watch
-
-          # main's ruleset requires an approving review but no status checks, so CI has to be waited
-          # on here or --auto would merge without it. format.yml pushes an auto-format commit on
-          # synchronize, so re-watch until the head stops moving and the merged SHA is the tested one.
-          sha=""
-          until [ "$sha" = "$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid)" ]; do
-            sha=$(gh pr view "$pr_url" --json headRefOid --jq .headRefOid)
-            gh pr checks "$pr_url" --watch --fail-fast
-          done
-
-          # --auto rather than a plain merge: the review the ruleset wants may not have landed yet,
-          # and this leaves the PR open for a human instead of failing the run when it has not.
-          gh pr merge "$pr_url" --auto --squash --delete-branch
+          sleep 60 # Let format.yml + CI register their checks before --watch
+          gh pr checks "$pr_url" --watch --fail-fast
+          gh pr merge "$pr_url" --squash --delete-branch --admin
