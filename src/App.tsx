@@ -64,6 +64,16 @@ import "./App.css";
 const STORAGE_KEY = "lite.sessions.v1";
 // The width each side collapses to: one icon button and the room around it.
 const RAIL = 44;
+// What each side is doing. "floor" is the pause the library builds in: a collapsible panel stops at its
+// minimum and stays there until the drag passes half the remaining gap, so without a word from the
+// handle the drag that is about to collapse it looks exactly like one that is doing nothing.
+type SideState = "open" | "floor" | "shut";
+const SIDES = {
+  sidebar: { size: "20%", min: "15%", max: "30%" },
+  inspector: { size: "25%", min: "18%", max: "40%" },
+} as const;
+// Held at the minimum, the handle says that one more nudge collapses the side.
+const ARMED = "active:bg-primary active:[&>div]:h-10 active:[&>div]:bg-primary";
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
 // The version is known from the start, so the badge shows it throughout and only its color waits on
 // the answer: grey while asking, which is quieter than a spinner that would resize a chip this small.
@@ -383,7 +393,7 @@ function App() {
   const [query, setQuery] = useState("");
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
-  const [collapsed, setCollapsed] = useState({ sidebar: false, inspector: false });
+  const [sides, setSides] = useState<Record<keyof typeof SIDES, SideState>>({ sidebar: "open", inspector: "open" });
   const sidebarPanel = useRef<PanelImperativeHandle>(null);
   const inspectorPanel = useRef<PanelImperativeHandle>(null);
   // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
@@ -426,10 +436,15 @@ function App() {
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
-  const rail = useCallback((side: "sidebar" | "inspector", size: { inPixels: number }) => {
-    setCollapsed((current) => {
-      const shut = size.inPixels <= RAIL + 1;
-      return current[side] === shut ? current : { ...current, [side]: shut };
+  const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number; asPercentage: number }) => {
+    setSides((current) => {
+      const next: SideState =
+        size.inPixels <= RAIL + 1
+          ? "shut"
+          : size.asPercentage <= Number.parseFloat(SIDES[side].min) + 0.5
+            ? "floor"
+            : "open";
+      return current[side] === next ? current : { ...current, [side]: next };
     });
   }, []);
 
@@ -864,17 +879,17 @@ function App() {
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
           <ResizablePanel
             panelRef={sidebarPanel}
-            defaultSize="20%"
-            minSize="15%"
-            maxSize="30%"
+            defaultSize={SIDES.sidebar.size}
+            minSize={SIDES.sidebar.min}
+            maxSize={SIDES.sidebar.max}
             collapsible
             collapsedSize={RAIL}
             onResize={(size) => rail("sidebar", size)}
           >
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-              {collapsed.sidebar ? (
+              {sides.sidebar === "shut" ? (
                 <ScrollArea className="min-h-0 flex-1">
-                  <div className="flex flex-col items-center gap-1 py-1.5">
+                  <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
                     <Tooltip>
                       <TooltipTrigger
                         render={
@@ -975,7 +990,7 @@ function App() {
               )}
             </aside>
           </ResizablePanel>
-          <ResizableHandle withHandle />
+          <ResizableHandle withHandle className={sides.sidebar === "floor" ? ARMED : ""} />
           <ResizablePanel defaultSize="55%" minSize="38%">
             <section className="flex h-full min-w-0 flex-col">
               {selected ? (
@@ -1046,12 +1061,12 @@ function App() {
           </ResizablePanel>
           {selected ? (
             <>
-              <ResizableHandle withHandle />
+              <ResizableHandle withHandle className={sides.inspector === "floor" ? ARMED : ""} />
               <ResizablePanel
                 panelRef={inspectorPanel}
-                defaultSize="25%"
-                minSize="18%"
-                maxSize="40%"
+                defaultSize={SIDES.inspector.size}
+                minSize={SIDES.inspector.min}
+                maxSize={SIDES.inspector.max}
                 collapsible
                 collapsedSize={RAIL}
                 onResize={(size) => rail("inspector", size)}
@@ -1060,7 +1075,7 @@ function App() {
                   <PanelBoundary key={selected.id}>
                     <Inspector
                       session={selected}
-                      collapsed={collapsed.inspector}
+                      collapsed={sides.inspector === "shut"}
                       onExpand={() => inspectorPanel.current?.expand()}
                     />
                   </PanelBoundary>

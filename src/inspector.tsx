@@ -473,7 +473,7 @@ export function Inspector({
   // on. Nothing behind it is mounted meanwhile, so a shut panel reads nothing.
   if (collapsed)
     return (
-      <div className="flex flex-col items-center gap-1 py-1.5">
+      <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
         {TABS.map(({ value, label, icon: Icon }) => (
           <Tooltip key={value}>
             <TooltipTrigger
