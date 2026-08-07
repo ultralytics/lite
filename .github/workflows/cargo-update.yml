@@ -47,8 +47,6 @@ jobs:
             exit 0
           fi
 
-          git config user.name "UltralyticsAssistant"
-          git config user.email "web@ultralytics.com"
           branch="chore/cargo-update-$(date +%Y%m%d%H%M%S)"
           git checkout -b "$branch"
           git commit -m "Auto-update Cargo.lock via cargo update" -- src-tauri/Cargo.lock
