@@ -19,7 +19,7 @@ const CodePreview = lazy(() => import("@/code-preview"));
 // the output Lite already keeps. Only what Git and GitHub print verbatim counts: a whole pull request
 // link, and the two sentences Git answers a checkout with. A bare "#12" is as often a line number.
 // Only CSI is stripped, so a link inside an OSC hyperlink survives being uncoloured.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: a colour code has to be named to be removed.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const PULL_REQUEST = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
 const BRANCH = /(?:On branch|Switched to(?: a new)? branch) '?([\w./-]+)'?/g;

@@ -182,7 +182,7 @@ class PanelBoundary extends Component<{ children: ReactNode }, { message: string
 }
 
 // What a session looks like at a glance: who runs it and whether it is up. The sidebar row and the rail
-// it collapses to show the same one, so a session is recognisable at either width.
+// it collapses to show the same one, so a session is recognizable at either width.
 function SessionBadge({
   session,
   active,
