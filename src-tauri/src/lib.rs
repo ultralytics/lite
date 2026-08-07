@@ -932,9 +932,21 @@ fn stop_codex_server(server: &CodexServer) {
 
 #[cfg(unix)]
 fn user_path() -> Option<String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    let shell = std::env::var("SHELL")
+        .ok()
+        .or_else(|| {
+            let output = Command::new("/usr/bin/id").arg("-P").output().ok()?;
+            String::from_utf8(output.stdout)
+                .ok()?
+                .trim()
+                .rsplit(':')
+                .next()
+                .filter(|shell| !shell.is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "/bin/sh".into());
     Command::new(shell)
-        .args(["-lc", "printf %s \"$PATH\""])
+        .args(["-lic", "printf %s \"$PATH\""])
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -1078,8 +1090,7 @@ async fn delete_api_key(app: AppHandle, name: String) -> Result<(), String> {
 
 // A launched app inherits a bare PATH, and the PATH given to a child is not used to find the program
 // itself, so anything Lite runs has to be located in the user's own PATH first and run by full path.
-fn resolve_executable(name: &str) -> Option<PathBuf> {
-    let path = user_path()?;
+fn find_executable(name: &str, path: &str) -> Option<PathBuf> {
     std::env::split_paths(&path).find_map(|directory| {
         #[cfg(windows)]
         {
@@ -1094,6 +1105,21 @@ fn resolve_executable(name: &str) -> Option<PathBuf> {
             candidate.is_file().then_some(candidate)
         }
     })
+}
+
+fn resolve_executable(name: &str) -> Option<PathBuf> {
+    user_path().and_then(|path| find_executable(name, &path))
+}
+
+fn cli_command(name: &str) -> Result<CommandBuilder, String> {
+    let (executable, path) = user_path()
+        .and_then(|path| find_executable(name, &path).map(|executable| (executable, path)))
+        .ok_or_else(|| {
+            format!("Could not find the {name} CLI in your PATH. Install it, then reopen this tab.")
+        })?;
+    let mut command = CommandBuilder::new(executable);
+    command.env("PATH", path);
+    Ok(command)
 }
 
 fn executable_exists(name: &str) -> bool {
@@ -1226,7 +1252,7 @@ fn agent_command(
 ) -> Result<CommandBuilder, String> {
     let mut command = match agent {
         "claude" => {
-            let mut command = CommandBuilder::new("claude");
+            let mut command = cli_command("claude")?;
             if resume {
                 command.args(["--resume", session_id]);
             } else {
@@ -1235,7 +1261,7 @@ fn agent_command(
             command
         }
         "codex" => {
-            let mut command = CommandBuilder::new("codex");
+            let mut command = cli_command("codex")?;
             // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
             if provider == Some("deepseek") {
                 if saved_api_key(app, agent, provider).is_some() {
@@ -1267,18 +1293,21 @@ fn agent_command(
             // Only an exact id resumes. `--continue` would reopen whatever ran last in the directory,
             // which two tabs there would both land on, and it creates no entry for discovery to record,
             // so the tab could never learn which session it is showing.
-            let mut command = CommandBuilder::new("kimi");
+            let mut command = cli_command("kimi")?;
             if let Some(provider_session_id) = provider_session_id {
                 command.args(["--session", provider_session_id]);
             }
             command
         }
-        "shell" => CommandBuilder::new_default_prog(),
+        "shell" => {
+            let mut command = CommandBuilder::new_default_prog();
+            if let Some(path) = user_path() {
+                command.env("PATH", path);
+            }
+            command
+        }
         _ => return Err("Unknown session type".into()),
     };
-    if let Some(path) = user_path() {
-        command.env("PATH", path);
-    }
     // The key reaches the CLI through the variable it already reads, and only for this session.
     if let Some((_, variable)) = api_key_env(agent, provider)
         && let Some(key) = saved_api_key(app, agent, provider)
@@ -1290,27 +1319,24 @@ fn agent_command(
 
 // Each CLI owns its sign-in and opens the browser itself, so Lite only runs the command and shows it.
 fn login_command(agent: &str) -> Result<CommandBuilder, String> {
-    let mut command = match agent {
+    let command = match agent {
         "claude" => {
-            let mut command = CommandBuilder::new("claude");
+            let mut command = cli_command("claude")?;
             command.args(["auth", "login"]);
             command
         }
         "codex" => {
-            let mut command = CommandBuilder::new("codex");
+            let mut command = cli_command("codex")?;
             command.arg("login");
             command
         }
         "kimi" => {
-            let mut command = CommandBuilder::new("kimi");
+            let mut command = cli_command("kimi")?;
             command.arg("login");
             command
         }
         _ => return Err("This provider signs in with an API key".into()),
     };
-    if let Some(path) = user_path() {
-        command.env("PATH", path);
-    }
     Ok(command)
 }
 
