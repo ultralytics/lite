@@ -5,7 +5,7 @@ import { ChartNoAxesColumn, ChevronRight, File, Folder, GitBranch, GitPullReques
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ActionIconButton } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -231,16 +231,15 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
         <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2">
           <File className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate font-mono text-xs">{selected.name}</span>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button variant="ghost" size="icon-sm" onClick={() => setSelected(null)} aria-label="Close file" />
-              }
-            >
-              <X />
-            </TooltipTrigger>
-            <TooltipContent>Close file</TooltipContent>
-          </Tooltip>
+          <ActionIconButton
+            variant="ghost"
+            size="icon-sm"
+            tooltip="Close file"
+            aria-label="Close file"
+            onClick={() => setSelected(null)}
+          >
+            <X />
+          </ActionIconButton>
         </div>
         <ScrollArea className="min-h-0 flex-1">
           {error ? (
@@ -475,24 +474,20 @@ export function Inspector({
   const rail = (
     <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
       {TABS.map(({ value, label, icon: Icon }) => (
-        <Tooltip key={value}>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={label}
-                onClick={() => {
-                  setTab(value);
-                  onExpand();
-                }}
-              />
-            }
-          >
-            <Icon />
-          </TooltipTrigger>
-          <TooltipContent side="left">{label}</TooltipContent>
-        </Tooltip>
+        <ActionIconButton
+          key={value}
+          variant="ghost"
+          size="icon-sm"
+          tooltip={label}
+          tooltipSide="left"
+          aria-label={label}
+          onClick={() => {
+            setTab(value);
+            onExpand();
+          }}
+        >
+          <Icon />
+        </ActionIconButton>
       ))}
     </div>
   );
@@ -514,23 +509,15 @@ export function Inspector({
               ))}
             </TabsList>
             {tab === "usage" && session.agent === "shell" ? null : (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() =>
-                        setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))
-                      }
-                      aria-label="Refresh"
-                    />
-                  }
-                >
-                  <RefreshCw />
-                </TooltipTrigger>
-                <TooltipContent>Refresh</TooltipContent>
-              </Tooltip>
+              <ActionIconButton
+                variant="ghost"
+                size="icon-sm"
+                tooltip="Refresh"
+                aria-label="Refresh"
+                onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
+              >
+                <RefreshCw />
+              </ActionIconButton>
             )}
           </div>
           <TabsContent value="files" className="min-h-0 overflow-hidden">

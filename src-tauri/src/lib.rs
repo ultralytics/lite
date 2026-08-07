@@ -2058,18 +2058,19 @@ fn browse_url(remote: &str) -> Option<String> {
         let (host, repository) = rest.split_once(':')?;
         return Some(format!("https://{host}/{repository}"));
     }
-    if let Some(rest) = remote.strip_prefix("ssh://") {
-        let (authority, repository) = rest.split_once('/')?;
-        let host = authority
-            .rsplit_once('@')
-            .map_or(authority, |(_, host)| host);
-        // A port here is the port sshd answers on, which reaches nothing a browser can read.
-        if host.contains(':') {
-            return None;
-        }
-        return Some(format!("https://{host}/{repository}"));
+    let ssh = remote.strip_prefix("ssh://");
+    let rest = ssh.or_else(|| remote.strip_prefix("https://"))?;
+    let (authority, repository) = rest.split_once('/')?;
+    // Whatever the clone was made with — a token, an account name — is Git's business and has none in a
+    // link, still less in a browser's address bar and history. An ssh port reaches nothing a browser
+    // can read, where an https one is the site itself.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if ssh.is_some() && host.contains(':') {
+        return None;
     }
-    remote.starts_with("https://").then(|| remote.to_owned())
+    Some(format!("https://{host}/{repository}"))
 }
 
 // The repository a folder was cloned from, asked for on its own: naming it costs one git call, where

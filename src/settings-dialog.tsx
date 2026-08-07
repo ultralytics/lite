@@ -5,7 +5,7 @@ import { Check, Eye, EyeOff, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
-import { Button } from "@/components/ui/button";
+import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogBody,
@@ -17,7 +17,6 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Agent, ModelProvider } from "@/types";
 
 // Each CLI signs in on its own; a key here is the alternative for anyone who would rather not.
@@ -177,29 +176,23 @@ export function SettingsDialog({
                           if (event.key === "Escape") edit(option.id, false);
                         }}
                       />
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="absolute right-0.5"
-                              aria-label={revealed.has(option.id) ? "Hide the key" : "Show the key"}
-                              onClick={() =>
-                                setRevealed((current) => {
-                                  const next = new Set(current);
-                                  if (next.has(option.id)) next.delete(option.id);
-                                  else next.add(option.id);
-                                  return next;
-                                })
-                              }
-                            />
-                          }
-                        >
-                          {revealed.has(option.id) ? <EyeOff /> : <Eye />}
-                        </TooltipTrigger>
-                        <TooltipContent>{revealed.has(option.id) ? "Hide the key" : "Show the key"}</TooltipContent>
-                      </Tooltip>
+                      <ActionIconButton
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute right-0.5"
+                        tooltip={revealed.has(option.id) ? "Hide the key" : "Show the key"}
+                        aria-label={revealed.has(option.id) ? "Hide the key" : "Show the key"}
+                        onClick={() =>
+                          setRevealed((current) => {
+                            const next = new Set(current);
+                            if (next.has(option.id)) next.delete(option.id);
+                            else next.add(option.id);
+                            return next;
+                          })
+                        }
+                      >
+                        {revealed.has(option.id) ? <EyeOff /> : <Eye />}
+                      </ActionIconButton>
                     </span>
                     <Button
                       variant="outline"
@@ -238,23 +231,17 @@ export function SettingsDialog({
                       {status?.keyHint ? "Replace" : "Use a key"}
                     </Button>
                     {status?.keyHint ? (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="hover:text-destructive"
-                              disabled={busy === option.id}
-                              onClick={() => void remove(option.id)}
-                              aria-label={`Delete the ${option.label} key`}
-                            />
-                          }
-                        >
-                          {busy === option.id ? <Spinner /> : <Trash2 />}
-                        </TooltipTrigger>
-                        <TooltipContent>Delete this key</TooltipContent>
-                      </Tooltip>
+                      <ActionIconButton
+                        variant="ghost"
+                        size="icon-sm"
+                        className="hover:text-destructive"
+                        tooltip="Delete this key"
+                        aria-label={`Delete the ${option.label} key`}
+                        disabled={busy === option.id}
+                        onClick={() => void remove(option.id)}
+                      >
+                        {busy === option.id ? <Spinner /> : <Trash2 />}
+                      </ActionIconButton>
                     ) : null}
                   </>
                 )}

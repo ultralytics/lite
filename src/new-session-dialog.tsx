@@ -6,7 +6,7 @@ import { type FormEvent, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogBody,
@@ -196,18 +196,16 @@ export function NewSessionDialog({
                   placeholder="Type or choose a project folder"
                   onChange={(event) => setPath(event.target.value)}
                 />
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button variant="outline" size="icon" onClick={chooseFolder} aria-label="Browse for a folder" />
-                    }
-                  >
-                    <FolderOpen />
-                  </TooltipTrigger>
-                  <TooltipContent>Browse</TooltipContent>
-                </Tooltip>
+                <ActionIconButton
+                  variant="outline"
+                  size="icon"
+                  tooltip="Browse"
+                  aria-label="Browse for a folder"
+                  onClick={chooseFolder}
+                >
+                  <FolderOpen />
+                </ActionIconButton>
               </div>
-              {error ? <p className="text-xs text-destructive">{error}</p> : null}
             </div>
             <fieldset className="space-y-1.5">
               <legend className={SECTION}>Agent</legend>
@@ -247,6 +245,8 @@ export function NewSessionDialog({
               </div>
               {missing ? <p className="text-xs text-muted-foreground">{missing.detail}</p> : null}
             </fieldset>
+            {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
+            {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => changeOpen(false)}>

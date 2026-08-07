@@ -8,27 +8,25 @@ function ResizablePanelGroup({ className, ...props }: ResizablePrimitive.GroupPr
   return (
     <ResizablePrimitive.Group
       data-slot="resizable-panel-group"
-      className={cn("group/panels flex h-full w-full aria-[orientation=vertical]:flex-col", className)}
-      {...props}
-    />
-  );
-}
-
-// Width is carried by flex-grow, so a panel eases into every size it is given: collapsing, expanding,
-// and the jump a collapse makes. The one exception is a held separator, which has to track the pointer
-// exactly — easing there would leave the panel trailing the hand that moves it. The library
-// publishes that on data-separator, which a keyboard resize sets too and :active never would.
-function ResizablePanel({ className, ...props }: ResizablePrimitive.PanelProps) {
-  return (
-    <ResizablePrimitive.Panel
-      data-slot="resizable-panel"
       className={cn(
-        "transition-[flex-grow] duration-200 ease-out group-has-[[data-separator=active]]/panels:transition-none motion-reduce:transition-none",
+        "group/panels flex h-full w-full aria-[orientation=vertical]:flex-col",
+        // Width is carried by flex-grow on the panel element the library owns, and a panel's own
+        // className lands on a nested div whose flex-grow never changes, so the ease is declared here
+        // against the child that actually carries the size. It covers every size a panel is given,
+        // including the jump a collapse makes. A separator being dragged is the exception: it has to
+        // track the pointer exactly, and the library publishes that state on data-separator, which a
+        // keyboard resize sets too and :active never would.
+        "[&>[data-panel]]:transition-[flex-grow] [&>[data-panel]]:duration-200 [&>[data-panel]]:ease-out",
+        "has-[[data-separator=active]]:[&>[data-panel]]:transition-none motion-reduce:[&>[data-panel]]:transition-none",
         className,
       )}
       {...props}
     />
   );
+}
+
+function ResizablePanel({ ...props }: ResizablePrimitive.PanelProps) {
+  return <ResizablePrimitive.Panel data-slot="resizable-panel" {...props} />;
 }
 
 function ResizableHandle({

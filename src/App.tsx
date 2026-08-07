@@ -24,7 +24,7 @@ import { Component, lazy, type ReactNode, Suspense, useCallback, useEffect, useM
 
 import { LiteLogomark, ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogBody,
@@ -299,39 +299,27 @@ function SessionRow({
       </div>
       {/* Hidden rather than transparent, so a name gets the whole row until the pointer arrives. */}
       <span className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                disabled={starting}
-                onClick={onRestart}
-                aria-label={`Restart ${session.name}`}
-              />
-            }
-          >
-            <RotateCcw />
-          </TooltipTrigger>
-          <TooltipContent>Restart</TooltipContent>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                disabled={starting}
-                className="hover:text-destructive"
-                onClick={onClose}
-                aria-label={`Close ${session.name}`}
-              />
-            }
-          >
-            <Trash2 />
-          </TooltipTrigger>
-          <TooltipContent>Close session</TooltipContent>
-        </Tooltip>
+        <ActionIconButton
+          variant="ghost"
+          size="icon-sm"
+          tooltip="Restart"
+          aria-label={`Restart ${session.name}`}
+          disabled={starting}
+          onClick={onRestart}
+        >
+          <RotateCcw />
+        </ActionIconButton>
+        <ActionIconButton
+          variant="ghost"
+          size="icon-sm"
+          className="hover:text-destructive"
+          tooltip="Close session"
+          aria-label={`Close ${session.name}`}
+          disabled={starting}
+          onClick={onClose}
+        >
+          <Trash2 />
+        </ActionIconButton>
       </span>
     </div>
   );
@@ -439,12 +427,11 @@ function App() {
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
   const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number; asPercentage: number }) => {
+    // Both halves matter: a window narrow enough for the minimum itself to be under the rail width
+    // would otherwise report a panel sitting on its floor as shut.
+    const min = Number.parseFloat(SIDES[side].min);
     const next: SideState =
-      size.inPixels <= RAIL + 1
-        ? "shut"
-        : size.asPercentage <= Number.parseFloat(SIDES[side].min) + 0.5
-          ? "floor"
-          : "open";
+      size.inPixels <= RAIL + 1 && size.asPercentage < min ? "shut" : size.asPercentage <= min + 0.5 ? "floor" : "open";
     // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
     // leaving the rail and the number shortcuts counting two different lists.
     if (side === "sidebar" && next === "shut") setQuery("");
@@ -901,36 +888,26 @@ function App() {
               {sides.sidebar === "shut" ? (
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => sidebarPanel.current?.expand()}
-                            aria-label="Expand sessions"
-                          />
-                        }
-                      >
-                        <ChevronRight />
-                      </TooltipTrigger>
-                      <TooltipContent side="right">Expand sessions</TooltipContent>
-                    </Tooltip>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => setNewSessionOpen(true)}
-                            aria-label="New session"
-                          />
-                        }
-                      >
-                        <Plus />
-                      </TooltipTrigger>
-                      <TooltipContent side="right">New session</TooltipContent>
-                    </Tooltip>
+                    <ActionIconButton
+                      variant="ghost"
+                      size="icon-sm"
+                      tooltip="Expand sessions"
+                      tooltipSide="right"
+                      aria-label="Expand sessions"
+                      onClick={() => sidebarPanel.current?.expand()}
+                    >
+                      <ChevronRight />
+                    </ActionIconButton>
+                    <ActionIconButton
+                      variant="ghost"
+                      size="icon-sm"
+                      tooltip="New session"
+                      tooltipSide="right"
+                      aria-label="New session"
+                      onClick={() => setNewSessionOpen(true)}
+                    >
+                      <Plus />
+                    </ActionIconButton>
                     {sessions.map((session) => (
                       <Tooltip key={session.id}>
                         <TooltipTrigger
@@ -972,21 +949,15 @@ function App() {
                         }}
                       />
                     </span>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => setNewSessionOpen(true)}
-                            aria-label="New session"
-                          />
-                        }
-                      >
-                        <Plus />
-                      </TooltipTrigger>
-                      <TooltipContent>New session</TooltipContent>
-                    </Tooltip>
+                    <ActionIconButton
+                      variant="ghost"
+                      size="icon-sm"
+                      tooltip="New session"
+                      aria-label="New session"
+                      onClick={() => setNewSessionOpen(true)}
+                    >
+                      <Plus />
+                    </ActionIconButton>
                   </div>
                   <ScrollArea className="min-h-0 flex-1">
                     <div className="space-y-0.5 px-2 pb-2">
