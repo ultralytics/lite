@@ -8,6 +8,7 @@ import {
   KeyRound,
   Moon,
   MoreHorizontal,
+  Play,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -635,7 +636,7 @@ function App() {
                     <div className="flex h-full flex-col items-center justify-center gap-3">
                       <p className="text-xs text-muted-foreground">This session is not running.</p>
                       <Button variant="outline" size="sm" onClick={() => void launch(selected, true)}>
-                        <RotateCcw />
+                        <Play />
                         Resume session
                       </Button>
                     </div>
