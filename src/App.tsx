@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -240,12 +241,13 @@ function SessionRow({
             />
           </span>
         ) : (
-          /* Clicking a session opens it; clicking the one already open edits its name, so a name is
-             reachable without a menu and a click never surprises you with a text field. */
+          /* Clicking a session opens it, and a stopped one comes back with it. Only the session already
+             open and running reads a click as a rename, so a name is still reachable without a menu and
+             a click never surprises you with a text field. */
           <button
             type="button"
             className="min-w-0 flex-1 py-0.5 text-left"
-            onClick={() => (active ? setRenaming(true) : onSelect())}
+            onClick={() => (active && session.running ? setRenaming(true) : onSelect())}
             onDoubleClick={() => setRenaming(true)}
             title={session.cwd}
           >
@@ -745,9 +747,16 @@ function App() {
               <TooltipContent>{theme === "dark" ? "Light mode" : "Dark mode"}</TooltipContent>
             </Tooltip>
             <DropdownMenu>
-              <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Lite menu" />}>
-                <MoreHorizontal />
-              </DropdownMenuTrigger>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Lite menu" />} />
+                  }
+                >
+                  <MoreHorizontal />
+                </TooltipTrigger>
+                <TooltipContent>Lite menu</TooltipContent>
+              </Tooltip>
               <DropdownMenuContent align="end" className="w-48">
                 {version ? (
                   <DropdownMenuGroup>
@@ -946,7 +955,9 @@ function App() {
               </DialogDescription>
             </DialogHeader>
             {updateStatus === "checking" || updateStatus === "installing" ? (
-              <Spinner className="mx-auto size-5 text-muted-foreground" />
+              <DialogBody>
+                <Spinner className="mx-auto size-5 text-muted-foreground" />
+              </DialogBody>
             ) : null}
             {updateStatus === "available" ? (
               <DialogFooter>
@@ -969,7 +980,7 @@ function App() {
           </DialogContent>
         </Dialog>
         <Dialog open={Boolean(closing)} onOpenChange={(open) => !open && setClosing(undefined)}>
-          <DialogContent className="sm:max-w-sm">
+          <DialogContent size="sm">
             <DialogHeader>
               <DialogTitle>Close {closing?.name}?</DialogTitle>
               <DialogDescription>

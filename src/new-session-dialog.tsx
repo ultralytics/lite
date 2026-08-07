@@ -158,14 +158,21 @@ export function NewSessionDialog({
     onOpenChange(false);
   }
 
-  // The form owns the one action the dialog is for, so Enter from the folder field starts the session.
-  function submit(event: FormEvent) {
-    event.preventDefault();
+  // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
+  // and a second click on the agent already chosen. An agent that is not installed reads them all as a
+  // request for its setup guide, which is the only one of the two it can answer.
+  const ready = Boolean(missing || (path.trim() && status));
+  function start() {
     if (missing)
       void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
         setError(String(reason)),
       );
     else void create();
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    start();
   }
 
   return (
@@ -213,7 +220,7 @@ export function NewSessionDialog({
                       key={option.id}
                       type="button"
                       aria-pressed={active}
-                      onClick={() => setChoiceId(option.id)}
+                      onClick={() => (active && ready ? start() : setChoiceId(option.id))}
                       className={`flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors ${active ? "border-ring bg-accent" : "border-transparent hover:bg-muted/60"}`}
                     >
                       {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
@@ -245,7 +252,7 @@ export function NewSessionDialog({
             <Button variant="outline" onClick={() => changeOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!missing && (!path.trim() || !status)}>
+            <Button type="submit" disabled={!ready}>
               {status ? null : <Spinner />}
               {missing ? "Open setup guide" : "Start session"}
             </Button>

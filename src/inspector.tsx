@@ -9,9 +9,17 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DirectoryCursor, DirectoryListing, FileEntry, GitStatus, Session } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
+
+// One list so a tab, its icon and the name every surface calls it by cannot drift apart.
+const TABS = [
+  { value: "files", label: "Files", icon: Folder },
+  { value: "git", label: "Git", icon: GitBranch },
+  { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
+] as const;
 
 // Every optional field arrives from Serde as null, never as a missing key.
 interface UsageWindow {
@@ -192,9 +200,16 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
         <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2">
           <File className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate font-mono text-xs">{selected.name}</span>
-          <Button variant="ghost" size="icon-xs" onClick={() => setSelected(null)} aria-label="Close file">
-            <X />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button variant="ghost" size="icon-sm" onClick={() => setSelected(null)} aria-label="Close file" />
+              }
+            >
+              <X />
+            </TooltipTrigger>
+            <TooltipContent>Close file</TooltipContent>
+          </Tooltip>
         </div>
         <ScrollArea className="min-h-0 flex-1">
           {error ? (
@@ -390,25 +405,31 @@ export function Inspector({ session }: { session: Session }) {
     <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
         <TabsList variant="line">
-          <TabsTrigger value="files" aria-label="Files">
-            <Folder />
-          </TabsTrigger>
-          <TabsTrigger value="git" aria-label="Git">
-            <GitBranch />
-          </TabsTrigger>
-          <TabsTrigger value="usage" aria-label="Usage">
-            <ChartNoAxesColumn />
-          </TabsTrigger>
+          {TABS.map(({ value, label, icon: Icon }) => (
+            <Tooltip key={value}>
+              <TooltipTrigger render={<TabsTrigger value={value} aria-label={label} />}>
+                <Icon />
+              </TooltipTrigger>
+              <TooltipContent>{label}</TooltipContent>
+            </Tooltip>
+          ))}
         </TabsList>
         {tab === "usage" && session.agent === "shell" ? null : (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
-            aria-label="Refresh"
-          >
-            <RefreshCw />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
+                  aria-label="Refresh"
+                />
+              }
+            >
+              <RefreshCw />
+            </TooltipTrigger>
+            <TooltipContent>Refresh</TooltipContent>
+          </Tooltip>
         )}
       </div>
       <TabsContent value="files" className="min-h-0 overflow-hidden">
