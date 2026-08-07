@@ -1,0 +1,62 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# Refresh src-tauri/Cargo.lock within the semver ranges already declared in Cargo.toml.
+# Dependabot's cargo ecosystem only bumps the 8 dependencies written in Cargo.toml; the ~485
+# transitive crates behind tauri move only when a security advisory fires. This closes that gap.
+# Frontend dependencies are deliberately not touched here - package.json is a single root package
+# with no workspaces, so Dependabot's npm ecosystem already covers it and a second updater would
+# just race it.
+
+name: Cargo Update
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Weekly on Monday at 06:00 UTC
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: github.repository == 'ultralytics/lite'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          token: ${{ secrets._GITHUB_TOKEN }} # PAT so the PR triggers ci.yml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Update Cargo.lock
+        run: cargo update --manifest-path src-tauri/Cargo.toml
+
+      - name: Open PR, wait for CI, then merge
+        env:
+          GH_TOKEN: ${{ secrets._GITHUB_TOKEN }}
+        run: |
+          if git diff --quiet -- src-tauri/Cargo.lock; then
+            echo "Cargo.lock already current - skipping PR."
+            exit 0
+          fi
+
+          git config user.name "UltralyticsAssistant"
+          git config user.email "web@ultralytics.com"
+          branch="chore/cargo-update-$(date +%Y%m%d%H%M%S)"
+          git checkout -b "$branch"
+          git commit -m "Auto-update Cargo.lock via cargo update" -- src-tauri/Cargo.lock
+          git push origin "$branch"
+
+          pr_url=$(gh pr create \
+            --title "Auto-update Cargo.lock via cargo update" \
+            --body "Weekly \`cargo update\` on \`src-tauri/Cargo.toml\`. Stays inside the declared semver ranges, so this is transitive-crate drift only - major bumps of the dependencies in Cargo.toml remain Dependabot's job." \
+            --base main \
+            --head "$branch" \
+            --label dependencies)
+          echo "PR opened: $pr_url"
+
+          sleep 60 # Let format.yml and ci.yml register their checks before --watch
+          gh pr checks "$pr_url" --watch --fail-fast
+          gh pr merge "$pr_url" --squash --delete-branch --admin
