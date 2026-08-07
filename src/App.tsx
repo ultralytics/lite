@@ -78,8 +78,8 @@ type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installi
 const QUIET_MS = 1200;
 
 // Three states the sidebar dot tells apart: the terminal is gone, it is up and quiet, or it is up and
-// producing output. Working keeps the same colour as idle and adds motion, so connectedness reads off
-// the colour alone and is not lost on a display where the pulse is suppressed.
+// producing output. Working keeps the same color as idle and adds motion, so connectedness reads off
+// the color alone and is not lost on a display where the pulse is suppressed.
 const SESSION_STATUS = {
   disconnected: { dot: "bg-muted-foreground/40", label: "Disconnected" },
   idle: { dot: "bg-emerald-500/60", label: "Connected, idle" },
