@@ -965,9 +965,16 @@ fn shell_path(shell: &str) -> Option<String> {
 
 // An account shell that does not speak this command leaves nothing usable, so the search falls back to
 // the POSIX shell rather than losing every provider CLI.
+// Asking costs a login shell, and the answer holds for as long as Lite is open, so it is asked once
+// and every command Lite resolves afterwards is free.
 #[cfg(unix)]
 fn user_path() -> Option<String> {
-    shell_path(&CommandBuilder::new_default_prog().get_shell()).or_else(|| shell_path("/bin/sh"))
+    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        shell_path(&CommandBuilder::new_default_prog().get_shell())
+            .or_else(|| shell_path("/bin/sh"))
+    })
+    .clone()
 }
 
 #[cfg(windows)]
@@ -2054,8 +2061,12 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
 fn browse_url(remote: &str) -> Option<String> {
     let remote = remote.trim().trim_end_matches('/');
     let remote = remote.strip_suffix(".git").unwrap_or(remote);
-    if let Some(rest) = remote.strip_prefix("git@") {
-        let (host, repository) = rest.split_once(':')?;
+    // The scp form names a user, and not everyone's is git.
+    if !remote.contains("://") {
+        let (authority, repository) = remote.split_once(':')?;
+        let host = authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, host)| host);
         return Some(format!("https://{host}/{repository}"));
     }
     let ssh = remote.strip_prefix("ssh://");

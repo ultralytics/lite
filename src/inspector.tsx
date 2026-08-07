@@ -106,6 +106,7 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
   const [expanded, setExpanded] = useState(() => new Set<string>([root]));
   const loading = useRef(new Set<string>());
   const [loadingPaths, setLoadingPaths] = useState(() => new Set<string>());
+  const [error, setError] = useState("");
 
   const load = useCallback(
     async (path: string, after: DirectoryCursor | null = null) => {
@@ -115,6 +116,11 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
       try {
         const listing = await invoke<DirectoryListing>("list_directory", { rootId, path, after });
         setChildren((current) => ({ ...current, [path]: { ...listing, after } }));
+        setError("");
+      } catch (reason) {
+        // The panel opens its own root now, so a folder that has moved since the session was made says
+        // so rather than drawing an empty tree nobody asked for.
+        setError(String(reason));
       } finally {
         loading.current.delete(path);
         setLoadingPaths((current) => {
@@ -143,7 +149,10 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
 
   function rows(path: string, depth = 0): React.ReactNode {
     const listing = children[path];
-    if (!listing) return loadingPaths.has(path) ? <Loading label="Reading folder…" /> : null;
+    if (!listing) {
+      if (loadingPaths.has(path)) return <Loading label="Reading folder…" />;
+      return error ? <p className="p-3 text-xs text-destructive">{error}</p> : null;
+    }
     return (
       <>
         {listing.entries.map((entry) => (

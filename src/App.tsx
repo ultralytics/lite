@@ -84,8 +84,13 @@ const GLIDE_MS = 200;
 // one being dragged shut and pulled closed again. The ease is driven here instead, a resize per frame,
 // so what the library measures is always what it was last told. A drag owns the panel outright, so a
 // glide gets out of the way the moment one starts.
+const glides = new WeakMap<PanelImperativeHandle, number>();
 function glide(panel: PanelImperativeHandle | null, to: number) {
   if (!panel) return;
+  // One glide owns a side at a time. Two would drive the same panel from two captured widths at once,
+  // which is what shutting a side and reopening it inside the same fifth of a second asks for.
+  const turn = (glides.get(panel) ?? 0) + 1;
+  glides.set(panel, turn);
   const from = panel.getSize().inPixels;
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || from === to) {
     panel.resize(`${to}px`);
@@ -93,10 +98,16 @@ function glide(panel: PanelImperativeHandle | null, to: number) {
   }
   const started = performance.now();
   const step = (now: number) => {
-    if (document.querySelector("[data-separator=active]")) return;
+    if (glides.get(panel) !== turn || document.querySelector("[data-separator=active]")) return;
     const part = Math.min(1, (now - started) / GLIDE_MS);
-    // Ease out: fastest at the start, so the side answers the click before it settles.
-    panel.resize(`${Math.round(from + (to - from) * (1 - (1 - part) ** 3))}px`);
+    try {
+      // Ease out: fastest at the start, so the side answers the click before it settles.
+      panel.resize(`${Math.round(from + (to - from) * (1 - (1 - part) ** 3))}px`);
+    } catch {
+      // A panel that has gone away — the inspector leaving with the last session — cannot be asked
+      // whether it is still there, only told to resize, so this is the one way to hear that it is not.
+      return;
+    }
     if (part < 1) requestAnimationFrame(step);
   };
   requestAnimationFrame(step);
@@ -456,7 +467,7 @@ function App() {
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
   const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number }) => {
-    const next = size.inPixels <= SHUT + 1;
+    const next = size.inPixels < SHUT;
     // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
     // leaving the rail and the number shortcuts counting two different lists.
     if (side === "sidebar" && next) setQuery("");
@@ -689,8 +700,7 @@ function App() {
   }, [selected, launch]);
 
   // Which repository a folder was cloned from is a fact about the folder, so it is asked for once when
-  // the folder changes and never watched. Keyed by the grant rather than the session, so switching
-  // between sessions in one folder does not ask again.
+  // the selection changes and never watched.
   const rootId = selected?.rootId ?? "";
   useEffect(() => {
     setRemote("");
