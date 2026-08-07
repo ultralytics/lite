@@ -1,12 +1,12 @@
 # Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-# Daily scheduled automation — consolidates recurring maintenance into single PRs instead of per-PR commits.
+# Scheduled automation — consolidates recurring maintenance into single PRs instead of per-PR commits.
 
 name: Dependencies
 
 on:
   schedule:
-    - cron: "0 6 * * *" # Daily at 06:00 UTC
+    - cron: "0 6 * * *" # 06:00 UTC
   workflow_dispatch:
 
 concurrency:
@@ -49,7 +49,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets._GITHUB_TOKEN }}
         run: |
-          branch="chore/daily-dependencies-$(date +%Y%m%d%H%M%S)"
+          branch="chore/dependencies-$(date +%Y%m%d%H%M%S)"
           git checkout -b "$branch"
           git add -u
           if git diff --staged --quiet; then
@@ -61,7 +61,7 @@ jobs:
 
           pr_url=$(gh pr create \
             --title "Auto-update dependencies" \
-            --body "Daily automated \`bun update --latest\` and \`cargo update\`. Crosses semver ranges, so review majors. Version ceilings live in the root \`overrides\` block." \
+            --body "Automated \`bun update --latest\` and \`cargo update\`. Crosses semver ranges, so review majors. Version ceilings live in the root \`overrides\` block." \
             --base main \
             --head "$branch" \
             --label dependencies)
