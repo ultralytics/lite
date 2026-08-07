@@ -113,7 +113,7 @@ export function TerminalView({
     terminal.open(container);
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
-    // The terminal answers the program's cursor, focus, and colour queries on this same channel and
+    // The terminal answers the program's cursor, focus, and color queries on this same channel and
     // those replies are printable, so a chunk carrying an escape is never someone typing.
     let typed = "";
     const input = terminal.onData((data) => {
