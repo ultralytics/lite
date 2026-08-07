@@ -750,12 +750,12 @@ function App() {
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Lite menu" />} />
+                    <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Options" />} />
                   }
                 >
                   <MoreHorizontal />
                 </TooltipTrigger>
-                <TooltipContent>Lite menu</TooltipContent>
+                <TooltipContent>Options</TooltipContent>
               </Tooltip>
               <DropdownMenuContent align="end" className="w-48">
                 {version ? (
