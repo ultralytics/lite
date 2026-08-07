@@ -33,6 +33,16 @@ export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) 
   };
 }
 
+// The buffer is bytes because a terminal is bytes. Anything that wants to read back what a session
+// said needs the same bytes as text, decoded as one stream so a character split across two chunks
+// survives the join.
+export function readOutput(sessionId: string) {
+  const buffer = buffers.get(sessionId);
+  if (!buffer) return "";
+  const decoder = new TextDecoder();
+  return buffer.chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
+}
+
 export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
 }

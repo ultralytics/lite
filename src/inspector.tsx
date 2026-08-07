@@ -1,8 +1,8 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { ChartNoAxesColumn, ChevronRight, File, Folder, GitBranch, RefreshCw, X } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { ChartNoAxesColumn, ChevronRight, File, Folder, GitBranch, GitPullRequest, RefreshCw, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,12 +10,37 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { readOutput } from "@/output-store";
 import type { DirectoryCursor, DirectoryListing, FileEntry, GitStatus, Session } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
-// One list so a tab, its icon and the name every surface calls it by cannot drift apart.
-const TABS = [
+// A session's terminal is the only record of what it worked on, so what it named is read back out of
+// the output Lite already keeps. Only what Git and GitHub print verbatim counts: a whole pull request
+// link, and the two sentences Git answers a checkout with. A bare "#12" is as often a line number.
+// Only CSI is stripped, so a link inside an OSC hyperlink survives being uncoloured.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a colour code has to be named to be removed.
+const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+const PULL_REQUEST = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
+const BRANCH = /(?:On branch|Switched to(?: a new)? branch) '?([\w./-]+)'?/g;
+
+function namedInSession(sessionId: string) {
+  const text = readOutput(sessionId).replace(COLOR, "");
+  return {
+    branches: [...new Set([...text.matchAll(BRANCH)].map((match) => match[1]))],
+    pulls: [...new Set(text.match(PULL_REQUEST) ?? [])],
+  };
+}
+
+// A pull request is known by its number and the repository it belongs to, not by the URL that reaches it.
+function pullLabel(url: string) {
+  const [owner, repository, , number] = url.split("/").slice(3);
+  return `${owner}/${repository} #${number}`;
+}
+
+// One list so a tab, its icon and the name every surface calls it by cannot drift apart, including the
+// rail the panel collapses to.
+export const INSPECTOR_TABS = [
   { value: "files", label: "Files", icon: Folder },
   { value: "git", label: "Git", icon: GitBranch },
   { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
@@ -66,7 +91,9 @@ function Meter({ value }: { value: number }) {
 
 function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOpen: (entry: FileEntry) => void }) {
   const [children, setChildren] = useState<Record<string, DirectoryListing & { after: DirectoryCursor | null }>>({});
-  const [expanded, setExpanded] = useState(() => new Set<string>());
+  // The root is the folder the session works in; showing it shut asks for a click to say what the
+  // panel is already for, so it opens with the tree it was asked to show.
+  const [expanded, setExpanded] = useState(() => new Set<string>([root]));
   const loading = useRef(new Set<string>());
   const [loadingPaths, setLoadingPaths] = useState(() => new Set<string>());
 
@@ -89,6 +116,10 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
     },
     [rootId],
   );
+
+  useEffect(() => {
+    void load(root);
+  }, [load, root]);
 
   async function toggle(path: string) {
     const next = new Set(expanded);
@@ -232,7 +263,10 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   );
 }
 
-function GitPanel({ rootId }: { rootId: string }) {
+function GitPanel({ rootId, sessionId }: { rootId: string; sessionId: string }) {
+  // Read once when the panel is built, like every other thing this panel shows: the refresh button
+  // rebuilds it, and nothing here watches the session between those two moments.
+  const named = useMemo(() => namedInSession(sessionId), [sessionId]);
   const [status, setStatus] = useState<GitStatus | null>();
   const [error, setError] = useState("");
 
@@ -290,6 +324,32 @@ function GitPanel({ rootId }: { rootId: string }) {
                   ))}
                 </div>
               ) : null}
+              <div className="mt-4">
+                <p className="mb-2 font-medium">Named in this session</p>
+                {named.branches.map((branch) => (
+                  <div key={branch} className="flex items-center gap-2 rounded-md px-2 py-1.5">
+                    <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-mono">{branch}</span>
+                  </div>
+                ))}
+                {named.pulls.map((url) => (
+                  <button
+                    key={url}
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
+                    title={url}
+                    onClick={() => void invoke("open_url", { url })}
+                  >
+                    <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" />
+                    <span className="truncate font-mono underline-offset-2 hover:underline">{pullLabel(url)}</span>
+                  </button>
+                ))}
+                {named.branches.length || named.pulls.length ? null : (
+                  <p className="px-2 text-muted-foreground">
+                    Branches this session checked out and pull request links it printed appear here.
+                  </p>
+                )}
+              </div>
             </>
           )}
         </div>
@@ -395,17 +455,25 @@ function UsagePanel({ session }: { session: Session }) {
   );
 }
 
-export function Inspector({ session }: { session: Session }) {
-  const [tab, setTab] = useState("files");
+// The open tab is owned outside the panel, so the rail it collapses to can name the tab it reopens.
+export function Inspector({
+  session,
+  tab,
+  onTabChange,
+}: {
+  session: Session;
+  tab: string;
+  onTabChange: (tab: string) => void;
+}) {
   // A tab already names the panel it shows, so the panel does not name itself again. One button beside
   // the tabs rereads whichever is open, by rebuilding it, and only that one ever reads the disk.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
 
   return (
-    <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
+    <Tabs value={tab} onValueChange={onTabChange} className="h-full min-h-0 gap-0">
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
         <TabsList variant="line">
-          {TABS.map(({ value, label, icon: Icon }) => (
+          {INSPECTOR_TABS.map(({ value, label, icon: Icon }) => (
             <Tooltip key={value}>
               <TooltipTrigger render={<TabsTrigger value={value} aria-label={label} />}>
                 <Icon />
@@ -436,7 +504,7 @@ export function Inspector({ session }: { session: Session }) {
         <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
       </TabsContent>
       <TabsContent value="git" className="min-h-0 overflow-hidden">
-        <GitPanel key={reload.git} rootId={session.rootId} />
+        <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} />
       </TabsContent>
       <TabsContent value="usage" className="min-h-0 overflow-hidden">
         <UsagePanel key={reload.usage} session={session} />

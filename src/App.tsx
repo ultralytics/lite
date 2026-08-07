@@ -43,12 +43,17 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import {
+  type PanelImperativeHandle,
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Inspector } from "@/inspector";
+import { INSPECTOR_TABS, Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
@@ -57,6 +62,8 @@ import { type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
+// The width each side collapses to: one icon button and the room around it.
+const RAIL = 44;
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
 // The version is known from the start, so the badge shows it throughout and only its color waits on
 // the answer: grey while asking, which is quieter than a spinner that would resize a chip this small.
@@ -174,6 +181,39 @@ class PanelBoundary extends Component<{ children: ReactNode }, { message: string
   }
 }
 
+// What a session looks like at a glance: who runs it and whether it is up. The sidebar row and the rail
+// it collapses to show the same one, so a session is recognisable at either width.
+function SessionBadge({
+  session,
+  active,
+  starting,
+  working,
+}: {
+  session: Session;
+  active: boolean;
+  starting: boolean;
+  working: boolean;
+}) {
+  const status = SESSION_STATUS[!session.running ? "disconnected" : working ? "working" : "idle"];
+  const ring = active ? "ring-sidebar-accent" : "ring-sidebar";
+  return (
+    <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+      <ProviderIcon agent={session.agent} provider={session.provider} />
+      {starting ? (
+        <Spinner
+          className={`absolute -right-1 -bottom-1 size-3 rounded-full bg-background text-muted-foreground ring-2 ${ring}`}
+        />
+      ) : (
+        <span
+          role="img"
+          className={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ${ring} ${status.dot}`}
+          aria-label={status.label}
+        />
+      )}
+    </span>
+  );
+}
+
 function SessionRow({
   session,
   active,
@@ -193,7 +233,6 @@ function SessionRow({
   onRestart: () => void;
   onClose: () => void;
 }) {
-  const status = SESSION_STATUS[!session.running ? "disconnected" : working ? "working" : "idle"];
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState(session.name);
 
@@ -209,20 +248,7 @@ function SessionRow({
       className={`group flex items-center rounded-lg pr-1 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2">
-        <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
-          <ProviderIcon agent={session.agent} provider={session.provider} />
-          {starting ? (
-            <Spinner
-              className={`absolute -right-1 -bottom-1 size-3 rounded-full bg-background text-muted-foreground ring-2 ${active ? "ring-sidebar-accent" : "ring-sidebar"}`}
-            />
-          ) : (
-            <span
-              role="img"
-              className={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ${active ? "ring-sidebar-accent" : "ring-sidebar"} ${status.dot}`}
-              aria-label={status.label}
-            />
-          )}
-        </span>
+        <SessionBadge session={session} active={active} starting={starting} working={working} />
         {renaming ? (
           <span className="min-w-0 flex-1 py-0.5">
             <Input
@@ -355,6 +381,12 @@ function App() {
   // session that is working from one that is merely connected.
   const [working, setWorking] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
+  // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
+  const [collapsed, setCollapsed] = useState({ sidebar: false, inspector: false });
+  const [inspectorTab, setInspectorTab] = useState<string>(INSPECTOR_TABS[0].value);
+  const sidebarPanel = useRef<PanelImperativeHandle>(null);
+  const inspectorPanel = useRef<PanelImperativeHandle>(null);
   // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
   const [remote, setRemote] = useState("");
   const [theme, setTheme] = useState<Theme>(initialTheme);
@@ -822,66 +854,118 @@ function App() {
           </div>
         </header>
         <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
-          <ResizablePanel defaultSize="20%" minSize="15%" maxSize="30%" collapsible collapsedSize="0%">
+          <ResizablePanel
+            panelRef={sidebarPanel}
+            defaultSize="20%"
+            minSize="15%"
+            maxSize="30%"
+            collapsible
+            collapsedSize={RAIL}
+            onResize={(size) => setCollapsed((current) => ({ ...current, sidebar: size.inPixels <= RAIL + 1 }))}
+          >
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
-              {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
-              <div className="flex h-9 shrink-0 items-center gap-1 pr-1.5 pl-2">
-                <span className="relative min-w-0 flex-1">
-                  <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={query}
-                    className="h-7 pl-7 text-xs md:text-xs"
-                    placeholder="Search sessions"
-                    aria-label="Search sessions"
-                    onChange={(event) => setQuery(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") setQuery("");
-                    }}
-                  />
-                </span>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => setNewSessionOpen(true)}
-                        aria-label="New session"
-                      />
-                    }
-                  >
-                    <Plus />
-                  </TooltipTrigger>
-                  <TooltipContent>New session</TooltipContent>
-                </Tooltip>
-              </div>
-              <ScrollArea className="min-h-0 flex-1">
-                <div className="space-y-0.5 px-2 pb-2">
-                  {query && !visible.length ? (
-                    <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
-                  ) : null}
-                  {visible.map((session) => (
-                    <SessionRow
-                      key={session.id}
-                      session={session}
-                      active={session.id === selectedId}
-                      starting={startingIds.has(session.id)}
-                      working={working.has(session.id)}
-                      onSelect={() => openRef.current(session)}
-                      onRename={(name) =>
-                        setSessions((current) =>
-                          current.map((item) => (item.id === session.id ? { ...item, name } : item)),
-                        )
+              {collapsed.sidebar ? (
+                <div className="flex flex-col items-center gap-1 py-1.5">
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setNewSessionOpen(true)}
+                          aria-label="New session"
+                        />
                       }
-                      onRestart={() => void restartSession(session)}
-                      onClose={() => setClosing(session)}
-                    />
+                    >
+                      <Plus />
+                    </TooltipTrigger>
+                    <TooltipContent side="right">New session</TooltipContent>
+                  </Tooltip>
+                  {sessions.map((session) => (
+                    <Tooltip key={session.id}>
+                      <TooltipTrigger
+                        render={
+                          <button
+                            type="button"
+                            aria-pressed={session.id === selectedId}
+                            className={`rounded-lg p-1 ${session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"}`}
+                            onClick={() => openRef.current(session)}
+                          />
+                        }
+                      >
+                        <SessionBadge
+                          session={session}
+                          active={session.id === selectedId}
+                          starting={startingIds.has(session.id)}
+                          working={working.has(session.id)}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent side="right">{session.name}</TooltipContent>
+                    </Tooltip>
                   ))}
                 </div>
-              </ScrollArea>
+              ) : (
+                <>
+                  {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
+                  <div className="flex h-9 shrink-0 items-center gap-1 pr-1.5 pl-2">
+                    <span className="relative min-w-0 flex-1">
+                      <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={query}
+                        className="h-7 pl-7 text-xs md:text-xs"
+                        placeholder="Search sessions"
+                        aria-label="Search sessions"
+                        onChange={(event) => setQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") setQuery("");
+                        }}
+                      />
+                    </span>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => setNewSessionOpen(true)}
+                            aria-label="New session"
+                          />
+                        }
+                      >
+                        <Plus />
+                      </TooltipTrigger>
+                      <TooltipContent>New session</TooltipContent>
+                    </Tooltip>
+                  </div>
+                  <ScrollArea className="min-h-0 flex-1">
+                    <div className="space-y-0.5 px-2 pb-2">
+                      {query && !visible.length ? (
+                        <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
+                      ) : null}
+                      {visible.map((session) => (
+                        <SessionRow
+                          key={session.id}
+                          session={session}
+                          active={session.id === selectedId}
+                          starting={startingIds.has(session.id)}
+                          working={working.has(session.id)}
+                          onSelect={() => openRef.current(session)}
+                          onRename={(name) =>
+                            setSessions((current) =>
+                              current.map((item) => (item.id === session.id ? { ...item, name } : item)),
+                            )
+                          }
+                          onRestart={() => void restartSession(session)}
+                          onClose={() => setClosing(session)}
+                        />
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </>
+              )}
             </aside>
           </ResizablePanel>
-          <ResizableHandle />
+          <ResizableHandle withHandle />
           <ResizablePanel defaultSize="55%" minSize="38%">
             <section className="flex h-full min-w-0 flex-col">
               {selected ? (
@@ -952,12 +1036,46 @@ function App() {
           </ResizablePanel>
           {selected ? (
             <>
-              <ResizableHandle />
-              <ResizablePanel defaultSize="25%" minSize="18%" maxSize="40%">
+              <ResizableHandle withHandle />
+              <ResizablePanel
+                panelRef={inspectorPanel}
+                defaultSize="25%"
+                minSize="18%"
+                maxSize="40%"
+                collapsible
+                collapsedSize={RAIL}
+                onResize={(size) => setCollapsed((current) => ({ ...current, inspector: size.inPixels <= RAIL + 1 }))}
+              >
                 <aside className="h-full border-l">
-                  <PanelBoundary key={selected.id}>
-                    <Inspector session={selected} />
-                  </PanelBoundary>
+                  {collapsed.inspector ? (
+                    /* Collapsed, the panel is its own tab strip: the tab you pick is the one it reopens. */
+                    <div className="flex flex-col items-center gap-1 py-1.5">
+                      {INSPECTOR_TABS.map(({ value, label, icon: Icon }) => (
+                        <Tooltip key={value}>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label={label}
+                                onClick={() => {
+                                  setInspectorTab(value);
+                                  inspectorPanel.current?.expand();
+                                }}
+                              />
+                            }
+                          >
+                            <Icon />
+                          </TooltipTrigger>
+                          <TooltipContent side="left">{label}</TooltipContent>
+                        </Tooltip>
+                      ))}
+                    </div>
+                  ) : (
+                    <PanelBoundary key={selected.id}>
+                      <Inspector session={selected} tab={inspectorTab} onTabChange={setInspectorTab} />
+                    </PanelBoundary>
+                  )}
                 </aside>
               </ResizablePanel>
             </>
