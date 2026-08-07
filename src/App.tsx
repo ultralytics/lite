@@ -53,7 +53,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { INSPECTOR_TABS, Inspector } from "@/inspector";
+import { Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
@@ -384,7 +384,6 @@ function App() {
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [collapsed, setCollapsed] = useState({ sidebar: false, inspector: false });
-  const [inspectorTab, setInspectorTab] = useState<string>(INSPECTOR_TABS[0].value);
   const sidebarPanel = useRef<PanelImperativeHandle>(null);
   const inspectorPanel = useRef<PanelImperativeHandle>(null);
   // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
@@ -1058,35 +1057,13 @@ function App() {
                 onResize={(size) => rail("inspector", size)}
               >
                 <aside className="h-full border-l">
-                  {collapsed.inspector ? (
-                    /* Collapsed, the panel is its own tab strip: the tab you pick is the one it reopens. */
-                    <div className="flex flex-col items-center gap-1 py-1.5">
-                      {INSPECTOR_TABS.map(({ value, label, icon: Icon }) => (
-                        <Tooltip key={value}>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label={label}
-                                onClick={() => {
-                                  setInspectorTab(value);
-                                  inspectorPanel.current?.expand();
-                                }}
-                              />
-                            }
-                          >
-                            <Icon />
-                          </TooltipTrigger>
-                          <TooltipContent side="left">{label}</TooltipContent>
-                        </Tooltip>
-                      ))}
-                    </div>
-                  ) : (
-                    <PanelBoundary key={selected.id}>
-                      <Inspector session={selected} tab={inspectorTab} onTabChange={setInspectorTab} />
-                    </PanelBoundary>
-                  )}
+                  <PanelBoundary key={selected.id}>
+                    <Inspector
+                      session={selected}
+                      collapsed={collapsed.inspector}
+                      onExpand={() => inspectorPanel.current?.expand()}
+                    />
+                  </PanelBoundary>
                 </aside>
               </ResizablePanel>
             </>

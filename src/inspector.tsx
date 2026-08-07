@@ -40,7 +40,7 @@ function pullLabel(url: string) {
 
 // One list so a tab, its icon and the name every surface calls it by cannot drift apart, including the
 // rail the panel collapses to.
-export const INSPECTOR_TABS = [
+const TABS = [
   { value: "files", label: "Files", icon: Folder },
   { value: "git", label: "Git", icon: GitBranch },
   { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
@@ -455,25 +455,53 @@ function UsagePanel({ session }: { session: Session }) {
   );
 }
 
-// The open tab is owned outside the panel, so the rail it collapses to can name the tab it reopens.
 export function Inspector({
   session,
-  tab,
-  onTabChange,
+  collapsed,
+  onExpand,
 }: {
   session: Session;
-  tab: string;
-  onTabChange: (tab: string) => void;
+  collapsed: boolean;
+  onExpand: () => void;
 }) {
+  const [tab, setTab] = useState<string>(TABS[0].value);
   // A tab already names the panel it shows, so the panel does not name itself again. One button beside
   // the tabs rereads whichever is open, by rebuilding it, and only that one ever reads the disk.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
 
+  // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
+  // on. Nothing behind it is mounted meanwhile, so a shut panel reads nothing.
+  if (collapsed)
+    return (
+      <div className="flex flex-col items-center gap-1 py-1.5">
+        {TABS.map(({ value, label, icon: Icon }) => (
+          <Tooltip key={value}>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={label}
+                  onClick={() => {
+                    setTab(value);
+                    onExpand();
+                  }}
+                />
+              }
+            >
+              <Icon />
+            </TooltipTrigger>
+            <TooltipContent side="left">{label}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    );
+
   return (
-    <Tabs value={tab} onValueChange={onTabChange} className="h-full min-h-0 gap-0">
+    <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
       <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
         <TabsList variant="line">
-          {INSPECTOR_TABS.map(({ value, label, icon: Icon }) => (
+          {TABS.map(({ value, label, icon: Icon }) => (
             <Tooltip key={value}>
               <TooltipTrigger render={<TabsTrigger value={value} aria-label={label} />}>
                 <Icon />
