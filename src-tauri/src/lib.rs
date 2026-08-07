@@ -1967,11 +1967,12 @@ fn stop_runtime(app: &AppHandle) {
     stop_codex_server(&app.state::<CodexServer>());
 }
 
-// A release is built by the publish workflow, so a build made without it came off someone's machine
-// and says so in the window, where an unlabelled copy is otherwise indistinguishable from an install.
+// A local build shares its name, version, and data folder with an install, so it names the commit it
+// came from instead of the version it would otherwise be mistaken for. A release returns nothing and
+// the window shows its version.
 #[tauri::command]
-fn local_build() -> bool {
-    option_env!("GITHUB_ACTIONS").is_none()
+fn local_commit() -> Option<&'static str> {
+    option_env!("LITE_COMMIT")
 }
 
 #[tauri::command]
@@ -2042,7 +2043,7 @@ pub fn run() {
             delete_api_key,
             check_update,
             install_update,
-            local_build
+            local_commit
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lite")

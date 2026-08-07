@@ -254,7 +254,7 @@ function App() {
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [version, setVersion] = useState("");
-  const [local, setLocal] = useState(false);
+  const [commit, setCommit] = useState("");
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [availableVersion, setAvailableVersion] = useState("");
@@ -322,9 +322,9 @@ function App() {
     void getVersion()
       .then(setVersion)
       .catch(() => setVersion(""));
-    void invoke<boolean>("local_build")
-      .then(setLocal)
-      .catch(() => setLocal(false));
+    void invoke<string | null>("local_commit")
+      .then((value) => setCommit(value ?? ""))
+      .catch(() => setCommit(""));
   }, []);
 
   useEffect(() => {
@@ -519,11 +519,21 @@ function App() {
           className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[titlebar=overlay]:pl-[86px]"
         >
           <LiteLogomark className="size-5" />
-          {/* An unlabelled local build is indistinguishable from an install, and they share a data folder. */}
-          {local ? (
-            <Badge variant="outline" className="font-mono text-[10px] tracking-wide uppercase">
-              Local
-            </Badge>
+          {/* A local build names its commit; a release names the version it is, and either checks for a
+              newer one, which is the question a version in a window is usually being asked. */}
+          {commit || version ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Badge variant="outline" render={<button type="button" onClick={() => void checkForUpdates()} />}>
+                    {commit || version}
+                  </Badge>
+                }
+              />
+              <TooltipContent>
+                {commit ? `Local build ${commit} · check for updates` : "Check for updates"}
+              </TooltipContent>
+            </Tooltip>
           ) : null}
           {selected ? (
             <>
@@ -560,7 +570,9 @@ function App() {
               <DropdownMenuContent align="end" className="w-48">
                 {version ? (
                   <DropdownMenuGroup>
-                    <DropdownMenuLabel>{local ? `Lite ${version} · local build` : `Lite ${version}`}</DropdownMenuLabel>
+                    <DropdownMenuLabel>
+                      {commit ? `Lite ${version} · local ${commit}` : `Lite ${version}`}
+                    </DropdownMenuLabel>
                     <DropdownMenuSeparator />
                   </DropdownMenuGroup>
                 ) : null}
