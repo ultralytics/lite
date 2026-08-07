@@ -923,7 +923,7 @@ function App() {
             <aside className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
               {shut.sidebar ? (
                 <ScrollArea className="min-h-0 flex-1">
-                  <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
+                  <div className="flex animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200">
                     <ActionIconButton
                       variant="ghost"
                       size="icon-sm"
@@ -971,7 +971,7 @@ function App() {
               ) : (
                 <>
                   {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
-                  <div className="flex h-9 shrink-0 items-center gap-1 pr-1.5 pl-2">
+                  <div className="flex h-9 shrink-0 items-center gap-0.5 pr-1.5 pl-2">
                     <span className="relative min-w-0 flex-1">
                       <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                       <Input

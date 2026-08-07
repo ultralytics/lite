@@ -484,7 +484,7 @@ export function Inspector({
   // on. What it was showing is hidden rather than thrown away, so the file you had open is still open
   // when it comes back, and a hidden panel reads nothing because nothing here reads without being asked.
   const rail = (
-    <div className="flex animate-in flex-col items-center gap-1 py-1.5 fade-in duration-200">
+    <div className="flex animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200">
       <ActionIconButton
         variant="ghost"
         size="icon-sm"
@@ -519,7 +519,7 @@ export function Inspector({
       {collapsed ? rail : null}
       <div className={collapsed ? "hidden" : "h-full"}>
         <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
-          <div className="flex h-11 shrink-0 items-center gap-1 border-b px-3">
+          <div className="flex h-11 shrink-0 items-center gap-0.5 border-b pr-3 pl-1.5">
             <ActionIconButton
               variant="ghost"
               size="icon-sm"
