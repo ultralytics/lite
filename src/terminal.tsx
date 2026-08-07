@@ -63,7 +63,7 @@ const themes: Record<Theme, ITheme> = {
 // A control sequence is an escape followed by a string terminator for OSC and DCS, a final byte for
 // CSI and SS3, or a single byte for the rest.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
-const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\d;?]*[ -/]*[@-~]|O[@-~]|[\s\S])/g;
+const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]|O[@-~]|[\s\S])/g;
 
 const FONT_SIZE_KEY = "lite.terminal.fontSize";
 const MIN_FONT_SIZE = 9;
