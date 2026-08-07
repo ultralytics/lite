@@ -195,7 +195,7 @@ export function NewSessionDialog({
         <div className="flex gap-2">
           <Input
             value={path}
-            className="min-w-0 flex-1 font-mono text-xs"
+            className="min-w-0 flex-1 font-mono"
             placeholder="Type or choose a project folder"
             aria-label="Project folder"
             onChange={(event) => setPath(event.target.value)}

@@ -166,7 +166,7 @@ export function SettingsDialog({
                         autoFocus={editing.has(option.id)}
                         type={revealed.has(option.id) ? "text" : "password"}
                         value={draft}
-                        className="min-w-0 flex-1 pr-8 font-mono text-xs"
+                        className="min-w-0 flex-1 pr-8 font-mono"
                         placeholder="Paste a key"
                         aria-label={`${option.label} API key`}
                         onChange={(event) => setDrafts((current) => ({ ...current, [option.id]: event.target.value }))}

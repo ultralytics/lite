@@ -174,8 +174,6 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   const [selected, setSelected] = useState<FileEntry | null>(null);
   const [source, setSource] = useState("");
   const [error, setError] = useState("");
-  // Nothing here watches the disk, so rereading is the user's call and rebuilding the tree does it.
-  const [reading, setReading] = useState(0);
 
   async function openFile(entry: FileEntry) {
     setSelected(entry);
@@ -212,19 +210,8 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   }
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b px-3 text-xs">
-        <span className="font-medium">Files</span>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={() => setReading((count) => count + 1)}
-          aria-label="Reread this folder"
-        >
-          <RefreshCw />
-        </Button>
-      </div>
       <ScrollArea className="min-h-0 flex-1">
-        <FileTree key={reading} root={root} rootId={rootId} onOpen={(entry) => void openFile(entry)} />
+        <FileTree root={root} rootId={rootId} onOpen={(entry) => void openFile(entry)} />
       </ScrollArea>
     </div>
   );
@@ -233,17 +220,13 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
 function GitPanel({ rootId }: { rootId: string }) {
   const [status, setStatus] = useState<GitStatus | null>();
   const [error, setError] = useState("");
-  const [reading, setReading] = useState(false);
 
   const refresh = useCallback(async () => {
     setError("");
-    setReading(true);
     try {
       setStatus(await invoke<GitStatus | null>("git_status", { rootId }));
     } catch (reason) {
       setError(String(reason));
-    } finally {
-      setReading(false);
     }
   }, [rootId]);
 
@@ -253,18 +236,6 @@ function GitPanel({ rootId }: { rootId: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b px-3 text-xs">
-        <span className="font-medium">Repository</span>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          disabled={reading}
-          onClick={() => void refresh()}
-          aria-label="Refresh Git status"
-        >
-          {reading ? <Spinner /> : <RefreshCw />}
-        </Button>
-      </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-3 text-xs">
           {error ? (
@@ -325,11 +296,9 @@ function missingUsage(session: Session): string {
 function UsagePanel({ session }: { session: Session }) {
   const [usage, setUsage] = useState<UsageSnapshot | null>();
   const [error, setError] = useState("");
-  const [reading, setReading] = useState(false);
 
   const refresh = useCallback(async () => {
     setError("");
-    setReading(true);
     try {
       setUsage(
         await invoke<UsageSnapshot | null>("read_usage", {
@@ -340,8 +309,6 @@ function UsagePanel({ session }: { session: Session }) {
       );
     } catch (reason) {
       setError(String(reason));
-    } finally {
-      setReading(false);
     }
   }, [session.agent, session.provider, session.id]);
 
@@ -351,20 +318,6 @@ function UsagePanel({ session }: { session: Session }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex h-9 shrink-0 items-center justify-between border-b px-3 text-xs">
-        <span className="font-medium">Usage</span>
-        {session.agent === "shell" ? null : (
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            disabled={reading}
-            onClick={() => void refresh()}
-            aria-label="Refresh usage"
-          >
-            {reading ? <Spinner /> : <RefreshCw />}
-          </Button>
-        )}
-      </div>
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-3 p-3 text-xs">
           {error ? (
@@ -428,29 +381,38 @@ function UsagePanel({ session }: { session: Session }) {
 }
 
 export function Inspector({ session }: { session: Session }) {
+  const [tab, setTab] = useState("files");
+  // A tab already names the panel it shows, so the panel does not name itself again. One button beside
+  // the tabs rereads whichever is open, by rebuilding it, and only that one ever reads the disk.
+  const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
+
   return (
-    <Tabs defaultValue="files" className="h-full min-h-0 gap-0">
-      <div className="flex h-11 shrink-0 items-center border-b px-3">
-        <TabsList variant="line" className="h-8 gap-4">
-          <TabsTrigger value="files" className="px-0 text-xs">
-            Files
-          </TabsTrigger>
-          <TabsTrigger value="git" className="px-0 text-xs">
-            Git
-          </TabsTrigger>
-          <TabsTrigger value="usage" className="px-0 text-xs">
-            Usage
-          </TabsTrigger>
+    <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
+      <div className="flex h-11 shrink-0 items-center justify-between border-b px-3">
+        <TabsList variant="line">
+          <TabsTrigger value="files">Files</TabsTrigger>
+          <TabsTrigger value="git">Git</TabsTrigger>
+          <TabsTrigger value="usage">Usage</TabsTrigger>
         </TabsList>
+        {tab === "usage" && session.agent === "shell" ? null : (
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
+            aria-label="Refresh"
+          >
+            <RefreshCw />
+          </Button>
+        )}
       </div>
       <TabsContent value="files" className="min-h-0 overflow-hidden">
-        <FilesPanel root={session.cwd} rootId={session.rootId} />
+        <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
       </TabsContent>
       <TabsContent value="git" className="min-h-0 overflow-hidden">
-        <GitPanel rootId={session.rootId} />
+        <GitPanel key={reload.git} rootId={session.rootId} />
       </TabsContent>
       <TabsContent value="usage" className="min-h-0 overflow-hidden">
-        <UsagePanel session={session} />
+        <UsagePanel key={reload.usage} session={session} />
       </TabsContent>
     </Tabs>
   );

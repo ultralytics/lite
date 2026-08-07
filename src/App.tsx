@@ -136,7 +136,7 @@ function SessionRow({
             <Input
               autoFocus
               value={name}
-              className="h-6 px-1.5 text-xs"
+              className="px-1.5"
               aria-label="Session name"
               onChange={(event) => setName(event.target.value)}
               onBlur={saveName}
@@ -255,6 +255,8 @@ function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
   const [version, setVersion] = useState("");
   const [commit, setCommit] = useState("");
+  const [built, setBuilt] = useState("");
+  const [behind, setBehind] = useState<boolean>();
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [availableVersion, setAvailableVersion] = useState("");
@@ -322,8 +324,18 @@ function App() {
     void getVersion()
       .then(setVersion)
       .catch(() => setVersion(""));
+    void invoke<string | null>("build_date")
+      .then((value) => setBuilt(value ?? ""))
+      .catch(() => setBuilt(""));
     void invoke<string | null>("local_commit")
-      .then((value) => setCommit(value ?? ""))
+      .then((value) => {
+        setCommit(value ?? "");
+        // A local build is never the released one, so only a release asks whether it is behind.
+        if (value) return;
+        return invoke<string | null>("check_update")
+          .then((next) => setBehind(Boolean(next)))
+          .catch(() => setBehind(undefined));
+      })
       .catch(() => setCommit(""));
   }, []);
 
@@ -517,22 +529,49 @@ function App() {
         {/* The window buttons sit inside this bar on macOS, so it doubles as the title bar and drags the window. */}
         <header
           data-tauri-drag-region
-          className="flex h-11 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[titlebar=overlay]:pl-[86px]"
+          className="flex h-9 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[titlebar=overlay]:pl-[86px]"
         >
           <LiteLogomark className="size-5" />
-          {/* A local build names its commit; a release names the version it is, and either checks for a
-              newer one, which is the question a version in a window is usually being asked. */}
+          {/* A local build names its commit and is red, so it is never mistaken for the installed copy.
+              A release names its version and says at a glance whether it is the current one. */}
           {commit || version ? (
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Badge variant="outline" render={<button type="button" onClick={() => void checkForUpdates()} />}>
+                  <Badge
+                    variant={commit ? "error" : behind === undefined ? "outline" : behind ? "warning" : "success"}
+                    render={<button type="button" onClick={() => void checkForUpdates()} />}
+                  >
                     {commit || version}
                   </Badge>
                 }
               />
               <TooltipContent>
-                {commit ? `Local build ${commit} · check for updates` : "Check for updates"}
+                {commit ? (
+                  `Local build${built ? ` from ${built}` : ""} · click to compare with your working tree`
+                ) : (
+                  <span className="flex flex-col gap-0.5">
+                    <span>
+                      {behind === undefined
+                        ? `Lite ${version}`
+                        : behind
+                          ? `Lite ${version} · an update is available`
+                          : `Lite ${version} · up to date`}
+                      {built ? ` · released ${built}` : ""}
+                    </span>
+                    <button
+                      type="button"
+                      className="underline underline-offset-2"
+                      onClick={() =>
+                        void invoke("open_url", {
+                          url: `https://github.com/ultralytics/lite/releases/tag/v${version}`,
+                        })
+                      }
+                    >
+                      View this release on GitHub
+                    </button>
+                  </span>
+                )}
               </TooltipContent>
             </Tooltip>
           ) : null}

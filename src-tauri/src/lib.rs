@@ -1981,6 +1981,12 @@ fn local_update() -> Result<Option<String>, String> {
     Ok((head != built).then_some(head))
 }
 
+// When this build was made, which for a release is the day it was published.
+#[tauri::command]
+fn build_date() -> Option<&'static str> {
+    option_env!("LITE_DATE")
+}
+
 #[tauri::command]
 fn local_commit() -> Option<&'static str> {
     option_env!("LITE_COMMIT")
@@ -2055,6 +2061,7 @@ pub fn run() {
             check_update,
             install_update,
             local_commit,
+            build_date,
             local_update
         ])
         .build(tauri::generate_context!())
