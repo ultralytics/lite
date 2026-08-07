@@ -406,6 +406,23 @@ function App() {
       .catch(() => setCommit(""));
   }, []);
 
+  // One owner for the release question, so the startup check and a manual one cannot contradict each
+  // other: the ask that started last is the only one still allowed to answer, and a slow startup reply
+  // can no longer land on top of a fresh manual result.
+  const releaseAsk = useRef(0);
+  const askRelease = useCallback(async () => {
+    const ask = ++releaseAsk.current;
+    setRelease("checking");
+    try {
+      const next = await invoke<string | null>("check_update");
+      if (ask === releaseAsk.current) setRelease(next ? "behind" : "current");
+      return next;
+    } catch (reason) {
+      if (ask === releaseAsk.current) setRelease("unknown");
+      throw reason;
+    }
+  }, []);
+
   // Only a release can be behind a release. Asking costs a network round trip that is never worth
   // delaying a paint or a restored session for, so it waits for the window to go idle and is dropped
   // if the window goes away first.
@@ -413,14 +430,7 @@ function App() {
     if (commit !== "") return;
     let cancelled = false;
     const check = () => {
-      if (cancelled) return;
-      void invoke<string | null>("check_update")
-        .then((next) => {
-          if (!cancelled) setRelease(next ? "behind" : "current");
-        })
-        .catch(() => {
-          if (!cancelled) setRelease("unknown");
-        });
+      if (!cancelled) void askRelease().catch(() => {});
     };
     const idle = typeof window.requestIdleCallback === "function";
     const handle = idle ? window.requestIdleCallback(check, { timeout: 10000 }) : window.setTimeout(check, 3000);
@@ -429,7 +439,7 @@ function App() {
       if (idle) window.cancelIdleCallback(handle);
       else window.clearTimeout(handle);
     };
-  }, [commit]);
+  }, [commit, askRelease]);
 
   useEffect(() => {
     let disposed = false;
@@ -585,21 +595,20 @@ function App() {
   }
 
   async function checkForUpdates() {
+    // The dialog owns an install once it has started one. Re-entering here would reset it out of
+    // sight and offer a second install while the first is still running.
+    if (updateOpen && (updateStatus === "checking" || updateStatus === "installing")) return;
     setUpdateOpen(true);
     setUpdateStatus("checking");
     setUpdateError("");
-    if (!commit) setRelease("checking");
     try {
       // A release would replace this build rather than update it, so a local build asks its own tree.
-      const next = await invoke<string | null>(commit ? "local_update" : "check_update");
+      const next = commit ? await invoke<string | null>("local_update") : await askRelease();
       setAvailableVersion(next ?? "");
       setUpdateStatus(next ? (commit ? "rebuild" : "available") : "current");
-      // The badge asked the same question on startup, so a manual check answers it again for both.
-      if (!commit) setRelease(next ? "behind" : "current");
     } catch (reason) {
       setUpdateError(String(reason));
       setUpdateStatus("error");
-      if (!commit) setRelease("unknown");
     }
   }
 
