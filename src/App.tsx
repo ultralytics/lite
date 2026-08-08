@@ -1267,6 +1267,7 @@ function App() {
                   <PanelBoundary key={selected.id}>
                     <Inspector
                       session={selected}
+                      remote={remote}
                       collapsed={shut.inspector}
                       onExpand={() =>
                         glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size))

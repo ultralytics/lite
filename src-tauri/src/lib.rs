@@ -595,25 +595,32 @@ async fn use_directory(
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-struct PullRequest {
+struct GitHubItem {
     url: String,
     title: Option<String>,
     state: Option<String>,
 }
 
-// The number and the repository a pull request link names, or nothing if the link is not one.
-fn pull_request_parts(url: &str) -> Option<(String, String, String)> {
+// The kind, number and repository a GitHub work-item link names, or nothing if the link is not one.
+fn github_item_parts(url: &str) -> Option<(String, String, &'static str, String)> {
     let mut parts = url.strip_prefix("https://github.com/")?.split('/');
     let owner = parts.next().filter(|part| !part.is_empty())?;
     let repository = parts.next().filter(|part| !part.is_empty())?;
-    if parts.next()? != "pull" {
-        return None;
-    }
+    let kind = match parts.next()? {
+        "pull" => "pulls",
+        "issues" => "issues",
+        _ => return None,
+    };
     let number = parts.next()?;
     if number.is_empty() || !number.chars().all(|digit| digit.is_ascii_digit()) {
         return None;
     }
-    Some((owner.to_owned(), repository.to_owned(), number.to_owned()))
+    Some((
+        owner.to_owned(),
+        repository.to_owned(),
+        kind,
+        number.to_owned(),
+    ))
 }
 
 // What GitHub had to say, as opposed to whether Lite managed to ask. Missing is the only answer that
@@ -641,11 +648,11 @@ fn gh_api(gh: &Path, endpoint: &str) -> Answer {
 // A session prints as many links as it prints, and each one checked is a round trip; past a point the
 // panel would be waiting on the network rather than saying what a session did. The rest are shown the
 // way they were printed.
-const CHECKED_PULL_REQUESTS: usize = 20;
+const CHECKED_GITHUB_ITEMS: usize = 20;
 
-// A pull request link is read back out of what a session printed, so a number mistyped into the
-// terminal reaches the panel looking exactly like one that exists. GitHub is the only thing that can
-// tell the two apart, and gh is how Lite asks: it is the tool that printed most of these links, it
+// A pull request or issue link is read back out of what a session printed, so a number mistyped into
+// the terminal reaches the panel looking exactly like one that exists. GitHub is the only thing that
+// can tell the two apart, and gh is how Lite asks: it is the tool that printed most of these links, it
 // carries whatever sign-in the person using it has, and asking it is not the same as reading that
 // sign-in. A link is only dropped on evidence that it names nothing; everything else is shown exactly
 // as it was printed, whether gh is missing, the laptop is offline, or the repository is one this
@@ -653,38 +660,38 @@ const CHECKED_PULL_REQUESTS: usize = 20;
 // private repository it will not admit to as readily as for a number that was never a pull request.
 // So the repository is asked for too, and only a repository that can be read makes the number a
 // mistake — otherwise a sign-in to the wrong account would quietly delete real work from the panel.
-fn check_pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
+fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
     let gh = resolve_executable("gh");
     let mut found = Vec::new();
     let mut readable: HashMap<String, bool> = HashMap::new();
     let mut checked = 0;
     for url in urls {
-        let Some((owner, repository, number)) = pull_request_parts(&url) else {
+        let Some((owner, repository, kind, number)) = github_item_parts(&url) else {
             continue;
         };
-        let unchecked = PullRequest {
+        let unchecked = GitHubItem {
             url: url.clone(),
             title: None,
             state: None,
         };
-        let (Some(gh), true) = (gh.as_ref(), checked < CHECKED_PULL_REQUESTS) else {
+        let (Some(gh), true) = (gh.as_ref(), checked < CHECKED_GITHUB_ITEMS) else {
             found.push(unchecked);
             continue;
         };
         checked += 1;
-        match gh_api(gh, &format!("repos/{owner}/{repository}/pulls/{number}")) {
+        match gh_api(gh, &format!("repos/{owner}/{repository}/{kind}/{number}")) {
             Answer::Found(body) => {
-                // Merged and draft are states of their own; GitHub reports both beside open or closed.
-                let state = if body["merged"].as_bool() == Some(true) {
+                // Merged and draft are pull-request states of their own; issues only answer open or closed.
+                let state = if kind == "pulls" && body["merged"].as_bool() == Some(true) {
                     "merged"
                 } else if body["state"].as_str() == Some("closed") {
                     "closed"
-                } else if body["draft"].as_bool() == Some(true) {
+                } else if kind == "pulls" && body["draft"].as_bool() == Some(true) {
                     "draft"
                 } else {
                     "open"
                 };
-                found.push(PullRequest {
+                found.push(GitHubItem {
                     url,
                     title: body["title"].as_str().map(str::to_owned),
                     state: Some(state.to_owned()),
@@ -710,19 +717,19 @@ fn check_pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
 // Each check waits on a process and a network round trip, so the run is moved off the runtime the rest
 // of Lite's commands share rather than holding one of its workers for the length of it.
 #[tauri::command]
-async fn pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
+async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
     // A run that never finished answered nothing, and nothing is not evidence that a link names
     // nothing, so the links come back the way they were printed rather than as an empty panel.
-    let unanswered: Vec<PullRequest> = urls
+    let unanswered: Vec<GitHubItem> = urls
         .iter()
-        .filter(|url| pull_request_parts(url).is_some())
-        .map(|url| PullRequest {
+        .filter(|url| github_item_parts(url).is_some())
+        .map(|url| GitHubItem {
             url: url.clone(),
             title: None,
             state: None,
         })
         .collect();
-    tauri::async_runtime::spawn_blocking(move || check_pull_requests(urls))
+    tauri::async_runtime::spawn_blocking(move || check_github_items(urls))
         .await
         .unwrap_or(unanswered)
 }
@@ -2445,7 +2452,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             choose_directory,
-            pull_requests,
+            github_items,
             use_directory,
             default_directory,
             revoke_directory,

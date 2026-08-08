@@ -5,6 +5,7 @@ import {
   ChartNoAxesColumn,
   ChevronLeft,
   ChevronRight,
+  CircleDot,
   Container,
   Database,
   File,
@@ -33,6 +34,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { GitHubLogomark } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { ActionIconButton } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
@@ -48,43 +50,98 @@ import type { DirectoryCursor, DirectoryListing, FileEntry, GitStatus, Session }
 const CodePreview = lazy(() => import("@/code-preview"));
 
 // A session's terminal is the only record of what it worked on, so what it named is read back out of
-// the output Lite already keeps. Only what Git and GitHub print verbatim counts: a whole pull request
-// link, and the two sentences Git answers a checkout with. A bare "#12" is as often a line number.
+// the output Lite already keeps. Only what GitHub prints verbatim counts: a whole pull request or issue
+// link. A bare "#12" is as often a line number.
 // Only CSI is stripped, so a link inside an OSC hyperlink survives being uncoloured.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
-const PULL_REQUEST = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/g;
-const BRANCH = /(?:On branch|Switched to(?: a new)? branch) '?([\w./-]+)'?/g;
+const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
 
 function namedInSession(sessionId: string) {
   const text = readOutput(sessionId).replace(COLOR, "");
-  return {
-    branches: [...new Set([...text.matchAll(BRANCH)].map((match) => match[1]))],
-    pulls: [...new Set(text.match(PULL_REQUEST) ?? [])],
-  };
+  return [...new Set(text.match(GITHUB_ITEM) ?? [])];
 }
 
-// A pull request is known by its number and the repository it belongs to, not by the URL that reaches it.
-function pullLabel(url: string) {
-  const [owner, repository, , number] = url.split("/").slice(3);
-  return `${owner}/${repository} #${number}`;
+interface GitHubReference {
+  kind: "issue" | "pull request";
+  number: string;
+  repository: string;
+  repositoryUrl: string;
+}
+
+// GitHub work items are known by their repository, kind and number; that is also all the grouped UI needs.
+function githubReference(url: string): GitHubReference {
+  const [owner, repository, kind, number] = url.split("/").slice(3);
+  return {
+    kind: kind === "pull" ? "pull request" : "issue",
+    number,
+    repository: `${owner}/${repository}`,
+    repositoryUrl: `https://github.com/${owner}/${repository}`,
+  };
 }
 
 // Every optional field arrives from Serde as null, never as a missing key. A state of null is a link
 // GitHub could not be asked about rather than one it disowned; those are dropped before they arrive.
-interface PullRequest {
+interface GitHubItem {
   url: string;
   title: string | null;
-  state: keyof typeof PULL_STATE | null;
+  state: keyof typeof GITHUB_STATE | null;
 }
 
 // The colors GitHub itself answers in, so a glance here reads the same as a glance there.
-const PULL_STATE = {
+const GITHUB_STATE = {
   open: "success",
   draft: "secondary",
   merged: "purple",
   closed: "error",
 } as const;
+
+interface RepositoryGroup {
+  branch: string | null;
+  changes: string[];
+  changesTruncated: boolean;
+  items: (GitHubItem & GitHubReference)[];
+  name: string;
+  path: string | null;
+  url: string | null;
+}
+
+function repositoryName(url: string) {
+  return url.replace(/^https:\/\/[^/]+\//, "");
+}
+
+// The current worktree is the first repository. Links then join it or create one group in the order
+// the session printed them, so neither a repeated URL nor a repeated repository repeats context.
+function repositoryGroups(remote: string, status: GitStatus | null, items: GitHubItem[]): RepositoryGroup[] {
+  const groups = new Map<string, RepositoryGroup>();
+  if (status) {
+    groups.set((remote || status.worktree).toLowerCase(), {
+      branch: status.branch,
+      changes: status.changes,
+      changesTruncated: status.changesTruncated,
+      items: [],
+      name: remote ? repositoryName(remote) : status.worktree.split(/[\\/]/).filter(Boolean).pop() || status.worktree,
+      path: status.worktree,
+      url: remote || null,
+    });
+  }
+  for (const item of items) {
+    const reference = githubReference(item.url);
+    const key = reference.repositoryUrl.toLowerCase();
+    const group = groups.get(key) ?? {
+      branch: null,
+      changes: [],
+      changesTruncated: false,
+      items: [],
+      name: reference.repository,
+      path: null,
+      url: reference.repositoryUrl,
+    };
+    group.items.push({ ...item, ...reference });
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
 
 // One list so a tab, its icon and the name every surface calls it by cannot drift apart, including the
 // rail the panel collapses to.
@@ -381,26 +438,115 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   );
 }
 
-function GitPanel({ rootId, sessionId }: { rootId: string; sessionId: string }) {
+function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
+  const header = (
+    <>
+      <GitHubLogomark className="size-5 shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{repository.name}</span>
+        {repository.path ? (
+          <span className="block truncate font-mono text-xs text-muted-foreground" title={repository.path}>
+            {repository.path}
+          </span>
+        ) : null}
+      </span>
+    </>
+  );
+
+  return (
+    <section className="overflow-hidden rounded-lg border">
+      {repository.url ? (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-muted"
+          title={`Open ${repository.url}`}
+          onClick={() => void invoke("open_url", { url: repository.url })}
+        >
+          {header}
+        </button>
+      ) : (
+        <div className="flex items-center gap-2.5 px-3 py-2.5">{header}</div>
+      )}
+      {repository.branch ? (
+        <div className="flex items-center gap-2 border-t px-3 py-2">
+          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs">{repository.branch}</span>
+          <Badge variant={repository.changes.length ? "secondary" : "outline"}>
+            {repository.changes.length
+              ? `${repository.changes.length}${repository.changesTruncated ? "+" : ""} changed`
+              : "Clean"}
+          </Badge>
+        </div>
+      ) : null}
+      {repository.changes.length ? (
+        <div className="border-t px-2.5 py-2">
+          <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
+          {repository.changes.map((change) => (
+            <div key={change} className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted">
+              <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{change.slice(0, 2).trim()}</span>
+              <span className="min-w-0 truncate font-mono text-xs" title={change.slice(3)}>
+                {change.slice(3)}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {repository.items.length ? (
+        <ItemGroup className="gap-0 border-t py-1">
+          {repository.items.map(({ url, title, state, kind, number }) => {
+            const label = kind === "pull request" ? "Pull request" : "Issue";
+            return (
+              <Item
+                key={url}
+                size="xs"
+                className="flex-nowrap items-start rounded-none px-3 hover:bg-muted"
+                render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
+              >
+                <ItemMedia variant="icon" className="text-muted-foreground">
+                  {kind === "pull request" ? <GitPullRequest /> : <CircleDot />}
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle className="w-full underline-offset-2 group-hover/item:underline">
+                    {title ?? `${label} #${number}`}
+                  </ItemTitle>
+                  {title ? (
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ItemDescription className="min-w-0 flex-1 truncate font-mono">
+                        {label} #{number}
+                      </ItemDescription>
+                      {state ? <Badge variant={GITHUB_STATE[state]}>{state}</Badge> : null}
+                    </div>
+                  ) : null}
+                </ItemContent>
+              </Item>
+            );
+          })}
+        </ItemGroup>
+      ) : null}
+    </section>
+  );
+}
+
+function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
   // Read once when the panel is built, like every other thing this panel shows: the refresh button
   // rebuilds it, and nothing here watches the session between those two moments.
   const named = useMemo(() => namedInSession(sessionId), [sessionId]);
   const [status, setStatus] = useState<GitStatus | null>();
-  const [pulls, setPulls] = useState<PullRequest[]>();
+  const [items, setItems] = useState<GitHubItem[]>();
   const [error, setError] = useState("");
 
   // The panel is only built when the tab is opened and again whenever it is refreshed, so asking
   // GitHub here asks it exactly on those two occasions and never between them.
   useEffect(() => {
-    if (!named.pulls.length) return setPulls([]);
+    if (!named.length) return setItems([]);
     let disposed = false;
-    void invoke<PullRequest[]>("pull_requests", { urls: named.pulls })
+    void invoke<GitHubItem[]>("github_items", { urls: named })
       .then((checked) => {
-        if (!disposed) setPulls(checked);
+        if (!disposed) setItems(checked);
       })
       // A link that could not be checked is still a link, so it is shown the way it was printed.
       .catch(() => {
-        if (!disposed) setPulls(named.pulls.map((url) => ({ url, title: null, state: null })));
+        if (!disposed) setItems(named.map((url) => ({ url, title: null, state: null })));
       });
     return () => {
       disposed = true;
@@ -420,102 +566,27 @@ function GitPanel({ rootId, sessionId }: { rootId: string; sessionId: string }) 
     void refresh();
   }, [refresh]);
 
+  const repositories = repositoryGroups(remote, status ?? null, items ?? []);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
-        <div className="p-3">
-          {error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : status === undefined ? (
-            <Loading label="Reading Git status…" />
-          ) : status === null ? (
+        <div className="flex flex-col gap-3 p-3">
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {!error && status === undefined ? <Loading label="Reading Git status…" /> : null}
+          {repositories.map((repository) => (
+            <RepositoryCard key={(repository.url ?? repository.path)?.toLowerCase()} repository={repository} />
+          ))}
+          {items === undefined && named.length ? <Loading label="Checking GitHub links…" /> : null}
+          {status === null && items && !repositories.length ? (
             <Empty>
               <EmptyHeader>
-                <EmptyDescription>This folder is not a Git repository.</EmptyDescription>
+                <EmptyDescription>
+                  This folder is not a Git repository, and this session has not named a GitHub pull request or issue.
+                </EmptyDescription>
               </EmptyHeader>
             </Empty>
-          ) : (
-            <div className="flex flex-col gap-4">
-              <Item variant="outline">
-                <ItemMedia variant="icon">
-                  <GitBranch />
-                </ItemMedia>
-                <ItemContent>
-                  <ItemTitle className="font-mono">{status.branch}</ItemTitle>
-                  <ItemDescription className="font-mono" title={status.worktree}>
-                    {status.worktree}
-                  </ItemDescription>
-                </ItemContent>
-                <Badge variant={status.changes.length ? "secondary" : "outline"}>
-                  {status.changes.length
-                    ? `${status.changes.length}${status.changesTruncated ? "+" : ""} changed`
-                    : "Clean"}
-                </Badge>
-              </Item>
-              {status.changes.length ? (
-                <section className="flex flex-col gap-2">
-                  <p className="text-sm font-medium">Changes</p>
-                  <ItemGroup>
-                    {status.changes.map((change) => (
-                      <Item key={change} size="xs" className="hover:bg-muted">
-                        <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">
-                          {change.slice(0, 2).trim()}
-                        </span>
-                        <span className="truncate font-mono text-sm" title={change.slice(3)}>
-                          {change.slice(3)}
-                        </span>
-                      </Item>
-                    ))}
-                  </ItemGroup>
-                </section>
-              ) : null}
-              <section className="flex flex-col gap-2">
-                <p className="text-sm font-medium">Named in this session</p>
-                <ItemGroup>
-                  {named.branches.map((branch) => (
-                    <Item key={branch} size="xs">
-                      <ItemMedia variant="icon" className="text-muted-foreground">
-                        <GitBranch />
-                      </ItemMedia>
-                      <span className="truncate font-mono text-sm">{branch}</span>
-                    </Item>
-                  ))}
-                  {pulls?.map(({ url, title, state }) => (
-                    <Item
-                      key={url}
-                      size="xs"
-                      className="flex-nowrap items-start hover:bg-muted"
-                      render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
-                    >
-                      <ItemMedia variant="icon" className="text-muted-foreground">
-                        <GitPullRequest />
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle className="w-full underline-offset-2 group-hover/item:underline">
-                          {title ?? pullLabel(url)}
-                        </ItemTitle>
-                        {title ? (
-                          <div className="flex min-w-0 items-center gap-2">
-                            <ItemDescription className="min-w-0 flex-1 truncate font-mono">
-                              {pullLabel(url)}
-                            </ItemDescription>
-                            {state ? <Badge variant={PULL_STATE[state]}>{state}</Badge> : null}
-                          </div>
-                        ) : null}
-                      </ItemContent>
-                    </Item>
-                  ))}
-                </ItemGroup>
-                {pulls === undefined && named.pulls.length ? <Loading label="Checking pull requests…" /> : null}
-                {/* Also what is left when every link a session printed turned out to name nothing. */}
-                {pulls && !named.branches.length && !pulls.length ? (
-                  <ItemDescription>
-                    Branches this session checked out and pull request links it printed appear here.
-                  </ItemDescription>
-                ) : null}
-              </section>
-            </div>
-          )}
+          ) : null}
         </div>
       </ScrollArea>
     </div>
@@ -621,11 +692,13 @@ function UsagePanel({ session }: { session: Session }) {
 
 export function Inspector({
   session,
+  remote,
   collapsed,
   onExpand,
   onCollapse,
 }: {
   session: Session;
+  remote: string;
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
@@ -704,7 +777,7 @@ export function Inspector({
             <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
           </TabsContent>
           <TabsContent value="git" className="min-h-0 overflow-hidden">
-            <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} />
+            <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} remote={remote} />
           </TabsContent>
           <TabsContent value="usage" className="min-h-0 overflow-hidden">
             <UsagePanel key={reload.usage} session={session} />
