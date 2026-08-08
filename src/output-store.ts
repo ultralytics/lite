@@ -78,8 +78,12 @@ export function readOutput(sessionId: string) {
   return buffer.chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
 }
 
-export function clearOutput(sessionId: string) {
+export function clearBufferedOutput(sessionId: string) {
   buffers.delete(sessionId);
+}
+
+export function clearOutput(sessionId: string) {
+  clearBufferedOutput(sessionId);
   writes.delete(sessionId);
 }
 

@@ -527,15 +527,29 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
   const issues = repository.items.filter((item) => item.kind === "issue");
   const header = (
     <>
-      <GitHubLogomark className="size-5 shrink-0" />
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{repository.name}</span>
-        {repository.path ? (
-          <span className="block truncate font-mono text-xs text-muted-foreground" title={repository.path}>
-            {repository.path}
-          </span>
-        ) : null}
+      <span className="flex min-w-0 flex-1 basis-40 items-center gap-2.5">
+        <GitHubLogomark className="size-5 shrink-0" />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{repository.name}</span>
+          {repository.path ? (
+            <span className="block truncate font-mono text-xs text-muted-foreground" title={repository.path}>
+              {repository.path}
+            </span>
+          ) : null}
+        </span>
       </span>
+      {repository.branch ? (
+        <span className="flex min-w-0 max-w-full items-center gap-1.5">
+          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate font-mono text-xs">{repository.branch}</span>
+          {repository.changes.length ? (
+            <Badge variant="secondary">
+              {repository.changes.length}
+              {repository.changesTruncated ? "+" : ""} changed
+            </Badge>
+          ) : null}
+        </span>
+      ) : null}
     </>
   );
 
@@ -544,7 +558,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
       {repository.url ? (
         <button
           type="button"
-          className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-muted"
+          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left hover:bg-muted"
           title={`Open ${repository.url}`}
           data-context-url={repository.url}
           onClick={() => void invoke("open_url", { url: repository.url })}
@@ -552,20 +566,8 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
           {header}
         </button>
       ) : (
-        <div className="flex items-center gap-2.5 px-3 py-2.5">{header}</div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">{header}</div>
       )}
-      {repository.branch ? (
-        <div className="flex items-center gap-2 px-3 py-2">
-          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">{repository.branch}</span>
-          {repository.changes.length ? (
-            <Badge variant="secondary">
-              {repository.changes.length}
-              {repository.changesTruncated ? "+" : ""} changed
-            </Badge>
-          ) : null}
-        </div>
-      ) : null}
       {repository.changes.length ? (
         <div className="border-t px-2.5 py-2">
           <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
@@ -781,12 +783,16 @@ export function Inspector({
   // on. What it was showing is hidden rather than thrown away, so the file you had open is still open
   // when it comes back, and a hidden panel reads nothing because nothing here reads without being asked.
   const rail = (
-    <div className="flex animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200">
+    <div
+      data-context-surface
+      className="flex h-full animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200"
+    >
       <ActionIconButton
         size="icon-sm"
         tooltip="Expand panel"
         tooltipSide="left"
         aria-label="Expand panel"
+        data-context-expand-panel
         onClick={onExpand}
       >
         <ChevronLeft />
@@ -816,7 +822,13 @@ export function Inspector({
       <div data-context-surface className={collapsed ? "hidden" : "h-full"}>
         <Tabs value={tab} onValueChange={selectTab} className="h-full min-h-0 gap-0">
           <div className="flex h-11 shrink-0 items-center gap-0.5 border-b pr-3 pl-1.5">
-            <ActionIconButton size="icon-sm" tooltip="Collapse panel" aria-label="Collapse panel" onClick={onCollapse}>
+            <ActionIconButton
+              size="icon-sm"
+              tooltip="Collapse panel"
+              aria-label="Collapse panel"
+              data-context-collapse-panel
+              onClick={onCollapse}
+            >
               <ChevronRight />
             </ActionIconButton>
             <TabsList variant="line">
