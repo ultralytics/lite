@@ -875,7 +875,7 @@ function App() {
   visibleRef.current = visible;
   themeRef.current = theme;
   selectedRef.current = selected;
-  closeRef.current = trashSession;
+  closeRef.current = closeSession;
   openRef.current = (session) => {
     setSelectedId(session.id);
     if (!session.running) void launch(session, true);
@@ -1221,20 +1221,13 @@ function App() {
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
-  async function closeSession(session: Session) {
-    runs.current.delete(session.id);
-    await invoke("stop_session", { sessionId: session.id });
-    await cleanupSession(session);
-    setSessions((current) => current.filter((item) => item.id !== session.id));
-    if (selectedId === session.id) setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
-  }
-
   // Closing from a session row is reversible: the row leaves immediately and its PTY stops, while the
   // provider session metadata and directory grant remain until the toast closes without being undone.
-  function trashSession(session: Session) {
+  function closeSession(session: Session) {
     const index = sessions.findIndex((item) => item.id === session.id);
     const wasSelected = selectedId === session.id;
     const nextSelectedId = sessions.find((item) => item.id !== session.id)?.id ?? "";
+    const runId = runs.current.get(session.id);
     runs.current.delete(session.id);
     if (resumed.current === session.id) resumed.current = "";
     const timer = workTimers.current.get(session.id);
@@ -1245,30 +1238,46 @@ function App() {
       next.delete(session.id);
       return next;
     });
-    const stopped = invoke("stop_session", { sessionId: session.id }).catch((reason) => setError(String(reason)));
     setSessions((current) => current.filter((item) => item.id !== session.id));
     if (wasSelected) setSelectedId(nextSelectedId);
 
     let undone = false;
-    toast.add({
+    let toastId = "";
+    function restore(running: boolean) {
+      setSessions((current) => {
+        if (current.some((item) => item.id === session.id)) return current;
+        const restored = [...current];
+        restored.splice(Math.min(index, restored.length), 0, { ...session, running });
+        return restored;
+      });
+      if (wasSelected) setSelectedId((current) => (current === nextSelectedId ? session.id : current));
+    }
+    const stopped = invoke("stop_session", { sessionId: session.id }).then(
+      () => true,
+      (reason) => {
+        undone = true;
+        if (runId) {
+          runs.current.set(session.id, runId);
+          resumed.current = session.id;
+        }
+        restore(session.running);
+        setError(`Session could not be closed: ${String(reason)}`);
+        toast.close(toastId);
+        return false;
+      },
+    );
+    toastId = toast.add({
       title: `Closed “${session.name}”`,
       type: "success",
       timeout: 8000,
-      onClose: () => {
-        if (!undone) void stopped.then(() => cleanupSession(session));
+      onClose: async () => {
+        if (!undone && (await stopped)) await cleanupSession(session);
       },
       actionProps: {
         children: "Undo",
         onClick: async () => {
           undone = true;
-          await stopped;
-          setSessions((current) => {
-            if (current.some((item) => item.id === session.id)) return current;
-            const restored = [...current];
-            restored.splice(Math.min(index, restored.length), 0, { ...session, running: false });
-            return restored;
-          });
-          if (wasSelected) setSelectedId((current) => (current === nextSelectedId ? session.id : current));
+          if (await stopped) restore(false);
         },
       },
     });
@@ -1357,7 +1366,7 @@ function App() {
           if (shut.sidebar) glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size));
         }}
         onRestartSession={(session) => void restartSession(session)}
-        onCloseSession={trashSession}
+        onCloseSession={closeSession}
         onRestartAll={() => void restartAllSessions()}
         onCloseAll={() => setClosingAll(true)}
       >
@@ -1585,7 +1594,7 @@ function App() {
                             }
                             onRenamingChange={(renaming) => setRenamingId(renaming ? session.id : "")}
                             onRestart={() => void restartSession(session)}
-                            onClose={() => trashSession(session)}
+                            onClose={() => closeSession(session)}
                           />
                         ))}
                       </div>
@@ -1831,7 +1840,16 @@ function App() {
                 <Button
                   variant="destructive"
                   onClick={() => {
-                    void Promise.all(sessions.map(closeSession)).then(() => setSelectedId(""));
+                    void Promise.all(
+                      sessions.map(async (session) => {
+                        runs.current.delete(session.id);
+                        await invoke("stop_session", { sessionId: session.id });
+                        await cleanupSession(session);
+                      }),
+                    ).then(() => {
+                      setSessions([]);
+                      setSelectedId("");
+                    });
                     setClosingAll(false);
                   }}
                 >
