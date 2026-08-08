@@ -8,17 +8,23 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ClipboardPaste,
+  Copy,
+  ExternalLink,
   GitBranch,
   KeyRound,
+  Link,
   Moon,
   MoreHorizontal,
   Play,
   Plus,
   RefreshCw,
   RotateCcw,
+  Scissors,
   Search,
   SquareTerminal,
   Sun,
+  TextSelect,
   Trash2,
   X,
 } from "lucide-react";
@@ -43,6 +49,7 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
@@ -139,6 +146,206 @@ const RELEASE_NOTE = {
 } as const;
 
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
+
+type Editable = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
+type AppMenuContext = {
+  editable: Editable | null;
+  refresh: HTMLButtonElement | null;
+  selectedText: string;
+  terminal: HTMLElement | null;
+  url: string;
+  value: string;
+  valueLabel: string;
+};
+
+const EMPTY_MENU_CONTEXT: AppMenuContext = {
+  editable: null,
+  refresh: null,
+  selectedText: "",
+  terminal: null,
+  url: "",
+  value: "",
+  valueLabel: "",
+};
+
+function inputSelection(element: HTMLInputElement | HTMLTextAreaElement): string {
+  const start = element.selectionStart ?? 0;
+  const end = element.selectionEnd ?? 0;
+  return element.value.slice(start, end);
+}
+
+function menuContext(target: EventTarget | null): AppMenuContext {
+  if (!(target instanceof Element)) return EMPTY_MENU_CONTEXT;
+  const editable = target.closest<HTMLElement>("input, textarea, [contenteditable=true]");
+  const link = target.closest<HTMLElement>("a[href], [data-context-url]");
+  const value = target.closest<HTMLElement>("[data-context-value]");
+  const surface = target.closest<HTMLElement>("[data-context-surface]");
+  const selectedText =
+    editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement
+      ? inputSelection(editable)
+      : (window.getSelection()?.toString() ?? "");
+  return {
+    editable,
+    refresh: surface?.querySelector<HTMLButtonElement>("[data-context-refresh]") ?? null,
+    selectedText,
+    terminal: target.closest<HTMLElement>("[data-context-terminal]"),
+    url: link instanceof HTMLAnchorElement ? link.href : (link?.dataset.contextUrl ?? ""),
+    value: value?.dataset.contextValue ?? "",
+    valueLabel: value?.dataset.contextLabel ?? "Copy",
+  };
+}
+
+function hasMenuItems(context: AppMenuContext): boolean {
+  return Boolean(
+    context.editable || context.refresh || context.selectedText || context.terminal || context.url || context.value,
+  );
+}
+
+function writeClipboard(text: string) {
+  void navigator.clipboard.writeText(text).catch(() => undefined);
+}
+
+function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
+  const element = context.editable;
+  if (!element) return;
+  element.focus();
+  if (document.execCommand(command)) return;
+  if (command !== "paste") return;
+  void navigator.clipboard
+    .readText()
+    .then((text) => {
+      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+        element.setRangeText(text, element.selectionStart ?? 0, element.selectionEnd ?? 0, "end");
+        element.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertFromPaste" }));
+      } else document.execCommand("insertText", false, text);
+    })
+    .catch(() => undefined);
+}
+
+function AppContextMenu() {
+  const [open, setOpen] = useState(false);
+  const [context, setContext] = useState(EMPTY_MENU_CONTEXT);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const shortcut = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
+  const readonly =
+    context.editable instanceof HTMLInputElement || context.editable instanceof HTMLTextAreaElement
+      ? context.editable.readOnly || context.editable.disabled
+      : false;
+  const terminalCopy = context.terminal?.dataset.contextCanCopy === "true";
+  const linkGroup = Boolean(context.url || context.value);
+  const surfaceGroup = Boolean(context.refresh);
+  const editGroup = Boolean(context.terminal || context.editable || context.selectedText);
+
+  function terminalCommand(command: string) {
+    context.terminal?.dispatchEvent(new CustomEvent(`lite:terminal-${command}`));
+  }
+
+  useEffect(() => {
+    const show = (event: MouseEvent) => {
+      event.preventDefault();
+      const next = menuContext(event.target);
+      setContext(next);
+      setPosition({ x: event.clientX, y: event.clientY });
+      setOpen(hasMenuItems(next));
+    };
+    window.addEventListener("contextmenu", show);
+    return () => window.removeEventListener("contextmenu", show);
+  }, []);
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger
+        render={
+          <button
+            type="button"
+            tabIndex={-1}
+            aria-hidden
+            className="pointer-events-none fixed size-px opacity-0"
+            style={{ left: position.x, top: position.y }}
+          />
+        }
+      />
+      <DropdownMenuContent className="w-44">
+        {context.url ? (
+          <>
+            <DropdownMenuItem onClick={() => void invoke("open_url", { url: context.url })}>
+              <ExternalLink />
+              Open link
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => writeClipboard(context.url)}>
+              <Link />
+              Copy link
+            </DropdownMenuItem>
+          </>
+        ) : null}
+        {context.value ? (
+          <DropdownMenuItem onClick={() => writeClipboard(context.value)}>
+            <Copy />
+            {context.valueLabel}
+          </DropdownMenuItem>
+        ) : null}
+        {linkGroup && surfaceGroup ? <DropdownMenuSeparator /> : null}
+        {context.refresh ? (
+          <DropdownMenuItem onClick={() => context.refresh?.click()}>
+            <RefreshCw />
+            Refresh
+          </DropdownMenuItem>
+        ) : null}
+        {(linkGroup || surfaceGroup) && editGroup ? <DropdownMenuSeparator /> : null}
+        {context.terminal ? (
+          <>
+            <DropdownMenuItem disabled={!terminalCopy} onClick={() => terminalCommand("copy")}>
+              <Copy />
+              Copy
+              <DropdownMenuShortcut>{shortcut}C</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => terminalCommand("paste")}>
+              <ClipboardPaste />
+              Paste
+              <DropdownMenuShortcut>{shortcut}V</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => terminalCommand("select-all")}>
+              <TextSelect />
+              Select all
+              <DropdownMenuShortcut>{shortcut}A</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </>
+        ) : context.editable ? (
+          <>
+            <DropdownMenuItem disabled={!context.selectedText || readonly} onClick={() => edit(context, "cut")}>
+              <Scissors />
+              Cut
+              <DropdownMenuShortcut>{shortcut}X</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={!context.selectedText} onClick={() => writeClipboard(context.selectedText)}>
+              <Copy />
+              Copy
+              <DropdownMenuShortcut>{shortcut}C</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled={readonly} onClick={() => edit(context, "paste")}>
+              <ClipboardPaste />
+              Paste
+              <DropdownMenuShortcut>{shortcut}V</DropdownMenuShortcut>
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => edit(context, "selectAll")}>
+              <TextSelect />
+              Select all
+              <DropdownMenuShortcut>{shortcut}A</DropdownMenuShortcut>
+            </DropdownMenuItem>
+          </>
+        ) : context.selectedText ? (
+          <DropdownMenuItem onClick={() => writeClipboard(context.selectedText)}>
+            <Copy />
+            Copy
+            <DropdownMenuShortcut>{shortcut}C</DropdownMenuShortcut>
+          </DropdownMenuItem>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 // How long a session has to stay quiet before it counts as connected but idle rather than working.
 // Long enough that the gaps between an agent's own writes do not flicker the dot.
@@ -964,6 +1171,7 @@ function App() {
                   type="button"
                   className="shrink-0"
                   aria-label="Lite on GitHub"
+                  data-context-url="https://github.com/ultralytics/lite"
                   onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
                 />
               }
@@ -992,6 +1200,7 @@ function App() {
                       <button
                         type="button"
                         className="flex max-w-56 shrink-0 items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                        data-context-url={remote}
                         onClick={() => void invoke("open_url", { url: remote })}
                       />
                     }
@@ -1418,6 +1627,7 @@ function App() {
         </Dialog>
         <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
+        <AppContextMenu />
       </div>
     </TooltipProvider>
   );

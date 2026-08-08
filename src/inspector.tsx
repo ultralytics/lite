@@ -190,7 +190,14 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
             key={url}
             size="xs"
             className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
-            render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
+            render={
+              <button
+                type="button"
+                title={url}
+                data-context-url={url}
+                onClick={() => void invoke("open_url", { url })}
+              />
+            }
           >
             <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
               <GitHubItemIcon kind={kind} state={state} />
@@ -392,6 +399,8 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
               type="button"
               className="flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-xs hover:bg-muted"
               style={{ paddingLeft: `${8 + depth * 14}px` }}
+              data-context-value={entry.path}
+              data-context-label="Copy path"
               onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
             >
               {entry.isDirectory ? (
@@ -446,6 +455,8 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
       <button
         type="button"
         className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium hover:bg-muted"
+        data-context-value={root}
+        data-context-label="Copy path"
         onClick={() => void toggle(root)}
       >
         <ChevronRight
@@ -535,6 +546,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
           type="button"
           className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-muted"
           title={`Open ${repository.url}`}
+          data-context-url={repository.url}
           onClick={() => void invoke("open_url", { url: repository.url })}
         >
           {header}
@@ -801,7 +813,7 @@ export function Inspector({
   return (
     <>
       {collapsed ? rail : null}
-      <div className={collapsed ? "hidden" : "h-full"}>
+      <div data-context-surface className={collapsed ? "hidden" : "h-full"}>
         <Tabs value={tab} onValueChange={selectTab} className="h-full min-h-0 gap-0">
           <div className="flex h-11 shrink-0 items-center gap-0.5 border-b pr-3 pl-1.5">
             <ActionIconButton size="icon-sm" tooltip="Collapse panel" aria-label="Collapse panel" onClick={onCollapse}>
@@ -823,6 +835,7 @@ export function Inspector({
                   size="icon-sm"
                   tooltip="Refresh"
                   aria-label="Refresh"
+                  data-context-refresh
                   onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
                 >
                   <RefreshCw />
