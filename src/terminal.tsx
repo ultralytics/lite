@@ -195,7 +195,11 @@ export function TerminalView({
   // them past the edge, which also left the last row below the viewport where the scrollbar could
   // neither show nor reach it.
   return (
-    <div data-context-terminal className="h-full w-full bg-background p-3">
+    <div
+      role="application"
+      className="h-full w-full bg-background p-3"
+      onContextMenu={(event) => event.stopPropagation()}
+    >
       <div ref={containerRef} className="h-full w-full" />
     </div>
   );

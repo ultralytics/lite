@@ -539,7 +539,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
         </span>
       </span>
       {repository.branch ? (
-        <span className="flex min-w-0 w-full items-center gap-1.5 pl-7.5">
+        <span className="flex min-w-0 w-full items-center gap-1.5 pl-8">
           <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate font-mono text-xs">{repository.branch}</span>
           {repository.changes.length ? (
