@@ -513,10 +513,7 @@ function App() {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [availableVersion, setAvailableVersion] = useState("");
-  const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; total: number | null }>({
-    downloaded: 0,
-    total: null,
-  });
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState("");
   const runs = useRef(new Map<string, string>());
   const workTimers = useRef(new Map<string, number>());
@@ -631,21 +628,6 @@ function App() {
     void invoke<string | null>("local_repo")
       .then((value) => setRepo(value ?? ""))
       .catch(() => setRepo(""));
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void listen<{ downloaded: number; total: number | null }>("update-progress", ({ payload }) => {
-      setUpdateProgress(payload);
-    }).then((stop) => {
-      if (disposed) stop();
-      else unlisten = stop;
-    });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
   }, []);
 
   // One owner for the release question, so the startup check and a manual one cannot contradict each
@@ -903,7 +885,6 @@ function App() {
     if (updateOpen && (updateStatus === "checking" || updateStatus === "installing")) return;
     setUpdateOpen(true);
     setUpdateStatus("checking");
-    setUpdateProgress({ downloaded: 0, total: null });
     setUpdateError("");
     try {
       // A release would replace this build rather than update it, so a local build asks its own tree.
@@ -946,13 +927,19 @@ function App() {
   }
 
   async function installUpdate() {
-    setUpdateProgress({ downloaded: 0, total: null });
+    setUpdateProgress(null);
     setUpdateStatus("installing");
+    // A download only reports itself while it is running, so it is heard for exactly that long. A
+    // successful install restarts Lite from underneath this, and the failures it can return come
+    // back here to be shown.
+    const stop = await listen<number>("update-progress", ({ payload }) => setUpdateProgress(payload));
     try {
       await invoke("install_update");
     } catch (reason) {
       setUpdateError(String(reason));
       setUpdateStatus("error");
+    } finally {
+      stop();
     }
   }
 
@@ -1334,13 +1321,7 @@ function App() {
               {updateStatus === "checking" ? (
                 <Spinner className="mx-auto size-5 text-muted-foreground" />
               ) : updateStatus === "installing" ? (
-                <Progress
-                  value={
-                    updateProgress.total
-                      ? Math.min(100, (updateProgress.downloaded / updateProgress.total) * 100)
-                      : null
-                  }
-                >
+                <Progress value={updateProgress}>
                   <ProgressLabel>Downloading update</ProgressLabel>
                   <ProgressValue />
                 </Progress>

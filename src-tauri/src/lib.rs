@@ -81,13 +81,6 @@ struct PtyExit {
     run_id: String,
 }
 
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct UpdateProgress {
-    downloaded: u64,
-    total: Option<u64>,
-}
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectoryGrant {
@@ -2370,13 +2363,26 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "No update is available.".to_string())?;
+    // The download reports every chunk it receives, which is thousands of messages for a bar with a
+    // hundred steps it can show, so only a percent the dialog has not already been given is worth
+    // sending. A server that never said how large the update is says nothing, and the bar stays
+    // indeterminate for the whole download rather than filling against a size nobody knows.
     let progress_app = app.clone();
-    let mut downloaded = 0;
+    let mut downloaded = 0u64;
+    let mut sent = 0;
     update
         .download_and_install(
             move |chunk_length, total| {
                 downloaded += chunk_length as u64;
-                let _ = progress_app.emit("update-progress", UpdateProgress { downloaded, total });
+                let Some(total) = total.filter(|total| *total > 0) else {
+                    return;
+                };
+                let percent = (downloaded * 100 / total).min(100);
+                if percent == sent {
+                    return;
+                }
+                sent = percent;
+                let _ = progress_app.emit("update-progress", percent);
             },
             || {},
         )
