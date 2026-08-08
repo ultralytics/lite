@@ -78,10 +78,12 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="dialog-header" className={cn("flex shrink-0 flex-col gap-2", className)} {...props} />;
 }
 
-// The one region that scrolls when the window is too short for the dialog. It carries no padding of its
-// own: the popup's is the padding every other part of the dialog is spaced by.
+// The one region that scrolls when the window is too short for the dialog. Its horizontal gutter sits
+// outside the content width so focus rings are not clipped by the scroll container.
 function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-body" className={cn("min-h-0 flex-1 overflow-y-auto", className)} {...props} />;
+  return (
+    <div data-slot="dialog-body" className={cn("-mx-1 min-h-0 flex-1 overflow-y-auto px-1", className)} {...props} />
+  );
 }
 
 function DialogFooter({
