@@ -413,6 +413,8 @@ function promptName(text: string) {
 
 function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
+  // The sessions this launch restored, held as they were before anything re-granted their folders.
+  const restored = useRef(sessions);
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -500,6 +502,29 @@ function App() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  // A session outlives the run that granted it its folder, so a restored one arrives holding a grant
+  // that no longer exists and its files, Git and usage all report a folder that is sitting right there.
+  // The folder is taken again from the path the session itself carries, and the grant it came back with
+  // is handed in, which is also what keeps a folder from collecting one grant per launch.
+  useEffect(() => {
+    let disposed = false;
+    for (const session of restored.current) {
+      void invoke<{ id: string }>("restore_directory", { path: session.cwd })
+        .then((granted) => {
+          if (disposed) return void invoke("revoke_directory", { rootId: granted.id });
+          void invoke("revoke_directory", { rootId: session.rootId });
+          setSessions((current) =>
+            current.map((item) => (item.id === session.id ? { ...item, rootId: granted.id } : item)),
+          );
+        })
+        // A folder that has moved since the session was made is the file panel's to report, not this.
+        .catch(() => {});
+    }
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   // Fullscreen hides the window buttons, so the room the bar keeps for them goes with them.
   useEffect(() => {

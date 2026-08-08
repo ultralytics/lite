@@ -569,13 +569,7 @@ async fn choose_directory(
     grant_directory(&app, &roots, path).map(Some)
 }
 
-// A typed path is a folder like any other: it has to exist and it goes through the same grant.
-#[tauri::command]
-async fn use_directory(
-    app: AppHandle,
-    roots: State<'_, Roots>,
-    path: String,
-) -> Result<DirectoryGrant, String> {
+fn directory_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let path = path.trim();
     let path = match path.strip_prefix('~') {
         Some(rest) => app
@@ -588,8 +582,33 @@ async fn use_directory(
     if !path.is_dir() {
         return Err("That folder does not exist".into());
     }
-    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    fs::canonicalize(path).map_err(|error| error.to_string())
+}
+
+// A typed path is a folder like any other: it has to exist and it goes through the same grant.
+#[tauri::command]
+async fn use_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<DirectoryGrant, String> {
+    let path = directory_path(&app, &path)?;
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
+    grant_directory(&app, &roots, path)
+}
+
+// A grant belongs to the run that made it, and a session outlives the run it was made in. Restoring one
+// takes its folder again from the path the session itself carries, so the folder a session was already
+// working in keeps working after a restart. It opens nothing new: the path comes from the session rather
+// than from a picker, the sensitive-folder rule still refuses what it always refused, and a folder that
+// has since moved is left to say so. It is not the folder Lite offers next, so it is not remembered as one.
+#[tauri::command]
+async fn restore_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<DirectoryGrant, String> {
+    let path = directory_path(&app, &path)?;
     grant_directory(&app, &roots, path)
 }
 
@@ -2275,6 +2294,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             choose_directory,
+            restore_directory,
             use_directory,
             default_directory,
             revoke_directory,
