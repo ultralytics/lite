@@ -1627,6 +1627,34 @@ function App() {
               <section className="flex h-full min-w-0 flex-col">
                 {selected ? (
                   <div className="relative min-h-0 flex-1">
+                    {/* A running terminal stays live behind the selected one, so returning reveals its
+                      bounded xterm scrollback instead of rebuilding the terminal and replaying it. */}
+                    <Suspense fallback={<div className="absolute inset-0 bg-background" />}>
+                      {sessions.map((session) =>
+                        session.running ? (
+                          <div
+                            key={session.id}
+                            aria-hidden={session.id !== selectedId}
+                            className={`absolute inset-0 ${session.id === selectedId ? "visible" : "invisible"}`}
+                          >
+                            <TerminalView
+                              sessionId={session.id}
+                              theme={theme}
+                              active={session.id === selectedId}
+                              onPrompt={(text) =>
+                                setSessions((current) =>
+                                  current.map((item) =>
+                                    item.id === session.id && !item.renamed && item.name === folderName(item.cwd)
+                                      ? { ...item, name: subject(text) }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </div>
+                        ) : null,
+                      )}
+                    </Suspense>
                     {selected.running ? (
                       <ActionIconButton
                         variant="outline"
@@ -1639,23 +1667,6 @@ function App() {
                       >
                         <Trash2 />
                       </ActionIconButton>
-                    ) : null}
-                    {selected.running ? (
-                      <Suspense fallback={<div className="h-full bg-background" />}>
-                        <TerminalView
-                          sessionId={selected.id}
-                          theme={theme}
-                          onPrompt={(text) =>
-                            setSessions((current) =>
-                              current.map((item) =>
-                                item.id === selected.id && !item.renamed && item.name === folderName(item.cwd)
-                                  ? { ...item, name: subject(text) }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Suspense>
                     ) : startingIds.has(selected.id) ? (
                       <Empty className="h-full">
                         <EmptyHeader>

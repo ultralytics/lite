@@ -82,10 +82,12 @@ function storedFontSize(): number {
 export function TerminalView({
   sessionId,
   theme,
+  active,
   onPrompt,
 }: {
   sessionId: string;
   theme: Theme;
+  active: boolean;
   onPrompt: (text: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -93,8 +95,8 @@ export function TerminalView({
   const promptRef = useRef(onPrompt);
   promptRef.current = onPrompt;
   const terminalRef = useRef<Terminal | null>(null);
-  // Read when a terminal is built, so switching sessions paints the new one in the current theme
-  // without rebuilding it every time the theme changes.
+  // Read when a terminal is built, so a newly running session starts in the current theme without
+  // rebuilding the terminals already kept alive for other sessions.
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
@@ -172,8 +174,6 @@ export function TerminalView({
       return false;
     });
     resize();
-    terminal.focus();
-
     return () => {
       window.clearTimeout(settle);
       observer.disconnect();
@@ -183,6 +183,10 @@ export function TerminalView({
       terminalRef.current = null;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (active) terminalRef.current?.focus();
+  }, [active]);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = themes[theme];
