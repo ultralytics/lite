@@ -1318,13 +1318,16 @@ function App() {
               </DialogDescription>
             </DialogHeader>
             <DialogBody>
-              {updateStatus === "checking" ? (
-                <Spinner className="mx-auto size-5 text-muted-foreground" />
-              ) : updateStatus === "installing" ? (
+              {/* A bar only once the download has a percent to put in it: an update whose size the
+                  server never gave has none to give, and an empty bar would say less than the spinner
+                  it replaced. */}
+              {updateStatus === "installing" && updateProgress !== null ? (
                 <Progress value={updateProgress}>
                   <ProgressLabel>Downloading update</ProgressLabel>
                   <ProgressValue />
                 </Progress>
+              ) : updateStatus === "checking" || updateStatus === "installing" ? (
+                <Spinner className="mx-auto size-5 text-muted-foreground" />
               ) : (
                 // What this copy of Lite actually is, which is the first thing worth knowing when it and
                 // the tree disagree. A release has no tree to name and leaves those rows out.
