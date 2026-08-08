@@ -21,10 +21,14 @@ const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 
-// The same sequence begun but not yet terminated, which the chunk that ends it completes. Anything
-// longer than a title could be is no longer one, so the wait is given up rather than grown.
+// The same sequence begun but not yet terminated, which the chunk that ends it completes. A title may
+// hold an escape of its own, so the payload ends only at a terminator, and a lone escape is kept
+// because the bracket that makes it a title can be the first byte of the next chunk. That last part is
+// where this parts company with the rule terminal.tsx applies to what is typed, which deliberately does
+// not hold a lone escape back: there it is the Escape key, not the start of anything. Anything longer
+// than a title could be is no longer one, so the wait is given up rather than grown.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
-const UNTERMINATED = /\x1b(?:\][^\x07\x1b]*)?$/;
+const UNTERMINATED = /\x1b(?:\](?:(?!\x07|\x1b\\)[\s\S])*)?$/;
 const MAX_TAIL = 512;
 
 // Returns the last window title the chunk set, empty when it set none.

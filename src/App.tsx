@@ -415,10 +415,6 @@ function shortPath(cwd: string) {
 // program that sets none. A leading glyph is a spinner or a status mark rather than part of the
 // subject, and it changes several times a second while saying nothing the badge does not already say,
 // so the name is what follows it. A name the user chose is left alone.
-// Codex names the window after the thread it is working on, and reports the thread's id until it has
-// named it. An id is not a subject.
-const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 function subject(text: string) {
   const words = text
     .replace(/^[\p{S}\p{P}]\s+/u, "")
@@ -626,15 +622,18 @@ function App() {
 
   // A working session retitles itself several times a second, nearly always to what the tab already
   // says, so the list it would re-render is handed back untouched unless the subject really changed.
-  // A sign-in tab says what it is for and is gone as soon as it is done, and not every title is a
-  // subject: a program with nothing to say yet names the window after itself, which the badge already
-  // says and the folder name beats.
+  // A sign-in tab says what it is for and is gone as soon as it is done. And not every title is a
+  // subject: a program with nothing of its own to say names the window after itself or after the
+  // folder it was started in, which the badge and the tab's own name already say, and taking those
+  // would undo the subject a tab had already been given.
   const markTitle = useCallback((sessionId: string, title: string) => {
     setSessions((current) => {
       const session = current.find((item) => item.id === sessionId);
       if (!session || session.mode || session.renamed) return current;
       const name = subject(title);
-      if (!name || name === session.name || name === sessionLabel(session) || THREAD_ID.test(name)) return current;
+      if (!name || name === session.name || name === sessionLabel(session) || name === folderName(session.cwd)) {
+        return current;
+      }
       return current.map((item) => (item.id === sessionId ? { ...item, name } : item));
     });
   }, []);

@@ -1384,11 +1384,6 @@ fn agent_command(
         }
         "codex" => {
             let mut command = CommandBuilder::new("codex");
-            // Codex names the window after the folder, which the tab is named after already, unless it
-            // is asked for the thread's own title instead. An item identifier it does not know leaves
-            // the window unnamed rather than failing, so a Codex that renames this one costs the tab
-            // nothing it had before.
-            command.args(["-c", "tui.terminal_title=[\"thread-title\"]"]);
             // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
             if provider == Some("deepseek") {
                 let key = saved_api_key(app, agent, provider).is_some();
