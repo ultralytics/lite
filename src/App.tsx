@@ -664,7 +664,7 @@ function SessionRow({
           </span>
         </button>
       )}
-      <ItemActions className="invisible shrink-0 gap-0.5 group-hover/item:visible group-focus-within/item:visible">
+      <ItemActions className="shrink-0 gap-0.5 opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100">
         <ActionIconButton
           size="icon-sm"
           tooltip="Restart"
