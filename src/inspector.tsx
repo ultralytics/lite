@@ -116,6 +116,16 @@ const formatNumber = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
 });
 
+// A quota window turns over on the minute as far as anyone using it is concerned, so it is named to
+// the minute; the seconds only ever changed the width of the line.
+const formatTime = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
 // A tree is read by shape before it is read by name, so each family of file gets its own icon and its
 // own color and the plain sheet is left for the types nothing here recognizes. Languages are colored
 // the way their own ecosystems are, which is what makes a folder scannable at a glance.
@@ -581,7 +591,7 @@ function UsagePanel({ session }: { session: Session }) {
                 >
                   <Meter label={window.label} value={window.usedPercent} />
                   {window.resetsAt != null ? (
-                    <ItemDescription>Resets {new Date(window.resetsAt * 1000).toLocaleString()}</ItemDescription>
+                    <ItemDescription>Resets {formatTime.format(window.resetsAt * 1000)}</ItemDescription>
                   ) : null}
                 </Item>
               ))}
