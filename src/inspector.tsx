@@ -184,7 +184,7 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
   return (
     <div className="border-t">
       <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">{label}</p>
-      <ItemGroup className="pb-1 has-data-[size=xs]:gap-0">
+      <ItemGroup className="has-data-[size=xs]:gap-0">
         {items.map(({ url, title, state, occurredAt, kind, number }) => (
           <Item
             key={url}
