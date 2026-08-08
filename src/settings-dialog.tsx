@@ -45,7 +45,7 @@ const providers: {
     agent: "claude",
     label: "Anthropic",
     variable: "ANTHROPIC_API_KEY",
-    signedIn: "Signed in through Claude Code",
+    signedIn: "Using Claude Code sign-in",
     signIn: true,
   },
   {
@@ -54,7 +54,7 @@ const providers: {
     provider: "openai",
     label: "OpenAI",
     variable: "OPENAI_API_KEY",
-    signedIn: "Signed in through Codex",
+    signedIn: "Using Codex sign-in",
     signIn: true,
   },
   {
@@ -71,7 +71,7 @@ const providers: {
     agent: "kimi",
     label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
-    signedIn: "Signed in through Kimi Code",
+    signedIn: "Using Kimi Code sign-in",
     signIn: true,
   },
 ];
@@ -164,8 +164,8 @@ export function SettingsDialog({
         <DialogHeader>
           <DialogTitle>API keys</DialogTitle>
           <DialogDescription>
-            Sessions use the key saved here when one exists, and the provider's own sign-in when it does not. Keys stay
-            on this computer in Lite's data folder and reach a session through its provider's environment variable.
+            Each status shows the authentication Lite will use for the next session. A Lite key takes priority over the
+            provider's own sign-in and stays in Lite's data folder on this computer.
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -191,7 +191,7 @@ export function SettingsDialog({
                       {status?.keyHint ? (
                         <span className="flex items-center gap-1.5">
                           <Check className="size-3.5 shrink-0" />
-                          Key saved
+                          Using Lite key
                           <span className="font-mono">••••{status.keyHint}</span>
                         </span>
                       ) : status ? (
