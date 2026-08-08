@@ -487,12 +487,11 @@ function AppContextMenu({
 const QUIET_MS = 1200;
 
 // Three states the sidebar dot tells apart: the terminal is gone, it is up and quiet, or it is up and
-// producing output. Each reuses a badge token, so the state survives a display where motion is
-// suppressed and the palette stays consistent with the rest of the interface.
+// producing output. Color carries the state when motion is suppressed, and animation only reinforces it.
 const SESSION_STATUS = {
   disconnected: { dot: "bg-muted-foreground/40", label: "Disconnected" },
   idle: { dot: "bg-success", label: "Connected, idle" },
-  working: { dot: "bg-primary animate-pulse motion-reduce:animate-none", label: "Connected, working" },
+  working: { dot: "bg-blue-500 animate-pulse motion-reduce:animate-none", label: "Connected, working" },
 } as const;
 
 // A local build names its commit and is red, so it is never mistaken for the installed copy.
