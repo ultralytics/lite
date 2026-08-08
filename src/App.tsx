@@ -8,6 +8,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   ClipboardPaste,
   Copy,
   ExternalLink,
@@ -168,9 +170,12 @@ type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installi
 
 type Editable = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
 type AppMenuContext = {
+  collapseFiles: HTMLButtonElement | null;
   collapsePanel: HTMLButtonElement | null;
   collapseSessions: HTMLButtonElement | null;
+  directory: HTMLButtonElement | null;
   editable: Editable | null;
+  expandFiles: HTMLButtonElement | null;
   expandPanel: HTMLButtonElement | null;
   expandSessions: HTMLButtonElement | null;
   newSession: HTMLButtonElement | null;
@@ -183,9 +188,12 @@ type AppMenuContext = {
 };
 
 const EMPTY_MENU_CONTEXT: AppMenuContext = {
+  collapseFiles: null,
   collapsePanel: null,
   collapseSessions: null,
+  directory: null,
   editable: null,
+  expandFiles: null,
   expandPanel: null,
   expandSessions: null,
   newSession: null,
@@ -208,16 +216,21 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const editable = target.closest<HTMLElement>("input, textarea, [contenteditable=true]");
   const link = target.closest<HTMLElement>("a[href], [data-context-url]");
   const value = target.closest<HTMLElement>("[data-context-value]");
+  const directory = target.closest<HTMLButtonElement>("[data-context-directory]");
   const session = target.closest<HTMLElement>("[data-context-session]");
   const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
+  const files = target.closest<HTMLElement>("[data-context-files]");
   const selectedText =
     editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement
       ? inputSelection(editable)
       : (window.getSelection()?.toString() ?? "");
   return {
+    collapseFiles: files?.querySelector<HTMLButtonElement>("[data-context-collapse-files]") ?? null,
     collapsePanel: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-panel]") ?? null,
     collapseSessions: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-sessions]") ?? null,
+    directory,
     editable,
+    expandFiles: files?.querySelector<HTMLButtonElement>("[data-context-expand-files]") ?? null,
     expandPanel: surface?.querySelector<HTMLButtonElement>("[data-context-expand-panel]") ?? null,
     expandSessions: surface?.querySelector<HTMLButtonElement>("[data-context-expand-sessions]") ?? null,
     newSession: surface?.querySelector<HTMLButtonElement>("[data-context-new-session]") ?? null,
@@ -232,9 +245,9 @@ function menuContext(target: EventTarget | null): AppMenuContext {
 
 function hasMenuItems(context: AppMenuContext): boolean {
   return [
-    context.collapsePanel || context.collapseSessions,
+    context.collapseFiles || context.collapsePanel || context.collapseSessions,
     context.editable,
-    context.expandPanel || context.expandSessions,
+    context.directory || context.expandFiles || context.expandPanel || context.expandSessions,
     context.newSession || context.refresh,
     context.selectedText,
     context.sessionId,
@@ -272,6 +285,8 @@ function AppContextMenu({
   onRenameSession,
   onRestartSession,
   onCloseSession,
+  onRestartAll,
+  onCloseAll,
 }: {
   children: ReactElement;
   sessions: Session[];
@@ -281,6 +296,8 @@ function AppContextMenu({
   onRenameSession: (session: Session) => void;
   onRestartSession: (session: Session) => void;
   onCloseSession: (session: Session) => void;
+  onRestartAll: () => void;
+  onCloseAll: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState(EMPTY_MENU_CONTEXT);
@@ -292,11 +309,12 @@ function AppContextMenu({
   const session = sessions.find((item) => item.id === context.sessionId);
   const linkGroup = Boolean(context.url || context.value);
   const surfaceGroup = [
-    context.collapsePanel || context.collapseSessions,
-    context.expandPanel || context.expandSessions,
+    context.collapseFiles || context.collapsePanel || context.collapseSessions,
+    context.expandFiles || context.expandPanel || context.expandSessions,
     context.newSession || context.refresh,
   ].some(Boolean);
   const editGroup = Boolean(context.editable || context.selectedText);
+  const sessionsGroup = Boolean(session || context.newSession);
 
   return (
     <ContextMenu
@@ -353,6 +371,12 @@ function AppContextMenu({
             </ContextMenuItem>
           </>
         ) : null}
+        {context.directory ? (
+          <ContextMenuItem onClick={() => context.directory?.click()}>
+            <ChevronRight className={context.directory.dataset.contextExpanded === "true" ? "rotate-90" : undefined} />
+            {context.directory.dataset.contextExpanded === "true" ? "Collapse folder" : "Expand folder"}
+          </ContextMenuItem>
+        ) : null}
         {context.value ? (
           <ContextMenuItem onClick={() => writeClipboard(context.value)}>
             <Copy />
@@ -364,6 +388,18 @@ function AppContextMenu({
           <ContextMenuItem onClick={() => context.refresh?.click()}>
             <RefreshCw />
             Refresh
+          </ContextMenuItem>
+        ) : null}
+        {context.expandFiles ? (
+          <ContextMenuItem disabled={context.expandFiles.disabled} onClick={() => context.expandFiles?.click()}>
+            <ChevronsUpDown />
+            Expand all
+          </ContextMenuItem>
+        ) : null}
+        {context.collapseFiles ? (
+          <ContextMenuItem disabled={context.collapseFiles.disabled} onClick={() => context.collapseFiles?.click()}>
+            <ChevronsDownUp />
+            Collapse all
           </ContextMenuItem>
         ) : null}
         {context.newSession ? (
@@ -396,7 +432,20 @@ function AppContextMenu({
             Collapse panel
           </ContextMenuItem>
         ) : null}
-        {(linkGroup || surfaceGroup) && editGroup ? <ContextMenuSeparator /> : null}
+        {sessionsGroup && sessions.length ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem disabled={startingIds.size > 0} onClick={onRestartAll}>
+              <RotateCcw />
+              Restart all
+            </ContextMenuItem>
+            <ContextMenuItem variant="destructive" disabled={startingIds.size > 0} onClick={onCloseAll}>
+              <Trash2 />
+              Close all sessions
+            </ContextMenuItem>
+          </>
+        ) : null}
+        {(linkGroup || surfaceGroup || sessionsGroup) && editGroup ? <ContextMenuSeparator /> : null}
         {context.editable ? (
           <>
             <ContextMenuItem disabled={!context.selectedText || readonly} onClick={() => edit(context, "cut")}>
@@ -438,12 +487,12 @@ function AppContextMenu({
 const QUIET_MS = 1200;
 
 // Three states the sidebar dot tells apart: the terminal is gone, it is up and quiet, or it is up and
-// producing output. Each gets its own color, so the state survives a display where the pulse is
-// suppressed and the motion only reinforces what green already says.
+// producing output. Each reuses a badge token, so the state survives a display where motion is
+// suppressed and the palette stays consistent with the rest of the interface.
 const SESSION_STATUS = {
   disconnected: { dot: "bg-muted-foreground/40", label: "Disconnected" },
-  idle: { dot: "bg-emerald-500", label: "Connected, idle" },
-  working: { dot: "bg-blue-500 animate-pulse motion-reduce:animate-none", label: "Connected, working" },
+  idle: { dot: "bg-success", label: "Connected, idle" },
+  working: { dot: "bg-primary animate-pulse motion-reduce:animate-none", label: "Connected, working" },
 } as const;
 
 // A local build names its commit and is red, so it is never mistaken for the installed copy.
@@ -774,7 +823,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [closing, setClosing] = useState<Session>();
+  const [closing, setClosing] = useState<Session | "all">();
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   // Sessions whose terminal has written something recently, which is what separates a connected
@@ -1131,7 +1180,7 @@ function App() {
 
   // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
   // session it resumed by id is forgotten first and the tab takes a new one.
-  async function restartSession(session: Session) {
+  async function restartSession(session: Session, select = true) {
     runs.current.delete(session.id);
     setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
     await invoke("stop_session", { sessionId: session.id });
@@ -1143,10 +1192,23 @@ function App() {
     clearOutput(session.id);
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
-    setSelectedId(fresh.id);
-    resumed.current = fresh.id;
+    if (select) {
+      setSelectedId(fresh.id);
+      resumed.current = fresh.id;
+    }
     await launch(fresh, false);
     if (fresh.agent === "kimi") startKimiConversation(fresh.id);
+    return fresh;
+  }
+
+  async function restartAllSessions() {
+    const current = sessions;
+    const restarted = await Promise.all(current.map((session) => restartSession(session, false)));
+    const active = restarted[current.findIndex((session) => session.id === selectedId)];
+    if (active) {
+      resumed.current = active.id;
+      setSelectedId(active.id);
+    }
   }
 
   async function closeSession(session: Session) {
@@ -1253,6 +1315,8 @@ function App() {
         }}
         onRestartSession={(session) => void restartSession(session)}
         onCloseSession={setClosing}
+        onRestartAll={() => void restartAllSessions()}
+        onCloseAll={() => setClosing("all")}
       >
         <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
           {/* The window buttons sit inside this bar on macOS, so it doubles as the title bar and drags the window. */}
@@ -1712,11 +1776,13 @@ function App() {
           <Dialog open={Boolean(closing)} onOpenChange={(open) => !open && setClosing(undefined)}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Close {closing?.name}?</DialogTitle>
+                <DialogTitle>{closing === "all" ? "Close all sessions?" : `Close ${closing?.name}?`}</DialogTitle>
                 <DialogDescription>
-                  {closing?.running
-                    ? "This stops the running session and removes the tab. The provider keeps its own conversation history."
-                    : "This removes the tab. The provider keeps its own conversation history."}
+                  {closing === "all"
+                    ? "This stops every running session and removes all tabs. Providers keep their own conversation history."
+                    : closing?.running
+                      ? "This stops the running session and removes the tab. The provider keeps its own conversation history."
+                      : "This removes the tab. The provider keeps its own conversation history."}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -1726,11 +1792,13 @@ function App() {
                 <Button
                   variant="destructive"
                   onClick={() => {
-                    if (closing) void closeSession(closing);
+                    if (closing === "all") {
+                      void Promise.all(sessions.map(closeSession)).then(() => setSelectedId(""));
+                    } else if (closing) void closeSession(closing);
                     setClosing(undefined);
                   }}
                 >
-                  Close session
+                  {closing === "all" ? "Close all sessions" : "Close session"}
                 </Button>
               </DialogFooter>
             </DialogContent>

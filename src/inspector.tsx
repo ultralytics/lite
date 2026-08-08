@@ -5,6 +5,8 @@ import {
   ChartNoAxesColumn,
   ChevronLeft,
   ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
   CircleCheck,
   CircleDot,
   Container,
@@ -342,6 +344,7 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
   const [expanded, setExpanded] = useState(() => new Set<string>([root]));
   const loading = useRef(new Set<string>());
   const [loadingPaths, setLoadingPaths] = useState(() => new Set<string>());
+  const [expandingAll, setExpandingAll] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(
@@ -383,6 +386,36 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
     setExpanded(next);
   }
 
+  async function expandAll() {
+    setExpandingAll(true);
+    const nextChildren = { ...children };
+    const nextExpanded = new Set<string>();
+    const pending = [root];
+    try {
+      while (pending.length) {
+        const path = pending.shift();
+        if (!path || nextExpanded.has(path)) continue;
+        nextExpanded.add(path);
+        const cached = nextChildren[path];
+        const listing =
+          cached && !cached.after
+            ? cached
+            : { ...(await invoke<DirectoryListing>("list_directory", { rootId, path, after: null })), after: null };
+        nextChildren[path] = listing;
+        pending.push(
+          ...listing.entries.filter((entry) => entry.isDirectory && !entry.isSymlink).map((entry) => entry.path),
+        );
+      }
+      setChildren(nextChildren);
+      setExpanded(nextExpanded);
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setExpandingAll(false);
+    }
+  }
+
   function rows(path: string, depth = 0): React.ReactNode {
     const listing = children[path];
     if (!listing) {
@@ -399,6 +432,8 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
               style={{ paddingLeft: `${8 + depth * 14}px` }}
               data-context-value={entry.path}
               data-context-label="Copy path"
+              data-context-directory={entry.isDirectory ? "" : undefined}
+              data-context-expanded={entry.isDirectory ? expanded.has(entry.path) : undefined}
               onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
             >
               {entry.isDirectory ? (
@@ -450,19 +485,43 @@ function FileTree({ root, rootId, onOpen }: { root: string; rootId: string; onOp
   const name = parts[parts.length - 1] ?? root;
   return (
     <div className="py-2">
-      <button
-        type="button"
-        className="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium hover:bg-muted"
-        data-context-value={root}
-        data-context-label="Copy path"
-        onClick={() => void toggle(root)}
-      >
-        <ChevronRight
-          className={`size-3.5 text-muted-foreground transition-transform ${expanded.has(root) ? "rotate-90" : ""}`}
-        />
-        <Folder className="size-3.5 fill-current text-muted-foreground" />
-        <span className="truncate">{name}</span>
-      </button>
+      <div className="flex items-center pr-1">
+        <button
+          type="button"
+          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium hover:bg-muted"
+          data-context-value={root}
+          data-context-label="Copy path"
+          data-context-directory
+          data-context-expanded={expanded.has(root)}
+          onClick={() => void toggle(root)}
+        >
+          <ChevronRight
+            className={`size-3.5 text-muted-foreground transition-transform ${expanded.has(root) ? "rotate-90" : ""}`}
+          />
+          <Folder className="size-3.5 fill-current text-muted-foreground" />
+          <span className="truncate">{name}</span>
+        </button>
+        <ActionIconButton
+          size="icon-xs"
+          tooltip="Expand all"
+          aria-label="Expand all folders"
+          data-context-expand-files
+          disabled={expandingAll}
+          onClick={() => void expandAll()}
+        >
+          {expandingAll ? <Spinner /> : <ChevronsUpDown />}
+        </ActionIconButton>
+        <ActionIconButton
+          size="icon-xs"
+          tooltip="Collapse all"
+          aria-label="Collapse all folders"
+          data-context-collapse-files
+          disabled={expandingAll}
+          onClick={() => setExpanded(new Set())}
+        >
+          <ChevronsDownUp />
+        </ActionIconButton>
+      </div>
       {expanded.has(root) ? rows(root, 1) : null}
     </div>
   );
@@ -512,7 +571,7 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
     );
   }
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div data-context-files className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <FileTree root={root} rootId={rootId} onOpen={(entry) => void openFile(entry)} />
       </ScrollArea>
