@@ -656,6 +656,7 @@ const CHECKED_PULL_REQUESTS: usize = 20;
 fn check_pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
     let gh = resolve_executable("gh");
     let mut found = Vec::new();
+    let mut readable: HashMap<String, bool> = HashMap::new();
     let mut checked = 0;
     for url in urls {
         let Some((owner, repository, number)) = pull_request_parts(&url) else {
@@ -690,10 +691,13 @@ fn check_pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
                 });
             }
             Answer::Missing => {
-                if !matches!(
-                    gh_api(gh, &format!("repos/{owner}/{repository}")),
-                    Answer::Found(_)
-                ) {
+                // Asked once per repository rather than once per link: twenty links into one repository
+                // nobody here can read are twenty identical answers.
+                let name = format!("{owner}/{repository}");
+                let readable = *readable.entry(name.clone()).or_insert_with(|| {
+                    matches!(gh_api(gh, &format!("repos/{name}")), Answer::Found(_))
+                });
+                if !readable {
                     found.push(unchecked);
                 }
             }
@@ -707,9 +711,20 @@ fn check_pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
 // of Lite's commands share rather than holding one of its workers for the length of it.
 #[tauri::command]
 async fn pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
+    // A run that never finished answered nothing, and nothing is not evidence that a link names
+    // nothing, so the links come back the way they were printed rather than as an empty panel.
+    let unanswered: Vec<PullRequest> = urls
+        .iter()
+        .filter(|url| pull_request_parts(url).is_some())
+        .map(|url| PullRequest {
+            url: url.clone(),
+            title: None,
+            state: None,
+        })
+        .collect();
     tauri::async_runtime::spawn_blocking(move || check_pull_requests(urls))
         .await
-        .unwrap_or_default()
+        .unwrap_or(unanswered)
 }
 
 #[tauri::command]
