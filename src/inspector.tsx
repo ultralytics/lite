@@ -203,9 +203,7 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
               <GitHubItemIcon kind={kind} state={state} />
             </ItemMedia>
             <ItemContent>
-              <ItemTitle className="w-full underline-offset-2 group-hover/item:underline">
-                {title ?? `#${number}`}
-              </ItemTitle>
+              <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
               {title ? (
                 <div className="flex min-w-0 items-center gap-2">
                   <ItemDescription className="min-w-0 flex-1 truncate font-mono">

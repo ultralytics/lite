@@ -664,8 +664,7 @@ function SessionRow({
           </span>
         </button>
       )}
-      {/* Hidden rather than transparent, so a name gets the whole row until the pointer arrives. */}
-      <ItemActions className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex">
+      <ItemActions className="invisible shrink-0 gap-0.5 group-hover/item:visible group-focus-within/item:visible">
         <ActionIconButton
           size="icon-sm"
           tooltip="Restart"
