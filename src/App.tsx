@@ -407,6 +407,10 @@ function shortPath(cwd: string) {
 // program that sets none. A leading glyph is a spinner or a status mark rather than part of the
 // subject, and it changes several times a second while saying nothing the badge does not already say,
 // so the name is what follows it. A name the user chose is left alone.
+// Codex names the window after the thread it is working on, and reports the thread's id until it has
+// named it. An id is not a subject.
+const THREAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function subject(text: string) {
   const words = text
     .replace(/^[\p{S}\p{P}]\s+/u, "")
@@ -614,16 +618,15 @@ function App() {
 
   // A working session retitles itself several times a second, nearly always to what the tab already
   // says, so the list it would re-render is handed back untouched unless the subject really changed.
-  // A program that has nothing to say yet names the window after itself, which the badge already says
-  // and the folder name beats, and a sign-in tab says what it is for and is gone as soon as it is done.
+  // A sign-in tab says what it is for and is gone as soon as it is done, and not every title is a
+  // subject: a program with nothing to say yet names the window after itself, which the badge already
+  // says and the folder name beats.
   const markTitle = useCallback((sessionId: string, title: string) => {
     setSessions((current) => {
-      const name = subject(title);
-      if (!name) return current;
       const session = current.find((item) => item.id === sessionId);
-      if (!session || session.mode || session.renamed || session.name === name || name === sessionLabel(session)) {
-        return current;
-      }
+      if (!session || session.mode || session.renamed) return current;
+      const name = subject(title);
+      if (!name || name === session.name || name === sessionLabel(session) || THREAD_ID.test(name)) return current;
       return current.map((item) => (item.id === sessionId ? { ...item, name } : item));
     });
   }, []);
