@@ -49,6 +49,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemActions, ItemMedia } from "@/components/ui/item";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import {
   type PanelImperativeHandle,
   ResizableHandle,
@@ -512,6 +513,10 @@ function App() {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [availableVersion, setAvailableVersion] = useState("");
+  const [updateProgress, setUpdateProgress] = useState<{ downloaded: number; total: number | null }>({
+    downloaded: 0,
+    total: null,
+  });
   const [updateError, setUpdateError] = useState("");
   const runs = useRef(new Map<string, string>());
   const workTimers = useRef(new Map<string, number>());
@@ -626,6 +631,21 @@ function App() {
     void invoke<string | null>("local_repo")
       .then((value) => setRepo(value ?? ""))
       .catch(() => setRepo(""));
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{ downloaded: number; total: number | null }>("update-progress", ({ payload }) => {
+      setUpdateProgress(payload);
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }, []);
 
   // One owner for the release question, so the startup check and a manual one cannot contradict each
@@ -883,6 +903,7 @@ function App() {
     if (updateOpen && (updateStatus === "checking" || updateStatus === "installing")) return;
     setUpdateOpen(true);
     setUpdateStatus("checking");
+    setUpdateProgress({ downloaded: 0, total: null });
     setUpdateError("");
     try {
       // A release would replace this build rather than update it, so a local build asks its own tree.
@@ -925,6 +946,7 @@ function App() {
   }
 
   async function installUpdate() {
+    setUpdateProgress({ downloaded: 0, total: null });
     setUpdateStatus("installing");
     try {
       await invoke("install_update");
@@ -1309,8 +1331,19 @@ function App() {
               </DialogDescription>
             </DialogHeader>
             <DialogBody>
-              {updateStatus === "checking" || updateStatus === "installing" ? (
+              {updateStatus === "checking" ? (
                 <Spinner className="mx-auto size-5 text-muted-foreground" />
+              ) : updateStatus === "installing" ? (
+                <Progress
+                  value={
+                    updateProgress.total
+                      ? Math.min(100, (updateProgress.downloaded / updateProgress.total) * 100)
+                      : null
+                  }
+                >
+                  <ProgressLabel>Downloading update</ProgressLabel>
+                  <ProgressValue />
+                </Progress>
               ) : (
                 // What this copy of Lite actually is, which is the first thing worth knowing when it and
                 // the tree disagree. A release has no tree to name and leaves those rows out.

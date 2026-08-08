@@ -81,6 +81,13 @@ struct PtyExit {
     run_id: String,
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DirectoryGrant {
@@ -2363,8 +2370,16 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "No update is available.".to_string())?;
+    let progress_app = app.clone();
+    let mut downloaded = 0;
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(
+            move |chunk_length, total| {
+                downloaded += chunk_length as u64;
+                let _ = progress_app.emit("update-progress", UpdateProgress { downloaded, total });
+            },
+            || {},
+        )
         .await
         .map_err(|error| error.to_string())?;
     app.restart()
