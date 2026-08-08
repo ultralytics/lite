@@ -40,7 +40,7 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { GitHubLogomark } from "@/brand-icons";
+import { GitHubLogomark, ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { ActionIconButton } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
@@ -51,7 +51,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { readOutput } from "@/output-store";
-import type { DirectoryCursor, DirectoryListing, FileEntry, GitStatus, Session } from "@/types";
+import {
+  type DirectoryCursor,
+  type DirectoryListing,
+  type FileEntry,
+  type GitStatus,
+  type Session,
+  sessionLabel,
+} from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
@@ -747,6 +754,14 @@ function UsagePanel({ session }: { session: Session }) {
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-3">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+            <ProviderIcon agent={session.agent} provider={session.provider} className="size-5" />
+            {session.agent === "codex"
+              ? session.provider === "deepseek"
+                ? "DeepSeek"
+                : "OpenAI"
+              : sessionLabel(session)}
+          </div>
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
           ) : usage === undefined ? (
