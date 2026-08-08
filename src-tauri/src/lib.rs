@@ -599,6 +599,7 @@ struct GitHubItem {
     url: String,
     title: Option<String>,
     state: Option<String>,
+    occurred_at: Option<String>,
 }
 
 // The kind, number and repository a GitHub work-item link names, or nothing if the link is not one.
@@ -673,6 +674,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             url: url.clone(),
             title: None,
             state: None,
+            occurred_at: None,
         };
         let (Some(gh), true) = (gh.as_ref(), checked < CHECKED_GITHUB_ITEMS) else {
             found.push(unchecked);
@@ -691,10 +693,20 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                 } else {
                     "open"
                 };
+                let occurred_at = body[if state == "merged" {
+                    "merged_at"
+                } else if state == "closed" {
+                    "closed_at"
+                } else {
+                    "created_at"
+                }]
+                .as_str()
+                .map(str::to_owned);
                 found.push(GitHubItem {
                     url,
                     title: body["title"].as_str().map(str::to_owned),
                     state: Some(state.to_owned()),
+                    occurred_at,
                 });
             }
             Answer::Missing => {
@@ -727,6 +739,7 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             url: url.clone(),
             title: None,
             state: None,
+            occurred_at: None,
         })
         .collect();
     tauri::async_runtime::spawn_blocking(move || check_github_items(urls))

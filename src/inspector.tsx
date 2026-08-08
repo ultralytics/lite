@@ -86,6 +86,7 @@ interface GitHubItem {
   url: string;
   title: string | null;
   state: keyof typeof GITHUB_STATE | null;
+  occurredAt: string | null;
 }
 
 // The colors GitHub itself answers in, so a glance here reads the same as a glance there.
@@ -115,6 +116,21 @@ interface RepositoryGroup {
 
 function repositoryName(url: string) {
   return url.replace(/^https:\/\/[^/]+\//, "");
+}
+
+function relativeAge(timestamp: string) {
+  const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(timestamp)) / 1000));
+  if (seconds < 60) return seconds < 10 ? "just now" : `${seconds} sec ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} mo ago`;
+  const years = Math.floor(days / 365);
+  return `${years} yr ago`;
 }
 
 // The current worktree is the first repository. Links then join it or create one group in the order
@@ -149,6 +165,43 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
   }
   for (const group of groups.values()) group.items.sort((left, right) => Number(right.number) - Number(left.number));
   return [...groups.values()];
+}
+
+function GitHubItemList({ label, items }: { label: string; items: RepositoryGroup["items"] }) {
+  if (!items.length) return null;
+  return (
+    <div className="border-t">
+      <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">{label}</p>
+      <ItemGroup className="gap-0 pb-1">
+        {items.map(({ url, title, state, occurredAt, kind, number }) => (
+          <Item
+            key={url}
+            size="xs"
+            className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
+            render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
+          >
+            <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
+              {kind === "pull request" ? <GitPullRequest /> : <CircleDot />}
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle className="w-full underline-offset-2 group-hover/item:underline">
+                {title ?? `#${number}`}
+              </ItemTitle>
+              {title ? (
+                <div className="flex min-w-0 items-center gap-2">
+                  <ItemDescription className="min-w-0 flex-1 truncate font-mono">
+                    #{number}
+                    {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
+                  </ItemDescription>
+                  {state ? <Badge variant={GITHUB_STATE[state]}>{state}</Badge> : null}
+                </div>
+              ) : null}
+            </ItemContent>
+          </Item>
+        ))}
+      </ItemGroup>
+    </div>
+  );
 }
 
 // One list so a tab, its icon and the name every surface calls it by cannot drift apart, including the
@@ -447,6 +500,8 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
 }
 
 function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
+  const pullRequests = repository.items.filter((item) => item.kind === "pull request");
+  const issues = repository.items.filter((item) => item.kind === "issue");
   const header = (
     <>
       <GitHubLogomark className="size-5 shrink-0" />
@@ -476,14 +531,15 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
         <div className="flex items-center gap-2.5 px-3 py-2.5">{header}</div>
       )}
       {repository.branch ? (
-        <div className="flex items-center gap-2 border-t px-3 py-2">
+        <div className="flex items-center gap-2 px-3 py-2">
           <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate font-mono text-xs">{repository.branch}</span>
-          <Badge variant={repository.changes.length ? "secondary" : "outline"}>
-            {repository.changes.length
-              ? `${repository.changes.length}${repository.changesTruncated ? "+" : ""} changed`
-              : "Clean"}
-          </Badge>
+          {repository.changes.length ? (
+            <Badge variant="secondary">
+              {repository.changes.length}
+              {repository.changesTruncated ? "+" : ""} changed
+            </Badge>
+          ) : null}
         </div>
       ) : null}
       {repository.changes.length ? (
@@ -499,38 +555,8 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
           ))}
         </div>
       ) : null}
-      {repository.items.length ? (
-        <ItemGroup className="gap-0 border-t py-1">
-          {repository.items.map(({ url, title, state, kind, number }) => {
-            const label = kind === "pull request" ? "Pull request" : "Issue";
-            return (
-              <Item
-                key={url}
-                size="xs"
-                className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
-                render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
-              >
-                <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
-                  {kind === "pull request" ? <GitPullRequest /> : <CircleDot />}
-                </ItemMedia>
-                <ItemContent>
-                  <ItemTitle className="w-full underline-offset-2 group-hover/item:underline">
-                    {title ?? `${label} #${number}`}
-                  </ItemTitle>
-                  {title ? (
-                    <div className="flex min-w-0 items-center gap-2">
-                      <ItemDescription className="min-w-0 flex-1 truncate font-mono">
-                        {label} #{number}
-                      </ItemDescription>
-                      {state ? <Badge variant={GITHUB_STATE[state]}>{state}</Badge> : null}
-                    </div>
-                  ) : null}
-                </ItemContent>
-              </Item>
-            );
-          })}
-        </ItemGroup>
-      ) : null}
+      <GitHubItemList label="Pull requests" items={pullRequests} />
+      <GitHubItemList label="Issues" items={issues} />
     </section>
   );
 }
@@ -554,7 +580,7 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
       })
       // A link that could not be checked is still a link, so it is shown the way it was printed.
       .catch(() => {
-        if (!disposed) setItems(named.map((url) => ({ url, title: null, state: null })));
+        if (!disposed) setItems(named.map((url) => ({ url, title: null, state: null, occurredAt: null })));
       });
     return () => {
       disposed = true;
