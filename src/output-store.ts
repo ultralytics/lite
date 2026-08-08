@@ -5,6 +5,10 @@ const MAX_BYTES = 1_000_000;
 interface Buffer {
   chunks: Uint8Array[];
   size: number;
+  // Read as one stream, so neither a character nor a sequence split across two chunks is misread: the
+  // decoder holds a character's remaining bytes and the tail holds an unfinished sequence.
+  decoder: TextDecoder;
+  tail: string;
 }
 
 const buffers = new Map<string, Buffer>();
@@ -20,20 +24,13 @@ const TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // The same sequence begun but not yet terminated, which the chunk that ends it completes. Anything
 // longer than a title could be is no longer one, so the wait is given up rather than grown.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
-const PARTIAL = /\x1b(?:\][^\x07\x1b]*)?$/;
-const MAX_PARTIAL = 512;
-
-interface Stream {
-  decoder: TextDecoder;
-  partial: string;
-}
-
-const streams = new Map<string, Stream>();
+const UNTERMINATED = /\x1b(?:\][^\x07\x1b]*)?$/;
+const MAX_TAIL = 512;
 
 // Returns the last window title the chunk set, empty when it set none.
 export function appendOutput(sessionId: string, data: number[]): string {
   const bytes = new Uint8Array(data);
-  const buffer = buffers.get(sessionId) ?? { chunks: [], size: 0 };
+  const buffer = buffers.get(sessionId) ?? { chunks: [], size: 0, decoder: new TextDecoder(), tail: "" };
   buffer.chunks.push(bytes);
   buffer.size += bytes.byteLength;
   while (buffer.size > MAX_BYTES && buffer.chunks.length > 1) {
@@ -42,10 +39,7 @@ export function appendOutput(sessionId: string, data: number[]): string {
   }
   buffers.set(sessionId, buffer);
   for (const listener of listeners.get(sessionId) ?? []) listener(bytes);
-  // Decoded as one stream, so neither a character nor a sequence split across two chunks is misread.
-  const stream = streams.get(sessionId) ?? { decoder: new TextDecoder(), partial: "" };
-  streams.set(sessionId, stream);
-  const text = stream.partial + stream.decoder.decode(bytes, { stream: true });
+  const text = buffer.tail + buffer.decoder.decode(bytes, { stream: true });
   let title = "";
   let read = 0;
   TITLE.lastIndex = 0;
@@ -53,8 +47,8 @@ export function appendOutput(sessionId: string, data: number[]): string {
     title = match[1];
     read = TITLE.lastIndex;
   }
-  const partial = text.slice(read).match(PARTIAL)?.[0] ?? "";
-  stream.partial = partial.length > MAX_PARTIAL ? "" : partial;
+  const tail = text.slice(read).match(UNTERMINATED)?.[0] ?? "";
+  buffer.tail = tail.length > MAX_TAIL ? "" : tail;
   return title;
 }
 
@@ -80,5 +74,4 @@ export function readOutput(sessionId: string) {
 
 export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
-  streams.delete(sessionId);
 }
