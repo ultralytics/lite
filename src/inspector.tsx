@@ -527,7 +527,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
   const issues = repository.items.filter((item) => item.kind === "issue");
   const header = (
     <>
-      <span className="flex min-w-0 flex-1 basis-40 items-center gap-2.5">
+      <span className="flex min-w-0 w-full items-center gap-2.5">
         <GitHubLogomark className="size-5 shrink-0" />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">{repository.name}</span>
@@ -539,7 +539,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
         </span>
       </span>
       {repository.branch ? (
-        <span className="flex min-w-0 max-w-full items-center gap-1.5">
+        <span className="flex min-w-0 w-full items-center gap-1.5 pl-7.5">
           <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 truncate font-mono text-xs">{repository.branch}</span>
           {repository.changes.length ? (
