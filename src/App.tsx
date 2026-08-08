@@ -399,19 +399,27 @@ function startKimiConversation(sessionId: string) {
   const decoder = new TextDecoder();
   let seen = "";
   let sent = false;
+  // Subscribing replays everything the session has already said, so the greeting can arrive inside the
+  // subscribe call itself — before it has returned the way to undo it, and before there is a wait to
+  // call off. Both are named here so that asking early is a thing this can do rather than a crash.
+  let unsubscribe: (() => void) | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const send = () => {
     if (sent) return;
     sent = true;
-    unsubscribe();
+    unsubscribe?.();
     clearTimeout(timer);
     writeSession(sessionId, "/new\r");
   };
-  const unsubscribe = subscribeOutput(sessionId, (data) => {
+  unsubscribe = subscribeOutput(sessionId, (data) => {
     seen += decoder.decode(data, { stream: true });
     if (seen.includes("Welcome to Kimi")) send();
   });
+  // Already greeted: the listener is undone now, since there was nothing to undo when it ran, and no
+  // wait is started for a greeting that has been and gone.
+  if (sent) unsubscribe();
   // Its greeting may change; waiting forever for the words would be worse than asking a little late.
-  const timer = setTimeout(send, 15_000);
+  else timer = setTimeout(send, 15_000);
 }
 
 // A session opened to run one command is sent it once the program in it has finished arriving. A shell
@@ -433,6 +441,9 @@ function runOnStart(sessionId: string, command: string) {
     unsubscribe();
     writeSession(sessionId, `${command}\r`);
   };
+  // This waits rather than sends, which is also what keeps it safe: subscribing replays what the
+  // session has already said, so a listener that sent from here would be sending before the two lines
+  // below had run and before either of the things send() reaches for existed.
   const unsubscribe = subscribeOutput(sessionId, () => {
     window.clearTimeout(settle);
     settle = window.setTimeout(send, SETTLE_MS);
