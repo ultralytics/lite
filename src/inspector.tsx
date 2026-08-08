@@ -716,7 +716,7 @@ function missingUsage(session: Session): string {
   if (session.agent === "kimi") return "Kimi Code keeps session usage inside its own terminal view.";
   if (session.agent === "codex" && session.provider === "deepseek")
     return "DeepSeek publishes no account limits locally. Codex reports this session's usage in the terminal.";
-  if (session.agent === "claude") return "Usage appears after Claude reports its first update.";
+  if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
   return "This provider reports no usage locally.";
 }
 

@@ -2344,7 +2344,11 @@ async fn read_usage(
             usage
                 .windows
                 .retain(|window| window.resets_at.is_none_or(|reset| reset > now));
-            Ok((usage.context_tokens.is_some() || !usage.windows.is_empty()).then_some(usage))
+            Ok((usage.context_used_percent.is_some()
+                || usage.context_tokens.is_some_and(|tokens| tokens > 0)
+                || usage.cost_usd.is_some_and(|cost| cost > 0.0)
+                || !usage.windows.is_empty())
+            .then_some(usage))
         }
         "codex" => codex_usage(&codex_server).map(Some),
         "kimi" | "shell" => Ok(None),
