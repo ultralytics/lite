@@ -51,7 +51,7 @@ function Button({ className, variant = "default", size = "default", ...props }: 
 }
 
 // An icon button names itself in a tooltip rather than in the row, which is how every piece of Lite's
-// chrome is labelled. It composes the two components above; it does not restyle either.
+// chrome is labeled. It composes the two components above; it does not restyle either.
 function ActionIconButton({
   tooltip,
   tooltipSide,
