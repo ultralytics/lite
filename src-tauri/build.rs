@@ -15,8 +15,10 @@ fn git(args: &[&str]) -> Option<String> {
 fn main() {
     println!("cargo:rerun-if-env-changed=GITHUB_ACTIONS");
     println!("cargo:rerun-if-changed=../.git/HEAD");
-    // When the build was made, which for a release the workflow builds is the day it was published.
-    if let Some(date) = git(&["log", "-1", "--format=%cs"]) {
+    // When the build was made, which for a release the workflow builds is when it was published. Kept
+    // as a unix timestamp rather than a date so two builds made the same day can be told apart, and so
+    // whoever reads it can be shown it in their own zone rather than the one it was built in.
+    if let Some(date) = git(&["log", "-1", "--format=%ct"]) {
         println!("cargo:rustc-env=LITE_DATE={date}");
     }
     // A release is what the workflow builds, and anything else came off a working tree, so it carries

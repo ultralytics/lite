@@ -139,6 +139,21 @@ const RELEASE_NOTE = {
 
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
 
+// The build stamp arrives as unix seconds and is shown in the reader's own zone, to the minute: two
+// builds made the same day are told apart by the time, and never by the seconds.
+const formatStamp = new Intl.DateTimeFormat(undefined, {
+  year: "numeric",
+  month: "numeric",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+function buildStamp(seconds: string) {
+  const stamp = Number(seconds);
+  return seconds && Number.isFinite(stamp) ? formatStamp.format(stamp * 1000) : "";
+}
+
 // How long a session has to stay quiet before it counts as connected but idle rather than working.
 // Long enough that the gaps between an agent's own writes do not flicker the dot.
 const QUIET_MS = 1200;
@@ -466,6 +481,7 @@ function App() {
   // The tree a local build came from. A release came from no tree anyone here can see, and says so by
   // leaving this empty.
   const [repo, setRepo] = useState("");
+  const builtAt = buildStamp(built);
   const [release, setRelease] = useState<"checking" | "current" | "behind" | "unknown">("checking");
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
@@ -921,7 +937,7 @@ function App() {
           <VersionBadge
             version={version}
             commit={commit}
-            built={built}
+            built={builtAt}
             release={release}
             onCheck={() => void checkForUpdates()}
           />
@@ -1226,14 +1242,17 @@ function App() {
           ) : null}
         </ResizablePanelGroup>
         <Dialog open={updateOpen} onOpenChange={changeUpdateOpen}>
-          <DialogContent showCloseButton={updateStatus !== "checking" && updateStatus !== "installing"}>
+          <DialogContent
+            className="sm:max-w-lg"
+            showCloseButton={updateStatus !== "checking" && updateStatus !== "installing"}
+          >
             <DialogHeader>
               <div className="flex items-center gap-2">
                 <DialogTitle>Lite updates</DialogTitle>
                 <VersionBadge
                   version={version}
                   commit={commit}
-                  built={built}
+                  built={builtAt}
                   release={release}
                   onCheck={() => void checkForUpdates()}
                 />
@@ -1275,10 +1294,10 @@ function App() {
                       <dd className="truncate font-mono">{commit}</dd>
                     </>
                   ) : null}
-                  {built ? (
+                  {builtAt ? (
                     <>
                       <dt className="text-muted-foreground">{commit ? "Built" : "Released"}</dt>
-                      <dd className="truncate">{built}</dd>
+                      <dd className="truncate">{builtAt}</dd>
                     </>
                   ) : null}
                   {repo ? (
