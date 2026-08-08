@@ -692,20 +692,23 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
     };
   }, [named, sessionId]);
 
-  const refresh = useCallback(async () => {
-    setError("");
-    try {
-      const next = await invoke<GitStatus | null>("git_status", { rootId });
-      gitStatusCache.set(rootId, next);
-      setStatus(next);
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }, [rootId]);
-
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    let disposed = false;
+    setError("");
+    void invoke<GitStatus | null>("git_status", { rootId })
+      .then((next) => {
+        if (!disposed) {
+          gitStatusCache.set(rootId, next);
+          setStatus(next);
+        }
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [rootId]);
 
   const repositories = repositoryGroups(remote, status ?? null, items ?? []);
 
@@ -748,24 +751,27 @@ function UsagePanel({ session }: { session: Session }) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
 
-  const refresh = useCallback(async () => {
-    setError("");
-    try {
-      const next = await invoke<UsageSnapshot | null>("read_usage", {
-        agent: session.agent,
-        provider: session.provider,
-        sessionId: session.id,
-      });
-      usageCache.set(session.id, next);
-      setUsage(next);
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }, [session.agent, session.provider, session.id]);
-
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    let disposed = false;
+    setError("");
+    void invoke<UsageSnapshot | null>("read_usage", {
+      agent: session.agent,
+      provider: session.provider,
+      sessionId: session.id,
+    })
+      .then((next) => {
+        if (!disposed) {
+          usageCache.set(session.id, next);
+          setUsage(next);
+        }
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [session.agent, session.provider, session.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
