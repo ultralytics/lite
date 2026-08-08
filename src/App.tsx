@@ -1625,7 +1625,20 @@ function App() {
             <ResizablePanel defaultSize="55%" minSize="38%">
               <section className="flex h-full min-w-0 flex-col">
                 {selected ? (
-                  <div className="min-h-0 flex-1">
+                  <div className="relative min-h-0 flex-1">
+                    {selected.running ? (
+                      <ActionIconButton
+                        variant="outline"
+                        size="icon-sm"
+                        className="absolute top-2 right-2 z-10 bg-background/90 hover:text-destructive"
+                        tooltip="Close session"
+                        tooltipSide="left"
+                        aria-label={`Close ${selected.name}`}
+                        onClick={() => closeSession(selected)}
+                      >
+                        <Trash2 />
+                      </ActionIconButton>
+                    ) : null}
                     {selected.running ? (
                       <Suspense fallback={<div className="h-full bg-background" />}>
                         <TerminalView
