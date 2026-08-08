@@ -1198,17 +1198,10 @@ function App() {
     }
     await launch(fresh, false);
     if (fresh.agent === "kimi") startKimiConversation(fresh.id);
-    return fresh;
   }
 
   async function restartAllSessions() {
-    const current = sessions;
-    const restarted = await Promise.all(current.map((session) => restartSession(session, false)));
-    const active = restarted[current.findIndex((session) => session.id === selectedId)];
-    if (active) {
-      resumed.current = active.id;
-      setSelectedId(active.id);
-    }
+    await Promise.all(sessions.map((session) => restartSession(session, session.id === selectedId)));
   }
 
   async function closeSession(session: Session) {
