@@ -926,6 +926,13 @@ function App() {
     applyTheme(theme);
   }, [theme]);
 
+  useEffect(() => {
+    const preference = window.matchMedia("(prefers-color-scheme: dark)");
+    const sync = () => setTheme(preference.matches ? "dark" : "light");
+    preference.addEventListener("change", sync);
+    return () => preference.removeEventListener("change", sync);
+  }, []);
+
   // Fullscreen hides the window buttons, so the room the bar keeps for them goes with them.
   useEffect(() => {
     if (document.documentElement.dataset.titlebar === undefined) return;
