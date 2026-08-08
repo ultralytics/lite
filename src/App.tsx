@@ -666,9 +666,10 @@ function SessionRow({
     <Item
       data-context-session={session.id}
       size="xs"
+      onClick={onSelect}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`flex-nowrap ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
+      className={`flex-nowrap active:opacity-70 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge session={session} active={active} starting={starting} working={working} />
@@ -690,24 +691,33 @@ function SessionRow({
           }}
         />
       ) : (
-        /* Clicking a session opens it, and a stopped one comes back with it. Only the session already
-           open and running reads a click as a rename, so a name is still reachable without a menu and
-           a click never surprises you with a text field. */
-        <button
-          type="button"
-          className="min-w-0 flex-1 text-left"
-          onClick={() => (active && session.running ? onRenamingChange(true) : onSelect())}
-          onDoubleClick={() => onRenamingChange(true)}
-          title={session.cwd}
-        >
-          <span className="block truncate text-xs font-medium">{session.name}</span>
-          <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
+        <div className="min-w-0 flex-1 text-left">
+          {/* Only the visible title owns rename; its hit area stops where its text stops. */}
+          <button
+            type="button"
+            className="block w-fit max-w-full truncate text-xs font-medium"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (active && session.running) onRenamingChange(true);
+              else onSelect();
+            }}
+            onDoubleClick={() => onRenamingChange(true)}
+          >
+            {session.name}
+          </button>
+          <div
+            className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
+            title={session.cwd}
+          >
             {shortPath(session.cwd)}
-          </span>
-        </button>
+          </div>
+        </div>
       )}
       {/* Hidden rather than transparent, so the text gets the whole row until the actions appear. */}
-      <ItemActions className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex">
+      <ItemActions
+        className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex"
+        onClick={(event) => event.stopPropagation()}
+      >
         <ActionIconButton
           size="icon-sm"
           tooltip="Restart"
