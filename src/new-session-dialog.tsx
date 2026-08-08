@@ -6,7 +6,7 @@ import { type FormEvent, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
-import { ActionIconButton, Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogBody,
@@ -16,7 +16,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+  FieldLegend,
+  FieldSet,
+} from "@/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { type Agent, type ModelProvider, type Session, sessionLabel } from "@/types";
@@ -42,9 +52,6 @@ const choices: Choice[] = [
   { id: "kimi", agent: "kimi", description: "Use your Kimi Code account" },
   { id: "shell", agent: "shell", description: "Open your default shell" },
 ];
-
-// The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
-const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
 interface DirectoryGrant {
   id: string;
@@ -177,76 +184,90 @@ export function NewSessionDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
-      <DialogContent size="lg">
-        <form onSubmit={submit}>
-          <DialogHeader>
-            <DialogTitle>New session</DialogTitle>
-            <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
-          </DialogHeader>
-          <DialogBody className="space-y-4">
-            <div className="space-y-1.5">
-              <label htmlFor="project-folder" className={SECTION}>
-                Project folder
-              </label>
-              <div className="flex gap-2">
-                <Input
-                  id="project-folder"
-                  value={path}
-                  className="min-w-0 flex-1 font-mono"
-                  placeholder="Type or choose a project folder"
-                  onChange={(event) => setPath(event.target.value)}
-                />
-                <ActionIconButton
-                  variant="outline"
-                  size="icon"
-                  tooltip="Browse"
-                  aria-label="Browse for a folder"
-                  onClick={chooseFolder}
-                >
-                  <FolderOpen />
-                </ActionIconButton>
-              </div>
-            </div>
-            <fieldset className="space-y-1.5">
-              <legend className={SECTION}>Agent</legend>
-              <div className="space-y-1">
-                {choices.map((option) => {
-                  const state = availability[option.id];
-                  const active = option.id === choiceId;
-                  const row = (
-                    <button
-                      key={option.id}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => (active && ready ? start() : setChoiceId(option.id))}
-                      className={`flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors ${active ? "border-ring bg-accent" : "border-transparent hover:bg-muted/60"}`}
-                    >
-                      {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
-                        <ProviderIcon agent={option.agent} provider={option.provider} />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
-                        <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
-                      </span>
-                      {state && !state.available ? <Badge variant="outline">Not set up</Badge> : null}
-                      <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
-                    </button>
-                  );
-                  return option.note ? (
-                    <Tooltip key={option.id}>
-                      <TooltipTrigger render={row} />
-                      <TooltipContent className="max-w-64">{option.note}</TooltipContent>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>New session</DialogTitle>
+          <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <DialogBody>
+            <FieldGroup>
+              <Field>
+                <FieldLabel htmlFor="project-folder">Project folder</FieldLabel>
+                <InputGroup>
+                  <InputGroupInput
+                    id="project-folder"
+                    value={path}
+                    className="font-mono"
+                    placeholder="Type or choose a project folder"
+                    onChange={(event) => setPath(event.target.value)}
+                  />
+                  <InputGroupAddon align="inline-end">
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <InputGroupButton
+                            size="icon-xs"
+                            aria-label="Browse for a folder"
+                            onClick={() => void chooseFolder()}
+                          />
+                        }
+                      >
+                        <FolderOpen />
+                      </TooltipTrigger>
+                      <TooltipContent>Browse</TooltipContent>
                     </Tooltip>
-                  ) : (
-                    row
-                  );
-                })}
-              </div>
-              {missing ? <p className="text-xs text-muted-foreground">{missing.detail}</p> : null}
-            </fieldset>
-            {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+                  </InputGroupAddon>
+                </InputGroup>
+              </Field>
+              <FieldSet>
+                <FieldLegend variant="label">Agent</FieldLegend>
+                <ItemGroup>
+                  {choices.map((option) => {
+                    const state = availability[option.id];
+                    const active = option.id === choiceId;
+                    const row = (
+                      <Item
+                        key={option.id}
+                        variant="outline"
+                        className={active ? "border-ring bg-accent" : "hover:bg-muted/60"}
+                        render={
+                          <button
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => (active && ready ? start() : setChoiceId(option.id))}
+                          />
+                        }
+                      >
+                        <ItemMedia>
+                          {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
+                          <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+                            <ProviderIcon agent={option.agent} provider={option.provider} />
+                          </span>
+                        </ItemMedia>
+                        <ItemContent>
+                          <ItemTitle>{sessionLabel(option)}</ItemTitle>
+                          <ItemDescription>{option.description}</ItemDescription>
+                        </ItemContent>
+                        {state && !state.available ? <Badge variant="outline">Not set up</Badge> : null}
+                        <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
+                      </Item>
+                    );
+                    return option.note ? (
+                      <Tooltip key={option.id}>
+                        <TooltipTrigger render={row} />
+                        <TooltipContent className="max-w-64">{option.note}</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      row
+                    );
+                  })}
+                </ItemGroup>
+                {missing ? <FieldDescription>{missing.detail}</FieldDescription> : null}
+              </FieldSet>
+              {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
+              <FieldError>{error}</FieldError>
+            </FieldGroup>
           </DialogBody>
           <DialogFooter>
             <Button variant="outline" onClick={() => changeOpen(false)}>

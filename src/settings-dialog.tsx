@@ -5,6 +5,7 @@ import { Check, Eye, EyeOff, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
+import { Badge } from "@/components/ui/badge";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -15,7 +16,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemFooter,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
 import type { Agent, ModelProvider } from "@/types";
 
@@ -110,6 +121,15 @@ export function SettingsDialog({
     if (!open) setDrafts((current) => ({ ...current, [id]: "" }));
   }
 
+  function reveal(id: string) {
+    setRevealed((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   async function save(id: string) {
     setError("");
     setBusy(id);
@@ -140,7 +160,7 @@ export function SettingsDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent size="lg">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>API keys</DialogTitle>
           <DialogDescription>
@@ -148,107 +168,118 @@ export function SettingsDialog({
             on this computer in Lite's data folder and reach a session through its provider's environment variable.
           </DialogDescription>
         </DialogHeader>
-        <DialogBody className="space-y-3">
-          {providers.map((option) => {
-            const status = auth?.find((entry) => entry.name === option.id);
-            const open = editing.has(option.id);
-            const draft = drafts[option.id] ?? "";
-            return (
-              <div key={option.id} className="flex items-center gap-3">
-                <ProviderIcon agent={option.agent} provider={option.provider} className="size-5 shrink-0" />
-                <span className="w-32 shrink-0">
-                  <span className="block text-sm font-medium">{option.label}</span>
-                  <span className="block font-mono text-[10px] text-muted-foreground">{option.variable}</span>
-                </span>
-                {open ? (
-                  <>
-                    <span className="relative flex min-w-0 flex-1 items-center">
-                      <Input
-                        autoFocus={editing.has(option.id)}
-                        type={revealed.has(option.id) ? "text" : "password"}
-                        value={draft}
-                        className="min-w-0 flex-1 pr-8 font-mono"
-                        placeholder="Paste a key"
-                        aria-label={`${option.label} API key`}
-                        onChange={(event) => setDrafts((current) => ({ ...current, [option.id]: event.target.value }))}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" && draft.trim()) void save(option.id);
-                          if (event.key === "Escape") edit(option.id, false);
-                        }}
-                      />
-                      <ActionIconButton
-                        variant="ghost"
-                        size="icon-sm"
-                        className="absolute right-0.5"
-                        tooltip={revealed.has(option.id) ? "Hide the key" : "Show the key"}
-                        aria-label={revealed.has(option.id) ? "Hide the key" : "Show the key"}
-                        onClick={() =>
-                          setRevealed((current) => {
-                            const next = new Set(current);
-                            if (next.has(option.id)) next.delete(option.id);
-                            else next.add(option.id);
-                            return next;
-                          })
-                        }
-                      >
-                        {revealed.has(option.id) ? <EyeOff /> : <Eye />}
-                      </ActionIconButton>
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={!draft.trim() || busy === option.id}
-                      onClick={() => void save(option.id)}
-                    >
-                      {busy === option.id ? <Spinner /> : null}
-                      Save
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
-                      Cancel
-                    </Button>
-                  </>
-                ) : (
-                  <>
-                    <span className="flex min-w-0 flex-1 items-center gap-1.5 text-xs text-muted-foreground">
+        <DialogBody>
+          <ItemGroup>
+            {providers.map((option) => {
+              const status = auth?.find((entry) => entry.name === option.id);
+              const open = editing.has(option.id);
+              const draft = drafts[option.id] ?? "";
+              const shown = revealed.has(option.id);
+              return (
+                <Item key={option.id} variant="outline">
+                  <ItemMedia variant="icon">
+                    <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+                  </ItemMedia>
+                  <ItemContent>
+                    <ItemTitle>
+                      {option.label}
+                      <Badge variant="outline" className="font-mono font-normal">
+                        {option.variable}
+                      </Badge>
+                    </ItemTitle>
+                    <ItemDescription>
                       {status?.keyHint ? (
-                        <>
-                          <Check className="size-3.5 shrink-0 text-emerald-500" />
-                          <span>Key saved</span>
+                        <span className="flex items-center gap-1.5">
+                          <Check className="size-3.5 shrink-0" />
+                          Key saved
                           <span className="font-mono">••••{status.keyHint}</span>
-                        </>
-                      ) : (
-                        <span className="truncate">
-                          {status ? (status.cliSignedIn ? option.signedIn : "Not set up") : "Checking…"}
                         </span>
+                      ) : status ? (
+                        status.cliSignedIn ? (
+                          option.signedIn
+                        ) : (
+                          "Not set up"
+                        )
+                      ) : (
+                        "Checking…"
                       )}
-                    </span>
-                    {!status?.keyHint && !status?.cliSignedIn && option.signIn ? (
-                      <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
-                        Sign in
+                    </ItemDescription>
+                  </ItemContent>
+                  {open ? null : (
+                    <ItemActions>
+                      {!status?.keyHint && !status?.cliSignedIn && option.signIn ? (
+                        <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
+                          Sign in
+                        </Button>
+                      ) : null}
+                      <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
+                        {status?.keyHint ? "Replace" : "Use a key"}
                       </Button>
-                    ) : null}
-                    <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
-                      {status?.keyHint ? "Replace" : "Use a key"}
-                    </Button>
-                    {status?.keyHint ? (
-                      <ActionIconButton
-                        variant="ghost"
-                        size="icon-sm"
-                        className="hover:text-destructive"
-                        tooltip="Delete this key"
-                        aria-label={`Delete the ${option.label} key`}
-                        disabled={busy === option.id}
-                        onClick={() => void remove(option.id)}
+                      {status?.keyHint ? (
+                        <ActionIconButton
+                          size="icon-sm"
+                          className="hover:text-destructive"
+                          tooltip="Delete this key"
+                          aria-label={`Delete the ${option.label} key`}
+                          disabled={busy === option.id}
+                          onClick={() => void remove(option.id)}
+                        >
+                          {busy === option.id ? <Spinner /> : <Trash2 />}
+                        </ActionIconButton>
+                      ) : null}
+                    </ItemActions>
+                  )}
+                  {open ? (
+                    <ItemFooter>
+                      <InputGroup>
+                        <InputGroupInput
+                          autoFocus
+                          type={shown ? "text" : "password"}
+                          value={draft}
+                          className="font-mono"
+                          placeholder="Paste a key"
+                          aria-label={`${option.label} API key`}
+                          onChange={(event) =>
+                            setDrafts((current) => ({ ...current, [option.id]: event.target.value }))
+                          }
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" && draft.trim()) void save(option.id);
+                            if (event.key === "Escape") edit(option.id, false);
+                          }}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupButton
+                            size="icon-xs"
+                            aria-label={shown ? "Hide the key" : "Show the key"}
+                            onClick={() => reveal(option.id)}
+                          >
+                            {shown ? <EyeOff /> : <Eye />}
+                          </InputGroupButton>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={!draft.trim() || busy === option.id}
+                        onClick={() => void save(option.id)}
                       >
-                        {busy === option.id ? <Spinner /> : <Trash2 />}
-                      </ActionIconButton>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            );
-          })}
-          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+                        {busy === option.id ? <Spinner /> : null}
+                        Save
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
+                        Cancel
+                      </Button>
+                    </ItemFooter>
+                  ) : null}
+                </Item>
+              );
+            })}
+          </ItemGroup>
+          {error ? (
+            <p role="alert" className="mt-4 text-sm text-destructive">
+              {error}
+            </p>
+          ) : null}
         </DialogBody>
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)}>Done</Button>

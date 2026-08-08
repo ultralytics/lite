@@ -16,6 +16,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 
 import { Badge } from "@/components/ui/badge";
 import { ActionIconButton } from "@/components/ui/button";
+import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -80,22 +83,24 @@ const formatNumber = new Intl.NumberFormat(undefined, {
 
 function Loading({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-2 p-3 text-xs text-muted-foreground">
-      <Spinner className="size-3.5" />
+    <div className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
+      <Spinner />
       {label}
     </div>
   );
 }
 
-function Meter({ value }: { value: number }) {
+// A window that is nearly spent is the one thing here worth a color, so it recolors the bar it fills.
+function Meter({ label, value }: { label: string; value: number }) {
   const bounded = Math.max(0, Math.min(100, value));
   return (
-    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-      <div
-        className={`h-full rounded-full transition-[width] ${bounded >= 90 ? "bg-destructive" : "bg-foreground"}`}
-        style={{ width: `${bounded}%` }}
-      />
-    </div>
+    <Progress
+      value={bounded}
+      className={bounded >= 90 ? "[&_[data-slot=progress-indicator]]:bg-destructive" : undefined}
+    >
+      <ProgressLabel className="truncate">{label}</ProgressLabel>
+      <ProgressValue />
+    </Progress>
   );
 }
 
@@ -251,7 +256,6 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
           <File className="size-3.5 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1 truncate font-mono text-xs">{selected.name}</span>
           <ActionIconButton
-            variant="ghost"
             size="icon-sm"
             tooltip="Close file"
             aria-label="Close file"
@@ -304,71 +308,82 @@ function GitPanel({ rootId, sessionId }: { rootId: string; sessionId: string }) 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
-        <div className="p-3 text-xs">
+        <div className="p-3">
           {error ? (
-            <p className="text-destructive">{error}</p>
+            <p className="text-sm text-destructive">{error}</p>
           ) : status === undefined ? (
             <Loading label="Reading Git status…" />
           ) : status === null ? (
-            <p className="text-muted-foreground">This folder is not a Git repository.</p>
+            <Empty>
+              <EmptyHeader>
+                <EmptyDescription>This folder is not a Git repository.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
-            <>
-              <div className="space-y-2 rounded-lg border p-3">
-                <div className="flex items-center gap-2">
-                  <GitBranch className="size-3.5 shrink-0" />
-                  <span className="truncate font-mono font-medium">{status.branch}</span>
-                </div>
-                <p className="truncate font-mono text-muted-foreground" title={status.worktree}>
-                  {status.worktree}
-                </p>
+            <div className="flex flex-col gap-4">
+              <Item variant="outline">
+                <ItemMedia variant="icon">
+                  <GitBranch />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle className="font-mono">{status.branch}</ItemTitle>
+                  <ItemDescription className="font-mono" title={status.worktree}>
+                    {status.worktree}
+                  </ItemDescription>
+                </ItemContent>
                 <Badge variant={status.changes.length ? "secondary" : "outline"}>
                   {status.changes.length
                     ? `${status.changes.length}${status.changesTruncated ? "+" : ""} changed`
                     : "Clean"}
                 </Badge>
-              </div>
+              </Item>
               {status.changes.length ? (
-                <div className="mt-4">
-                  <p className="mb-2 font-medium">Changes</p>
+                <ItemGroup>
+                  <p className="text-sm font-medium">Changes</p>
                   {status.changes.map((change) => (
-                    <div key={change} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-muted">
-                      <span className="w-5 shrink-0 font-mono text-[11px] text-muted-foreground">
+                    <Item key={change} size="xs" className="hover:bg-muted">
+                      <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">
                         {change.slice(0, 2).trim()}
                       </span>
-                      <span className="truncate font-mono" title={change.slice(3)}>
+                      <span className="truncate font-mono text-sm" title={change.slice(3)}>
                         {change.slice(3)}
                       </span>
-                    </div>
+                    </Item>
                   ))}
-                </div>
+                </ItemGroup>
               ) : null}
-              <div className="mt-4">
-                <p className="mb-2 font-medium">Named in this session</p>
+              <ItemGroup>
+                <p className="text-sm font-medium">Named in this session</p>
                 {named.branches.map((branch) => (
-                  <div key={branch} className="flex items-center gap-2 rounded-md px-2 py-1.5">
-                    <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate font-mono">{branch}</span>
-                  </div>
+                  <Item key={branch} size="xs">
+                    <ItemMedia variant="icon" className="text-muted-foreground">
+                      <GitBranch />
+                    </ItemMedia>
+                    <span className="truncate font-mono text-sm">{branch}</span>
+                  </Item>
                 ))}
                 {named.pulls.map((url) => (
-                  <button
+                  <Item
                     key={url}
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-muted"
-                    title={url}
-                    onClick={() => void invoke("open_url", { url })}
+                    size="xs"
+                    className="hover:bg-muted"
+                    render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
                   >
-                    <GitPullRequest className="size-3.5 shrink-0 text-muted-foreground" />
-                    <span className="truncate font-mono underline-offset-2 hover:underline">{pullLabel(url)}</span>
-                  </button>
+                    <ItemMedia variant="icon" className="text-muted-foreground">
+                      <GitPullRequest />
+                    </ItemMedia>
+                    <span className="truncate font-mono text-sm underline-offset-2 hover:underline">
+                      {pullLabel(url)}
+                    </span>
+                  </Item>
                 ))}
                 {named.branches.length || named.pulls.length ? null : (
-                  <p className="px-2 text-muted-foreground">
+                  <ItemDescription>
                     Branches this session checked out and pull request links it printed appear here.
-                  </p>
+                  </ItemDescription>
                 )}
-              </div>
-            </>
+              </ItemGroup>
+            </div>
           )}
         </div>
       </ScrollArea>
@@ -412,60 +427,60 @@ function UsagePanel({ session }: { session: Session }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-3 p-3 text-xs">
+        <div className="p-3">
           {error ? (
-            <p className="text-destructive">{error}</p>
+            <p className="text-sm text-destructive">{error}</p>
           ) : usage === undefined ? (
             <Loading label="Reading provider usage…" />
           ) : usage === null ? (
-            <p className="text-muted-foreground">{missingUsage(session)}</p>
+            <Empty>
+              <EmptyHeader>
+                <EmptyDescription>{missingUsage(session)}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           ) : (
-            <>
+            <ItemGroup>
               {usage.contextUsedPercent != null ? (
-                <div className="rounded-lg border p-3">
-                  <div className="flex justify-between">
-                    <span>Session context</span>
-                    <span className="tabular-nums">{usage.contextUsedPercent.toFixed(0)}%</span>
-                  </div>
-                  <Meter value={usage.contextUsedPercent} />
+                <Item variant="outline" className="flex-col items-stretch">
+                  <Meter label="Session context" value={usage.contextUsedPercent} />
                   {usage.contextTokens != null ? (
-                    <p className="mt-2 text-muted-foreground tabular-nums">
+                    <ItemDescription className="tabular-nums">
                       {formatNumber.format(usage.contextTokens)}
                       {usage.contextWindow ? ` of ${formatNumber.format(usage.contextWindow)}` : ""} tokens
-                    </p>
+                    </ItemDescription>
                   ) : null}
                   {usage.costUsd != null ? (
-                    <p className="mt-1 text-muted-foreground tabular-nums">${usage.costUsd.toFixed(2)} session cost</p>
+                    <ItemDescription className="tabular-nums">${usage.costUsd.toFixed(2)} session cost</ItemDescription>
                   ) : null}
-                </div>
+                </Item>
               ) : (
-                <p className="text-muted-foreground">
+                <ItemDescription>
                   {session.agent === "codex" ? "The Codex CLI" : "This provider"} does not report per-session context.
-                </p>
+                </ItemDescription>
               )}
               {usage.windows.map((window) => (
-                <div key={`${window.label}-${window.windowMinutes ?? ""}`} className="rounded-lg border p-3">
-                  <div className="flex justify-between gap-2">
-                    <span className="truncate">{window.label}</span>
-                    <span className="tabular-nums">{window.usedPercent.toFixed(0)}%</span>
-                  </div>
-                  <Meter value={window.usedPercent} />
+                <Item
+                  key={`${window.label}-${window.windowMinutes ?? ""}`}
+                  variant="outline"
+                  className="flex-col items-stretch"
+                >
+                  <Meter label={window.label} value={window.usedPercent} />
                   {window.resetsAt != null ? (
-                    <p className="mt-2 text-muted-foreground">
-                      Resets {new Date(window.resetsAt * 1000).toLocaleString()}
-                    </p>
+                    <ItemDescription>Resets {new Date(window.resetsAt * 1000).toLocaleString()}</ItemDescription>
                   ) : null}
-                </div>
+                </Item>
               ))}
               {usage.lifetimeTokens != null ? (
-                <div className="rounded-lg border p-3">
-                  <p className="text-muted-foreground">Provider total</p>
-                  <p className="mt-1 text-lg font-medium tabular-nums">
-                    {formatNumber.format(usage.lifetimeTokens)} tokens
-                  </p>
-                </div>
+                <Item variant="outline">
+                  <ItemContent>
+                    <ItemDescription>Provider total</ItemDescription>
+                    <ItemTitle className="text-lg tabular-nums">
+                      {formatNumber.format(usage.lifetimeTokens)} tokens
+                    </ItemTitle>
+                  </ItemContent>
+                </Item>
               ) : null}
-            </>
+            </ItemGroup>
           )}
         </div>
       </ScrollArea>
@@ -495,7 +510,6 @@ export function Inspector({
   const rail = (
     <div className="flex animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200">
       <ActionIconButton
-        variant="ghost"
         size="icon-sm"
         tooltip="Expand panel"
         tooltipSide="left"
@@ -529,13 +543,7 @@ export function Inspector({
       <div className={collapsed ? "hidden" : "h-full"}>
         <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
           <div className="flex h-11 shrink-0 items-center gap-0.5 border-b pr-3 pl-1.5">
-            <ActionIconButton
-              variant="ghost"
-              size="icon-sm"
-              tooltip="Collapse panel"
-              aria-label="Collapse panel"
-              onClick={onCollapse}
-            >
+            <ActionIconButton size="icon-sm" tooltip="Collapse panel" aria-label="Collapse panel" onClick={onCollapse}>
               <ChevronRight />
             </ActionIconButton>
             <TabsList variant="line">
@@ -551,7 +559,6 @@ export function Inspector({
             <span className="ml-auto flex items-center">
               {tab === "usage" && session.agent === "shell" ? null : (
                 <ActionIconButton
-                  variant="ghost"
                   size="icon-sm"
                   tooltip="Refresh"
                   aria-label="Refresh"

@@ -44,7 +44,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
+import { Item, ItemActions, ItemMedia } from "@/components/ui/item";
 import {
   type PanelImperativeHandle,
   ResizableHandle,
@@ -296,51 +299,49 @@ function SessionRow({
   }
 
   return (
-    <div
-      className={`group flex items-center rounded-lg pr-1 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
+    <Item
+      size="xs"
+      className={active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2.5 py-1.5 pl-2">
+      <ItemMedia>
         <SessionBadge session={session} active={active} starting={starting} working={working} />
-        {renaming ? (
-          <span className="min-w-0 flex-1 py-0.5">
-            <Input
-              autoFocus
-              value={name}
-              className="px-1.5"
-              aria-label="Session name"
-              onChange={(event) => setName(event.target.value)}
-              onBlur={saveName}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") saveName();
-                if (event.key === "Escape") {
-                  setName(session.name);
-                  setRenaming(false);
-                }
-              }}
-            />
+      </ItemMedia>
+      {renaming ? (
+        <Input
+          autoFocus
+          value={name}
+          className="min-w-0 flex-1"
+          aria-label="Session name"
+          onChange={(event) => setName(event.target.value)}
+          onBlur={saveName}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") saveName();
+            if (event.key === "Escape") {
+              setName(session.name);
+              setRenaming(false);
+            }
+          }}
+        />
+      ) : (
+        /* Clicking a session opens it, and a stopped one comes back with it. Only the session already
+           open and running reads a click as a rename, so a name is still reachable without a menu and
+           a click never surprises you with a text field. */
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left"
+          onClick={() => (active && session.running ? setRenaming(true) : onSelect())}
+          onDoubleClick={() => setRenaming(true)}
+          title={session.cwd}
+        >
+          <span className="block truncate text-xs font-medium">{session.name}</span>
+          <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
+            {shortPath(session.cwd)}
           </span>
-        ) : (
-          /* Clicking a session opens it, and a stopped one comes back with it. Only the session already
-             open and running reads a click as a rename, so a name is still reachable without a menu and
-             a click never surprises you with a text field. */
-          <button
-            type="button"
-            className="min-w-0 flex-1 py-0.5 text-left"
-            onClick={() => (active && session.running ? setRenaming(true) : onSelect())}
-            onDoubleClick={() => setRenaming(true)}
-            title={session.cwd}
-          >
-            <span className="block truncate text-xs font-medium">{session.name}</span>
-            <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
-              {shortPath(session.cwd)}
-            </span>
-          </button>
-        )}
-      </div>
+        </button>
+      )}
       {/* Hidden rather than transparent, so a name gets the whole row until the pointer arrives. */}
-      <span className="hidden shrink-0 items-center group-hover:flex group-focus-within:flex">
+      <ItemActions className="hidden gap-0.5 group-hover/item:flex group-focus-within/item:flex">
         <ActionIconButton
-          variant="ghost"
           size="icon-sm"
           tooltip="Restart"
           aria-label={`Restart ${session.name}`}
@@ -350,7 +351,6 @@ function SessionRow({
           <RotateCcw />
         </ActionIconButton>
         <ActionIconButton
-          variant="ghost"
           size="icon-sm"
           className="hover:text-destructive"
           tooltip="Close session"
@@ -360,8 +360,8 @@ function SessionRow({
         >
           <Trash2 />
         </ActionIconButton>
-      </span>
-    </div>
+      </ItemActions>
+    </Item>
   );
 }
 
@@ -935,7 +935,6 @@ function App() {
                 <ScrollArea className="min-h-0 flex-1">
                   <div className="flex animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200">
                     <ActionIconButton
-                      variant="ghost"
                       size="icon-sm"
                       tooltip="Expand sessions"
                       tooltipSide="right"
@@ -945,7 +944,6 @@ function App() {
                       <ChevronRight />
                     </ActionIconButton>
                     <ActionIconButton
-                      variant="ghost"
                       size="icon-sm"
                       tooltip="New session"
                       tooltipSide="right"
@@ -981,12 +979,13 @@ function App() {
               ) : (
                 <>
                   {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
-                  <div className="flex h-9 shrink-0 items-center gap-0.5 pr-1.5 pl-2">
-                    <span className="relative min-w-0 flex-1">
-                      <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                      <Input
+                  <div className="flex h-11 shrink-0 items-center gap-0.5 pr-1.5 pl-2">
+                    <InputGroup>
+                      <InputGroupAddon>
+                        <Search />
+                      </InputGroupAddon>
+                      <InputGroupInput
                         value={query}
-                        className="h-7 pl-7 text-xs md:text-xs"
                         placeholder="Search sessions"
                         aria-label="Search sessions"
                         onChange={(event) => setQuery(event.target.value)}
@@ -994,9 +993,8 @@ function App() {
                           if (event.key === "Escape") setQuery("");
                         }}
                       />
-                    </span>
+                    </InputGroup>
                     <ActionIconButton
-                      variant="ghost"
                       size="icon-sm"
                       tooltip="New session"
                       aria-label="New session"
@@ -1005,7 +1003,6 @@ function App() {
                       <Plus />
                     </ActionIconButton>
                     <ActionIconButton
-                      variant="ghost"
                       size="icon-sm"
                       tooltip="Collapse sessions"
                       aria-label="Collapse sessions"
@@ -1064,36 +1061,47 @@ function App() {
                       />
                     </Suspense>
                   ) : startingIds.has(selected.id) ? (
-                    <div className="flex h-full flex-col items-center justify-center gap-3">
-                      <Spinner className="size-5 text-muted-foreground" />
-                      <p className="text-xs text-muted-foreground">Starting {sessionLabel(selected)}…</p>
-                    </div>
+                    <Empty className="h-full">
+                      <EmptyHeader>
+                        <EmptyMedia>
+                          <Spinner className="size-5 text-muted-foreground" />
+                        </EmptyMedia>
+                        <EmptyDescription>Starting {sessionLabel(selected)}…</EmptyDescription>
+                      </EmptyHeader>
+                    </Empty>
                   ) : (
-                    <div className="flex h-full flex-col items-center justify-center gap-3">
-                      <p className="text-xs text-muted-foreground">This session is not running.</p>
-                      <Button variant="outline" size="sm" onClick={() => void launch(selected, true)}>
-                        <Play />
-                        Resume session
-                      </Button>
-                    </div>
+                    <Empty className="h-full">
+                      <EmptyHeader>
+                        <EmptyTitle>This session is not running</EmptyTitle>
+                        <EmptyDescription>Resuming reopens it in the folder it was started in.</EmptyDescription>
+                      </EmptyHeader>
+                      <EmptyContent>
+                        <Button variant="outline" onClick={() => void launch(selected, true)}>
+                          <Play />
+                          Resume session
+                        </Button>
+                      </EmptyContent>
+                    </Empty>
                   )}
                 </div>
               ) : (
-                <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-                  <div className="flex size-12 items-center justify-center rounded-2xl border bg-muted">
-                    <SquareTerminal className="size-5" />
-                  </div>
-                  <div>
-                    <h1 className="text-sm font-medium">Start a session</h1>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                <Empty className="h-full">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon">
+                      <SquareTerminal />
+                    </EmptyMedia>
+                    <EmptyTitle>Start a session</EmptyTitle>
+                    <EmptyDescription>
                       Pick a project folder, then choose the agent that should work in it.
-                    </p>
-                  </div>
-                  <Button onClick={() => setNewSessionOpen(true)}>
-                    <Plus />
-                    New session
-                  </Button>
-                </div>
+                    </EmptyDescription>
+                  </EmptyHeader>
+                  <EmptyContent>
+                    <Button onClick={() => setNewSessionOpen(true)}>
+                      <Plus />
+                      New session
+                    </Button>
+                  </EmptyContent>
+                </Empty>
               )}
               {error ? (
                 <div className="flex shrink-0 items-start gap-2 border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -1197,7 +1205,7 @@ function App() {
           </DialogContent>
         </Dialog>
         <Dialog open={Boolean(closing)} onOpenChange={(open) => !open && setClosing(undefined)}>
-          <DialogContent size="sm">
+          <DialogContent>
             <DialogHeader>
               <DialogTitle>Close {closing?.name}?</DialogTitle>
               <DialogDescription>
