@@ -499,7 +499,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
               <Item
                 key={url}
                 size="xs"
-                className="flex-nowrap items-start rounded-none px-3 hover:bg-muted"
+                className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
                 render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
               >
                 <ItemMedia variant="icon" className="text-muted-foreground">
