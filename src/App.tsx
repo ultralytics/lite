@@ -208,7 +208,15 @@ function VersionBadge({
 function loadSessions(): Session[] {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Session[];
-    return stored.filter((session) => session.rootId).map((session) => ({ ...session, running: false }));
+    // A session stored before Lite read window titles kept no record of who named it, so a name it did
+    // not get from its folder is treated as the user's rather than replaced by the first title to arrive.
+    return stored
+      .filter((session) => session.rootId)
+      .map((session) => ({
+        ...session,
+        running: false,
+        renamed: session.renamed ?? session.name !== folderName(session.cwd),
+      }));
   } catch {
     return [];
   }
