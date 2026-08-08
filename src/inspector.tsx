@@ -140,6 +140,7 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
     group.items.push({ ...item, ...reference });
     groups.set(key, group);
   }
+  for (const group of groups.values()) group.items.sort((left, right) => Number(right.number) - Number(left.number));
   return [...groups.values()];
 }
 
