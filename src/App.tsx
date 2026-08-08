@@ -706,7 +706,8 @@ function SessionRow({
           </span>
         </button>
       )}
-      <ItemActions className="shrink-0 gap-0.5 opacity-0 group-hover/item:opacity-100 group-focus-within/item:opacity-100">
+      {/* Hidden rather than transparent, so the text gets the whole row until the actions appear. */}
+      <ItemActions className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex">
         <ActionIconButton
           size="icon-sm"
           tooltip="Restart"
