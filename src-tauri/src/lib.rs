@@ -1401,7 +1401,6 @@ fn agent_command(
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
-    name: &str,
 ) -> Result<CommandBuilder, String> {
     let mut command = match agent {
         "claude" => {
@@ -1409,7 +1408,9 @@ fn agent_command(
             if resume {
                 command.args(["--resume", session_id]);
             } else {
-                command.args(["--session-id", session_id, "--name", name]);
+                // Naming the session after its folder is the one thing that stops Claude Code from
+                // naming it after what it is doing, and that name is what the tab is titled with.
+                command.args(["--session-id", session_id]);
             }
             command
         }
@@ -1630,7 +1631,6 @@ async fn spawn_session(
     provider: Option<String>,
     mode: Option<String>,
     theme: Option<String>,
-    name: String,
     resume: bool,
     cols: u16,
     rows: u16,
@@ -1718,7 +1718,6 @@ async fn spawn_session(
             resume,
             &session_id,
             provider_session_id.as_deref(),
-            &name,
         )?
     };
     if !signing_in && agent == "claude" {

@@ -211,7 +211,15 @@ function VersionBadge({
 function loadSessions(): Session[] {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Session[];
-    return stored.filter((session) => session.rootId).map((session) => ({ ...session, running: false }));
+    // A session stored before Lite read window titles kept no record of who named it, so a name it did
+    // not get from its folder is treated as the user's rather than replaced by the first title to arrive.
+    return stored
+      .filter((session) => session.rootId)
+      .map((session) => ({
+        ...session,
+        running: false,
+        renamed: session.renamed ?? session.name !== folderName(session.cwd),
+      }));
   } catch {
     return [];
   }
@@ -405,9 +413,15 @@ function shortPath(cwd: string) {
 }
 
 // A tab named after its folder says nothing, and several in one folder say the same nothing, so the
-// first thing asked of the session becomes its subject. A name the user chose is left alone.
-function promptName(text: string) {
-  const words = text.replace(/\s+/g, " ").trim();
+// session says what it is about: the window title its program sets, or the first thing asked of a
+// program that sets none. A leading glyph is a spinner or a status mark rather than part of the
+// subject, and it changes several times a second while saying nothing the badge does not already say,
+// so the name is what follows it. A name the user chose is left alone.
+function subject(text: string) {
+  const words = text
+    .replace(/^[\p{S}\p{P}]\s+/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
   return words.length > 40 ? `${words.slice(0, 40).trimEnd()}…` : words;
 }
 
@@ -633,6 +647,24 @@ function App() {
     );
   }, []);
 
+  // A working session retitles itself several times a second, nearly always to what the tab already
+  // says, so the list it would re-render is handed back untouched unless the subject really changed.
+  // A sign-in tab says what it is for and is gone as soon as it is done. And not every title is a
+  // subject: a program with nothing of its own to say names the window after itself or after the
+  // folder it was started in, which the badge and the tab's own name already say, and taking those
+  // would undo the subject a tab had already been given.
+  const markTitle = useCallback((sessionId: string, title: string) => {
+    setSessions((current) => {
+      const session = current.find((item) => item.id === sessionId);
+      if (!session || session.mode || session.renamed) return current;
+      const name = subject(title);
+      if (!name || name === session.name || name === sessionLabel(session) || name === folderName(session.cwd)) {
+        return current;
+      }
+      return current.map((item) => (item.id === sessionId ? { ...item, name } : item));
+    });
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     let unlistenOutput: (() => void) | undefined;
@@ -640,7 +672,8 @@ function App() {
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        appendOutput(payload.sessionId, payload.data);
+        const title = appendOutput(payload.sessionId, payload.data);
+        if (title) markTitle(payload.sessionId, title);
         markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
@@ -667,7 +700,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [markWorking]);
+  }, [markWorking, markTitle]);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
     if (runs.current.has(session.id)) return;
@@ -685,7 +718,6 @@ function App() {
         provider: session.provider,
         mode: session.mode,
         theme: themeRef.current,
-        name: session.name,
         resume,
         cols: 100,
         rows: 30,
@@ -1053,7 +1085,7 @@ function App() {
                           onSelect={() => openRef.current(session)}
                           onRename={(name) =>
                             setSessions((current) =>
-                              current.map((item) => (item.id === session.id ? { ...item, name } : item)),
+                              current.map((item) => (item.id === session.id ? { ...item, name, renamed: true } : item)),
                             )
                           }
                           onRestart={() => void restartSession(session)}
@@ -1079,8 +1111,8 @@ function App() {
                         onPrompt={(text) =>
                           setSessions((current) =>
                             current.map((item) =>
-                              item.id === selected.id && item.name === folderName(item.cwd)
-                                ? { ...item, name: promptName(text) }
+                              item.id === selected.id && !item.renamed && item.name === folderName(item.cwd)
+                                ? { ...item, name: subject(text) }
                                 : item,
                             ),
                           )
