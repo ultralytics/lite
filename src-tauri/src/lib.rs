@@ -261,13 +261,20 @@ fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("last-directory"))
 }
 
-fn load_roots(app: &AppHandle) -> Roots {
-    let roots = roots_path(app)
+fn read_roots(path: &Path) -> HashMap<String, PathBuf> {
+    fs::read(path)
         .ok()
-        .and_then(|path| fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice::<HashMap<String, PathBuf>>(&bytes).ok())
-        .unwrap_or_default();
-    Roots(Mutex::new(roots))
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn load_roots(app: &AppHandle) -> Roots {
+    Roots(Mutex::new(
+        roots_path(app)
+            .as_deref()
+            .map(read_roots)
+            .unwrap_or_default(),
+    ))
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -344,7 +351,13 @@ fn update_roots(
 ) -> Result<(), String> {
     let path = roots_path(app)?;
     let mut roots = roots.0.lock().map_err(|error| error.to_string())?;
-    let mut next = roots.clone();
+    // A second copy of Lite writes this same file — a shell session inside Lite that launches the app
+    // is enough to make two. Writing this process's map alone would drop every grant the other one has
+    // made since startup, and the sessions holding them would be told their folder is no longer theirs.
+    // The file on disk is what every copy has agreed on, so the change goes on top of that, and grants
+    // this process is holding are restored in case an older copy of Lite has already dropped them.
+    let mut next = read_roots(&path);
+    next.extend(roots.iter().map(|(id, path)| (id.clone(), path.clone())));
     update(&mut next);
     write_atomic(
         &path,
