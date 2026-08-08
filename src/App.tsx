@@ -278,6 +278,22 @@ function SessionBadge({
   );
 }
 
+// The provider's own mark, at the size a page can be about rather than the size a row can carry. It is
+// the same mark the sidebar tile and the agent chooser wear, so a session looks like itself wherever it
+// is met; here it is what the empty terminal is waiting on, so it is the thing worth looking at. While
+// a session is still coming up the mark keeps a turning ring, which says starting without adding a
+// second object to the page for the eye to land on.
+function SessionMark({ session, busy = false }: { session: Session; busy?: boolean }) {
+  return (
+    <EmptyMedia variant="icon" className="relative size-14 rounded-2xl">
+      <ProviderIcon agent={session.agent} provider={session.provider} className="size-7" />
+      {busy ? (
+        <Spinner className="absolute -inset-1 size-auto text-muted-foreground/40" strokeWidth={1} aria-hidden="true" />
+      ) : null}
+    </EmptyMedia>
+  );
+}
+
 function SessionRow({
   session,
   active,
@@ -1161,15 +1177,15 @@ function App() {
                   ) : startingIds.has(selected.id) ? (
                     <Empty className="h-full">
                       <EmptyHeader>
-                        <EmptyMedia>
-                          <Spinner className="size-5 text-muted-foreground" />
-                        </EmptyMedia>
-                        <EmptyDescription>Starting {sessionLabel(selected)}…</EmptyDescription>
+                        <SessionMark session={selected} busy />
+                        <EmptyTitle>Starting {sessionLabel(selected)}…</EmptyTitle>
+                        <EmptyDescription>{shortPath(selected.cwd)}</EmptyDescription>
                       </EmptyHeader>
                     </Empty>
                   ) : (
                     <Empty className="h-full">
                       <EmptyHeader>
+                        <SessionMark session={selected} />
                         <EmptyTitle>This session is not running</EmptyTitle>
                         <EmptyDescription>Resuming reopens it in the folder it was started in.</EmptyDescription>
                       </EmptyHeader>
