@@ -70,6 +70,22 @@ function pullLabel(url: string) {
   return `${owner}/${repository} #${number}`;
 }
 
+// Every optional field arrives from Serde as null, never as a missing key. A state of null is a link
+// GitHub could not be asked about rather than one it disowned; those are dropped before they arrive.
+interface PullRequest {
+  url: string;
+  title: string | null;
+  state: keyof typeof PULL_STATE | null;
+}
+
+// The colors GitHub itself answers in, so a glance here reads the same as a glance there.
+const PULL_STATE = {
+  open: "success",
+  draft: "secondary",
+  merged: "purple",
+  closed: "error",
+} as const;
+
 // One list so a tab, its icon and the name every surface calls it by cannot drift apart, including the
 // rail the panel collapses to.
 const TABS = [
@@ -360,7 +376,26 @@ function GitPanel({ rootId, sessionId }: { rootId: string; sessionId: string }) 
   // rebuilds it, and nothing here watches the session between those two moments.
   const named = useMemo(() => namedInSession(sessionId), [sessionId]);
   const [status, setStatus] = useState<GitStatus | null>();
+  const [pulls, setPulls] = useState<PullRequest[]>();
   const [error, setError] = useState("");
+
+  // The panel is only built when the tab is opened and again whenever it is refreshed, so asking
+  // GitHub here asks it exactly on those two occasions and never between them.
+  useEffect(() => {
+    if (!named.pulls.length) return setPulls([]);
+    let disposed = false;
+    void invoke<PullRequest[]>("pull_requests", { urls: named.pulls })
+      .then((checked) => {
+        if (!disposed) setPulls(checked);
+      })
+      // A link that could not be checked is still a link, so it is shown the way it was printed.
+      .catch(() => {
+        if (!disposed) setPulls(named.pulls.map((url) => ({ url, title: null, state: null })));
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [named]);
 
   const refresh = useCallback(async () => {
     setError("");
@@ -408,51 +443,61 @@ function GitPanel({ rootId, sessionId }: { rootId: string; sessionId: string }) 
                 </Badge>
               </Item>
               {status.changes.length ? (
-                <ItemGroup>
+                <section className="flex flex-col gap-2">
                   <p className="text-sm font-medium">Changes</p>
-                  {status.changes.map((change) => (
-                    <Item key={change} size="xs" className="hover:bg-muted">
-                      <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">
-                        {change.slice(0, 2).trim()}
-                      </span>
-                      <span className="truncate font-mono text-sm" title={change.slice(3)}>
-                        {change.slice(3)}
-                      </span>
+                  <ItemGroup>
+                    {status.changes.map((change) => (
+                      <Item key={change} size="xs" className="hover:bg-muted">
+                        <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">
+                          {change.slice(0, 2).trim()}
+                        </span>
+                        <span className="truncate font-mono text-sm" title={change.slice(3)}>
+                          {change.slice(3)}
+                        </span>
+                      </Item>
+                    ))}
+                  </ItemGroup>
+                </section>
+              ) : null}
+              <section className="flex flex-col gap-2">
+                <p className="text-sm font-medium">Named in this session</p>
+                <ItemGroup>
+                  {named.branches.map((branch) => (
+                    <Item key={branch} size="xs">
+                      <ItemMedia variant="icon" className="text-muted-foreground">
+                        <GitBranch />
+                      </ItemMedia>
+                      <span className="truncate font-mono text-sm">{branch}</span>
+                    </Item>
+                  ))}
+                  {pulls?.map(({ url, title, state }) => (
+                    <Item
+                      key={url}
+                      size="xs"
+                      className="hover:bg-muted"
+                      render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
+                    >
+                      <ItemMedia variant="icon" className="text-muted-foreground">
+                        <GitPullRequest />
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle className="underline-offset-2 group-hover/item:underline">
+                          {title ?? pullLabel(url)}
+                        </ItemTitle>
+                        {title ? <ItemDescription className="font-mono">{pullLabel(url)}</ItemDescription> : null}
+                      </ItemContent>
+                      {state ? <Badge variant={PULL_STATE[state]}>{state}</Badge> : null}
                     </Item>
                   ))}
                 </ItemGroup>
-              ) : null}
-              <ItemGroup>
-                <p className="text-sm font-medium">Named in this session</p>
-                {named.branches.map((branch) => (
-                  <Item key={branch} size="xs">
-                    <ItemMedia variant="icon" className="text-muted-foreground">
-                      <GitBranch />
-                    </ItemMedia>
-                    <span className="truncate font-mono text-sm">{branch}</span>
-                  </Item>
-                ))}
-                {named.pulls.map((url) => (
-                  <Item
-                    key={url}
-                    size="xs"
-                    className="hover:bg-muted"
-                    render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
-                  >
-                    <ItemMedia variant="icon" className="text-muted-foreground">
-                      <GitPullRequest />
-                    </ItemMedia>
-                    <span className="truncate font-mono text-sm underline-offset-2 hover:underline">
-                      {pullLabel(url)}
-                    </span>
-                  </Item>
-                ))}
-                {named.branches.length || named.pulls.length ? null : (
+                {pulls === undefined && named.pulls.length ? <Loading label="Checking pull requests…" /> : null}
+                {/* Also what is left when every link a session printed turned out to name nothing. */}
+                {pulls && !named.branches.length && !pulls.length ? (
                   <ItemDescription>
                     Branches this session checked out and pull request links it printed appear here.
                   </ItemDescription>
-                )}
-              </ItemGroup>
+                ) : null}
+              </section>
             </div>
           )}
         </div>

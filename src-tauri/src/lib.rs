@@ -354,10 +354,10 @@ fn update_roots(
     // A second copy of Lite writes this same file — a shell session inside Lite that launches the app
     // is enough to make two. Writing this process's map alone would drop every grant the other one has
     // made since startup, and the sessions holding them would be told their folder is no longer theirs.
-    // The file on disk is what every copy has agreed on, so the change goes on top of that, and grants
-    // this process is holding are restored in case an older copy of Lite has already dropped them.
+    // So the change is made against the file rather than against the map this copy loaded at startup,
+    // and only the one grant it is adding or removing goes with it: re-asserting the rest would hand
+    // back the grants another copy has since revoked, which is the opposite of closing a session.
     let mut next = read_roots(&path);
-    next.extend(roots.iter().map(|(id, path)| (id.clone(), path.clone())));
     update(&mut next);
     write_atomic(
         &path,
@@ -569,7 +569,13 @@ async fn choose_directory(
     grant_directory(&app, &roots, path).map(Some)
 }
 
-fn directory_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+// A typed path is a folder like any other: it has to exist and it goes through the same grant.
+#[tauri::command]
+async fn use_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    path: String,
+) -> Result<DirectoryGrant, String> {
     let path = path.trim();
     let path = match path.strip_prefix('~') {
         Some(rest) => app
@@ -582,34 +588,104 @@ fn directory_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     if !path.is_dir() {
         return Err("That folder does not exist".into());
     }
-    fs::canonicalize(path).map_err(|error| error.to_string())
-}
-
-// A typed path is a folder like any other: it has to exist and it goes through the same grant.
-#[tauri::command]
-async fn use_directory(
-    app: AppHandle,
-    roots: State<'_, Roots>,
-    path: String,
-) -> Result<DirectoryGrant, String> {
-    let path = directory_path(&app, &path)?;
+    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
     grant_directory(&app, &roots, path)
 }
 
-// A grant belongs to the run that made it, and a session outlives the run it was made in. Restoring one
-// takes its folder again from the path the session itself carries, so the folder a session was already
-// working in keeps working after a restart. It opens nothing new: the path comes from the session rather
-// than from a picker, the sensitive-folder rule still refuses what it always refused, and a folder that
-// has since moved is left to say so. It is not the folder Lite offers next, so it is not remembered as one.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PullRequest {
+    url: String,
+    title: Option<String>,
+    state: Option<String>,
+}
+
+// The number and the repository a pull request link names, or nothing if the link is not one.
+fn pull_request_parts(url: &str) -> Option<(String, String, String)> {
+    let mut parts = url.strip_prefix("https://github.com/")?.split('/');
+    let owner = parts.next().filter(|part| !part.is_empty())?;
+    let repository = parts.next().filter(|part| !part.is_empty())?;
+    if parts.next()? != "pull" {
+        return None;
+    }
+    let number = parts.next()?;
+    if number.is_empty() || !number.chars().all(|digit| digit.is_ascii_digit()) {
+        return None;
+    }
+    Some((owner.to_owned(), repository.to_owned(), number.to_owned()))
+}
+
+// A pull request link is read back out of what a session printed, so a number mistyped into the
+// terminal reaches the panel looking exactly like one that exists. GitHub is the only thing that can
+// tell the two apart, and gh is how Lite asks: it is the tool that printed most of these links, it
+// already carries the sign-in a private repository needs, and asking it is not the same as reading
+// the sign-in itself. Only a 404 is an answer — the link names nothing and is dropped. Anything else
+// means the question went unanswered, so the link is shown exactly as it was, unlabelled: a laptop
+// offline, or gh not installed, is not evidence that a pull request does not exist.
 #[tauri::command]
-async fn restore_directory(
-    app: AppHandle,
-    roots: State<'_, Roots>,
-    path: String,
-) -> Result<DirectoryGrant, String> {
-    let path = directory_path(&app, &path)?;
-    grant_directory(&app, &roots, path)
+async fn pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
+    let gh = resolve_executable("gh");
+    let mut found = Vec::new();
+    for url in urls {
+        let Some((owner, repository, number)) = pull_request_parts(&url) else {
+            continue;
+        };
+        let Some(gh) = gh.as_ref() else {
+            found.push(PullRequest {
+                url,
+                title: None,
+                state: None,
+            });
+            continue;
+        };
+        let output = Command::new(gh)
+            .args(["api", &format!("repos/{owner}/{repository}/pulls/{number}")])
+            .output();
+        let Ok(output) = output else {
+            found.push(PullRequest {
+                url,
+                title: None,
+                state: None,
+            });
+            continue;
+        };
+        if !output.status.success() {
+            if String::from_utf8_lossy(&output.stderr).contains("HTTP 404") {
+                continue;
+            }
+            found.push(PullRequest {
+                url,
+                title: None,
+                state: None,
+            });
+            continue;
+        }
+        let Ok(body) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+            found.push(PullRequest {
+                url,
+                title: None,
+                state: None,
+            });
+            continue;
+        };
+        // Merged and draft are states of their own here; GitHub reports both beside an open or closed one.
+        let state = if body["merged"].as_bool() == Some(true) {
+            "merged"
+        } else if body["state"].as_str() == Some("closed") {
+            "closed"
+        } else if body["draft"].as_bool() == Some(true) {
+            "draft"
+        } else {
+            "open"
+        };
+        found.push(PullRequest {
+            url,
+            title: body["title"].as_str().map(str::to_owned),
+            state: Some(state.to_owned()),
+        });
+    }
+    found
 }
 
 #[tauri::command]
@@ -2293,7 +2369,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             choose_directory,
-            restore_directory,
+            pull_requests,
             use_directory,
             default_directory,
             revoke_directory,
