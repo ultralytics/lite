@@ -1855,9 +1855,11 @@ function App() {
                         runs.current.delete(session.id);
                         await invoke("stop_session", { sessionId: session.id });
                         await cleanupSession(session);
+                        setSessions((current) => current.filter((item) => item.id !== session.id));
+                        if (selectedId === session.id)
+                          setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
                       }),
                     ).then(() => {
-                      setSessions([]);
                       setSelectedId("");
                     });
                     setClosingAll(false);

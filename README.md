@@ -43,7 +43,7 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 1. Download the asset ending in `_darwin_aarch64.dmg` for an Apple silicon Mac.
 2. Open the disk image and drag **Lite** into **Applications**.
-3. Open Lite from **Applications**. If macOS blocks this first unsigned release, open **System Settings → Privacy & Security**, set **Allow applications from** to **App Store & Known Developers**, select **Open Anyway** for Lite, then confirm.
+3. Open Lite from **Applications**. If macOS blocks the unsigned app, open **System Settings → Privacy & Security**, set **Allow applications from** to **App Store & Known Developers**, select **Open Anyway** for Lite, then confirm.
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/a7d3a991-91f2-4d9b-ba57-a8d80bbc37f5" width="70%" alt="Approving Lite in macOS System Settings">
@@ -53,7 +53,7 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 1. Download the asset ending in `_windows_x64-setup.exe`.
 2. Run the installer, then open **Lite** from the Start menu.
-3. If Microsoft Defender SmartScreen appears for this early unsigned release, select **More info → Run anyway**.
+3. If Microsoft Defender SmartScreen appears for the unsigned app, select **More info → Run anyway**.
 
 ### Linux
 

@@ -43,7 +43,7 @@ Lite 刻意保持安静：空闲就是空闲。它不索引你的仓库、不监
 
 1. 在 Apple 芯片 Mac 上下载文件名以 `_darwin_aarch64.dmg` 结尾的资源。
 2. 打开磁盘映像，把 **Lite** 拖入 **Applications**。
-3. 从 **Applications** 打开 Lite。如果 macOS 拦截了这个尚未签名的早期版本，打开 **系统设置 → 隐私与安全性**，把 **允许以下来源的应用程序** 设为 **App Store 与已知开发者**，为 Lite 选择 **仍要打开**，然后确认。
+3. 从 **Applications** 打开 Lite。如果 macOS 拦截了这个未签名的应用，打开 **系统设置 → 隐私与安全性**，把 **允许以下来源的应用程序** 设为 **App Store 与已知开发者**，为 Lite 选择 **仍要打开**，然后确认。
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/a7d3a991-91f2-4d9b-ba57-a8d80bbc37f5" width="70%" alt="在 macOS 系统设置中允许打开 Lite">
@@ -53,7 +53,7 @@ Lite 刻意保持安静：空闲就是空闲。它不索引你的仓库、不监
 
 1. 下载文件名以 `_windows_x64-setup.exe` 结尾的资源。
 2. 运行安装程序，然后从开始菜单打开 **Lite**。
-3. 如果 Microsoft Defender SmartScreen 对这个尚未签名的早期版本弹出提示，选择 **更多信息 → 仍要运行**。
+3. 如果 Microsoft Defender SmartScreen 对这个未签名的应用弹出提示，选择 **更多信息 → 仍要运行**。
 
 ### Linux
 
