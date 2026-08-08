@@ -225,19 +225,15 @@ function menuContext(target: EventTarget | null): AppMenuContext {
 }
 
 function hasMenuItems(context: AppMenuContext): boolean {
-  return Boolean(
-    context.collapsePanel ||
-    context.collapseSessions ||
-    context.editable ||
-    context.expandPanel ||
-    context.expandSessions ||
-    context.newSession ||
-    context.refresh ||
-    context.selectedText ||
-    context.terminal ||
-    context.url ||
-    context.value,
-  );
+  return [
+    context.collapsePanel || context.collapseSessions,
+    context.editable,
+    context.expandPanel || context.expandSessions,
+    context.newSession || context.refresh,
+    context.selectedText,
+    context.terminal,
+    context.url || context.value,
+  ].some(Boolean);
 }
 
 function writeClipboard(text: string) {
@@ -271,14 +267,11 @@ function AppContextMenu() {
       : false;
   const terminalCopy = context.terminal?.dataset.contextCanCopy === "true";
   const linkGroup = Boolean(context.url || context.value);
-  const surfaceGroup = Boolean(
-    context.collapsePanel ||
-    context.collapseSessions ||
-    context.expandPanel ||
-    context.expandSessions ||
-    context.newSession ||
-    context.refresh,
-  );
+  const surfaceGroup = [
+    context.collapsePanel || context.collapseSessions,
+    context.expandPanel || context.expandSessions,
+    context.newSession || context.refresh,
+  ].some(Boolean);
   const editGroup = Boolean(context.terminal || context.editable || context.selectedText);
 
   function terminalCommand(command: string) {
