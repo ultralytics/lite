@@ -2365,8 +2365,8 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "No update is available.".to_string())?;
     // The download reports every chunk it receives, which is thousands of messages for a bar with a
     // hundred steps it can show, so only a percent the dialog has not already been given is worth
-    // sending. A server that never said how large the update is says nothing, and the bar stays
-    // indeterminate for the whole download rather than filling against a size nobody knows.
+    // sending. A server that never said how large the update is says nothing rather than filling a
+    // bar against a size nobody knows, and the dialog keeps its spinner for that download.
     let progress_app = app.clone();
     let mut downloaded = 0u64;
     let mut sent = 0;
