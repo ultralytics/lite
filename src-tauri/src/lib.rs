@@ -2295,10 +2295,11 @@ async fn read_usage(
                 Err(error) => return Err(error.to_string()),
             };
             // Claude's limits are account-wide, while its context and cost belong to this session.
-            // Use the newest limits Claude reported from any Lite session rather than hiding them
-            // when the selected session has not sent a message yet.
+            // Use Claude's newest report for each account-wide limit rather than hiding one when the
+            // selected session has not sent a message yet or another report omitted that window.
             if let Ok(entries) = fs::read_dir(directory) {
-                if let Some(windows) = entries
+                let mut latest = [None, None];
+                for (modified, window) in entries
                     .flatten()
                     .filter(|entry| {
                         entry.file_name().to_str().is_some_and(|name| {
@@ -2309,11 +2310,30 @@ async fn read_usage(
                         let modified = entry.metadata().ok()?.modified().ok()?;
                         let snapshot: UsageSnapshot =
                             serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
-                        (!snapshot.windows.is_empty()).then_some((modified, snapshot.windows))
+                        Some((modified, snapshot.windows))
                     })
-                    .max_by_key(|(modified, _)| *modified)
-                    .map(|(_, windows)| windows)
+                    .flat_map(|(modified, windows)| {
+                        windows.into_iter().map(move |window| (modified, window))
+                    })
                 {
+                    let index = match window.label.as_str() {
+                        "Current session" | "5 hour" => 0,
+                        "Current week" | "7 day" => 1,
+                        _ => continue,
+                    };
+                    if latest[index]
+                        .as_ref()
+                        .is_none_or(|(current, _)| modified > *current)
+                    {
+                        latest[index] = Some((modified, window));
+                    }
+                }
+                let windows: Vec<_> = latest
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, window)| window)
+                    .collect();
+                if !windows.is_empty() {
                     usage.windows = windows;
                 }
             }
