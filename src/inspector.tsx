@@ -5,6 +5,7 @@ import {
   ChartNoAxesColumn,
   ChevronLeft,
   ChevronRight,
+  CircleCheck,
   CircleDot,
   Container,
   Database,
@@ -25,7 +26,10 @@ import {
   FileVideo,
   Folder,
   GitBranch,
+  GitMerge,
   GitPullRequest,
+  GitPullRequestClosed,
+  GitPullRequestDraft,
   Hammer,
   type LucideIcon,
   RefreshCw,
@@ -133,6 +137,14 @@ function relativeAge(timestamp: string) {
   return `${years} yr ago`;
 }
 
+function GitHubItemIcon({ kind, state }: Pick<GitHubReference, "kind"> & Pick<GitHubItem, "state">) {
+  if (kind === "issue") return state === "closed" ? <CircleCheck /> : <CircleDot />;
+  if (state === "merged") return <GitMerge />;
+  if (state === "closed") return <GitPullRequestClosed />;
+  if (state === "draft") return <GitPullRequestDraft />;
+  return <GitPullRequest />;
+}
+
 // The current worktree is the first repository. Links then join it or create one group in the order
 // the session printed them, so neither a repeated URL nor a repeated repository repeats context.
 function repositoryGroups(remote: string, status: GitStatus | null, items: GitHubItem[]): RepositoryGroup[] {
@@ -181,7 +193,7 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
             render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
           >
             <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
-              {kind === "pull request" ? <GitPullRequest /> : <CircleDot />}
+              <GitHubItemIcon kind={kind} state={state} />
             </ItemMedia>
             <ItemContent>
               <ItemTitle className="w-full underline-offset-2 group-hover/item:underline">
