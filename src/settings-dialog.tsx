@@ -69,9 +69,9 @@ const providers: {
   {
     id: "kimi",
     agent: "kimi",
-    label: "Moonshot",
+    label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
-    signedIn: "Configured in Kimi Code",
+    signedIn: "Signed in through Kimi Code",
     signIn: true,
   },
 ];
