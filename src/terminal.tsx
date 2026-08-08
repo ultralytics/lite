@@ -7,7 +7,7 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 
-import { clearBufferedOutput, subscribeOutput, writeSession } from "@/output-store";
+import { subscribeOutput, writeSession } from "@/output-store";
 import type { Theme } from "@/theme";
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
@@ -121,30 +121,6 @@ export function TerminalView({
       }),
     );
     terminal.open(container);
-    const surface = container.parentElement;
-    const updateSelection = () => {
-      if (surface) surface.dataset.contextCanCopy = String(terminal.hasSelection());
-    };
-    const selection = terminal.onSelectionChange(updateSelection);
-    const copy = () => {
-      const text = terminal.getSelection();
-      if (text) void navigator.clipboard.writeText(text).catch(() => undefined);
-    };
-    const paste = () => {
-      void navigator.clipboard
-        .readText()
-        .then((text) => terminal.paste(text))
-        .catch(() => undefined);
-    };
-    const selectAll = () => terminal.selectAll();
-    const clear = () => {
-      clearBufferedOutput(sessionId);
-      terminal.clear();
-    };
-    surface?.addEventListener("lite:terminal-copy", copy);
-    surface?.addEventListener("lite:terminal-paste", paste);
-    surface?.addEventListener("lite:terminal-select-all", selectAll);
-    surface?.addEventListener("lite:terminal-clear", clear);
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
     // Typing, pasting, and the terminal's own answers to the program's cursor, focus, and color
@@ -202,12 +178,7 @@ export function TerminalView({
       window.clearTimeout(settle);
       observer.disconnect();
       input.dispose();
-      selection.dispose();
       unsubscribe();
-      surface?.removeEventListener("lite:terminal-copy", copy);
-      surface?.removeEventListener("lite:terminal-paste", paste);
-      surface?.removeEventListener("lite:terminal-select-all", selectAll);
-      surface?.removeEventListener("lite:terminal-clear", clear);
       terminal.dispose();
       terminalRef.current = null;
     };
@@ -224,7 +195,7 @@ export function TerminalView({
   // them past the edge, which also left the last row below the viewport where the scrollbar could
   // neither show nor reach it.
   return (
-    <div data-context-terminal data-context-can-copy="false" className="h-full w-full bg-background p-3">
+    <div data-context-terminal className="h-full w-full bg-background p-3">
       <div ref={containerRef} className="h-full w-full" />
     </div>
   );

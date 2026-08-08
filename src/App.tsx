@@ -10,17 +10,12 @@ import {
   ChevronRight,
   ClipboardPaste,
   Copy,
-  Eraser,
   ExternalLink,
   GitBranch,
   KeyRound,
   Link,
   Moon,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
   Pencil,
   Play,
   Plus,
@@ -171,7 +166,7 @@ type AppMenuContext = {
   newSession: HTMLButtonElement | null;
   refresh: HTMLButtonElement | null;
   selectedText: string;
-  terminal: HTMLElement | null;
+  sessionId: string;
   url: string;
   value: string;
   valueLabel: string;
@@ -186,7 +181,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   newSession: null,
   refresh: null,
   selectedText: "",
-  terminal: null,
+  sessionId: "",
   url: "",
   value: "",
   valueLabel: "",
@@ -203,7 +198,8 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const editable = target.closest<HTMLElement>("input, textarea, [contenteditable=true]");
   const link = target.closest<HTMLElement>("a[href], [data-context-url]");
   const value = target.closest<HTMLElement>("[data-context-value]");
-  const surface = target.closest<HTMLElement>("[data-context-surface]");
+  const session = target.closest<HTMLElement>("[data-context-session]");
+  const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
   const selectedText =
     editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement
       ? inputSelection(editable)
@@ -217,7 +213,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     newSession: surface?.querySelector<HTMLButtonElement>("[data-context-new-session]") ?? null,
     refresh: surface?.querySelector<HTMLButtonElement>("[data-context-refresh]") ?? null,
     selectedText,
-    terminal: target.closest<HTMLElement>("[data-context-terminal]"),
+    sessionId: session?.dataset.contextSession ?? "",
     url: link instanceof HTMLAnchorElement ? link.href : (link?.dataset.contextUrl ?? ""),
     value: value?.dataset.contextValue ?? "",
     valueLabel: value?.dataset.contextLabel ?? "Copy",
@@ -231,7 +227,7 @@ function hasMenuItems(context: AppMenuContext): boolean {
     context.expandPanel || context.expandSessions,
     context.newSession || context.refresh,
     context.selectedText,
-    context.terminal,
+    context.sessionId,
     context.url || context.value,
   ].some(Boolean);
 }
@@ -257,7 +253,23 @@ function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
     .catch(() => undefined);
 }
 
-function AppContextMenu() {
+function AppContextMenu({
+  sessions,
+  selectedId,
+  startingIds,
+  onSelectSession,
+  onRenameSession,
+  onRestartSession,
+  onCloseSession,
+}: {
+  sessions: Session[];
+  selectedId: string;
+  startingIds: Set<string>;
+  onSelectSession: (session: Session) => void;
+  onRenameSession: (session: Session) => void;
+  onRestartSession: (session: Session) => void;
+  onCloseSession: (session: Session) => void;
+}) {
   const [context, setContext] = useState(EMPTY_MENU_CONTEXT);
   const trigger = useRef<HTMLDivElement>(null);
   const shortcut = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
@@ -265,22 +277,19 @@ function AppContextMenu() {
     context.editable instanceof HTMLInputElement || context.editable instanceof HTMLTextAreaElement
       ? context.editable.readOnly || context.editable.disabled
       : false;
-  const terminalCopy = context.terminal?.dataset.contextCanCopy === "true";
+  const session = sessions.find((item) => item.id === context.sessionId);
   const linkGroup = Boolean(context.url || context.value);
   const surfaceGroup = [
     context.collapsePanel || context.collapseSessions,
     context.expandPanel || context.expandSessions,
     context.newSession || context.refresh,
   ].some(Boolean);
-  const editGroup = Boolean(context.terminal || context.editable || context.selectedText);
-
-  function terminalCommand(command: string) {
-    context.terminal?.dispatchEvent(new CustomEvent(`lite:terminal-${command}`));
-  }
+  const editGroup = Boolean(context.editable || context.selectedText);
 
   useEffect(() => {
     const show = (event: MouseEvent) => {
       if (!event.isTrusted) return;
+      if (event.target instanceof Element && event.target.closest("[data-context-terminal]")) return;
       event.preventDefault();
       const next = menuContext(event.target);
       if (!hasMenuItems(next)) return;
@@ -304,6 +313,37 @@ function AppContextMenu() {
         render={<div tabIndex={-1} aria-hidden className="pointer-events-none fixed size-px opacity-0" />}
       />
       <ContextMenuContent className="w-44">
+        {session ? (
+          <>
+            {session.id !== selectedId || !session.running ? (
+              <ContextMenuItem onClick={() => onSelectSession(session)}>
+                <Play />
+                {session.running ? "Open session" : "Resume session"}
+              </ContextMenuItem>
+            ) : null}
+            <ContextMenuItem onClick={() => onRenameSession(session)}>
+              <Pencil />
+              Rename
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => writeClipboard(session.cwd)}>
+              <Copy />
+              Copy path
+            </ContextMenuItem>
+            <ContextMenuSeparator />
+            <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onRestartSession(session)}>
+              <RotateCcw />
+              Restart
+            </ContextMenuItem>
+            <ContextMenuItem
+              variant="destructive"
+              disabled={startingIds.has(session.id)}
+              onClick={() => onCloseSession(session)}
+            >
+              <Trash2 />
+              Close session
+            </ContextMenuItem>
+          </>
+        ) : null}
         {context.url ? (
           <>
             <ContextMenuItem onClick={() => void invoke("open_url", { url: context.url })}>
@@ -337,54 +377,30 @@ function AppContextMenu() {
         ) : null}
         {context.expandSessions ? (
           <ContextMenuItem onClick={() => context.expandSessions?.click()}>
-            <PanelLeftOpen />
+            <ChevronRight />
             Expand sessions
           </ContextMenuItem>
         ) : null}
         {context.collapseSessions ? (
           <ContextMenuItem onClick={() => context.collapseSessions?.click()}>
-            <PanelLeftClose />
+            <ChevronLeft />
             Collapse sessions
           </ContextMenuItem>
         ) : null}
         {context.expandPanel ? (
           <ContextMenuItem onClick={() => context.expandPanel?.click()}>
-            <PanelRightOpen />
+            <ChevronLeft />
             Expand panel
           </ContextMenuItem>
         ) : null}
         {context.collapsePanel ? (
           <ContextMenuItem onClick={() => context.collapsePanel?.click()}>
-            <PanelRightClose />
+            <ChevronRight />
             Collapse panel
           </ContextMenuItem>
         ) : null}
         {(linkGroup || surfaceGroup) && editGroup ? <ContextMenuSeparator /> : null}
-        {context.terminal ? (
-          <>
-            <ContextMenuItem disabled={!terminalCopy} onClick={() => terminalCommand("copy")}>
-              <Copy />
-              Copy
-              <ContextMenuShortcut>{shortcut}C</ContextMenuShortcut>
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => terminalCommand("paste")}>
-              <ClipboardPaste />
-              Paste
-              <ContextMenuShortcut>{shortcut}V</ContextMenuShortcut>
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => terminalCommand("select-all")}>
-              <TextSelect />
-              Select all
-              <ContextMenuShortcut>{shortcut}A</ContextMenuShortcut>
-            </ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem onClick={() => terminalCommand("clear")}>
-              <Eraser />
-              Clear terminal
-            </ContextMenuItem>
-          </>
-        ) : context.editable ? (
+        {context.editable ? (
           <>
             <ContextMenuItem disabled={!context.selectedText || readonly} onClick={() => edit(context, "cut")}>
               <Scissors />
@@ -575,66 +591,6 @@ function SessionMark({ session, busy = false }: { session: Session; busy?: boole
   );
 }
 
-function SessionMenu({
-  session,
-  active,
-  starting,
-  children,
-  className,
-  onSelect,
-  onRename,
-  onRestart,
-  onClose,
-}: {
-  session: Session;
-  active: boolean;
-  starting: boolean;
-  children: ReactNode;
-  className?: string;
-  onSelect: () => void;
-  onRename: () => void;
-  onRestart: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <ContextMenu
-      onOpenChange={(open, details) => {
-        if (open && details.event.target instanceof Element && details.event.target.closest("input, textarea")) {
-          details.cancel();
-          details.allowPropagation();
-        }
-      }}
-    >
-      <ContextMenuTrigger className={className}>{children}</ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
-        {!active || !session.running ? (
-          <ContextMenuItem onClick={onSelect}>
-            <Play />
-            {session.running ? "Open session" : "Resume session"}
-          </ContextMenuItem>
-        ) : null}
-        <ContextMenuItem onClick={onRename}>
-          <Pencil />
-          Rename
-        </ContextMenuItem>
-        <ContextMenuItem onClick={() => writeClipboard(session.cwd)}>
-          <Copy />
-          Copy path
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuItem disabled={starting} onClick={onRestart}>
-          <RotateCcw />
-          Restart
-        </ContextMenuItem>
-        <ContextMenuItem variant="destructive" disabled={starting} onClick={onClose}>
-          <Trash2 />
-          Close session
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  );
-}
-
 function SessionRow({
   session,
   active,
@@ -668,82 +624,72 @@ function SessionRow({
   }
 
   return (
-    <SessionMenu
-      session={session}
-      active={active}
-      starting={starting}
-      className="w-full"
-      onSelect={onSelect}
-      onRename={() => onRenamingChange(true)}
-      onRestart={onRestart}
-      onClose={onClose}
+    <Item
+      data-context-session={session.id}
+      size="xs"
+      // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
+      // line takes the tooltip's anchor out from under the pointer that opened it.
+      className={`flex-nowrap ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
-      <Item
-        size="xs"
-        // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
-        // line takes the tooltip's anchor out from under the pointer that opened it.
-        className={`flex-nowrap ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
-      >
-        <ItemMedia>
-          <SessionBadge session={session} active={active} starting={starting} working={working} />
-        </ItemMedia>
-        {renaming ? (
-          <Input
-            autoFocus
-            value={name}
-            className="min-w-0 flex-1"
-            aria-label="Session name"
-            onChange={(event) => setName(event.target.value)}
-            onBlur={saveName}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") saveName();
-              if (event.key === "Escape") {
-                setName(session.name);
-                onRenamingChange(false);
-              }
-            }}
-          />
-        ) : (
-          /* Clicking a session opens it, and a stopped one comes back with it. Only the session already
+      <ItemMedia>
+        <SessionBadge session={session} active={active} starting={starting} working={working} />
+      </ItemMedia>
+      {renaming ? (
+        <Input
+          autoFocus
+          value={name}
+          className="min-w-0 flex-1"
+          aria-label="Session name"
+          onChange={(event) => setName(event.target.value)}
+          onBlur={saveName}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") saveName();
+            if (event.key === "Escape") {
+              setName(session.name);
+              onRenamingChange(false);
+            }
+          }}
+        />
+      ) : (
+        /* Clicking a session opens it, and a stopped one comes back with it. Only the session already
            open and running reads a click as a rename, so a name is still reachable without a menu and
            a click never surprises you with a text field. */
-          <button
-            type="button"
-            className="min-w-0 flex-1 text-left"
-            onClick={() => (active && session.running ? onRenamingChange(true) : onSelect())}
-            onDoubleClick={() => onRenamingChange(true)}
-            title={session.cwd}
-          >
-            <span className="block truncate text-xs font-medium">{session.name}</span>
-            <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
-              {shortPath(session.cwd)}
-            </span>
-          </button>
-        )}
-        {/* Hidden rather than transparent, so a name gets the whole row until the pointer arrives. */}
-        <ItemActions className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex">
-          <ActionIconButton
-            size="icon-sm"
-            tooltip="Restart"
-            aria-label={`Restart ${session.name}`}
-            disabled={starting}
-            onClick={onRestart}
-          >
-            <RotateCcw />
-          </ActionIconButton>
-          <ActionIconButton
-            size="icon-sm"
-            className="hover:text-destructive"
-            tooltip="Close session"
-            aria-label={`Close ${session.name}`}
-            disabled={starting}
-            onClick={onClose}
-          >
-            <Trash2 />
-          </ActionIconButton>
-        </ItemActions>
-      </Item>
-    </SessionMenu>
+        <button
+          type="button"
+          className="min-w-0 flex-1 text-left"
+          onClick={() => (active && session.running ? onRenamingChange(true) : onSelect())}
+          onDoubleClick={() => onRenamingChange(true)}
+          title={session.cwd}
+        >
+          <span className="block truncate text-xs font-medium">{session.name}</span>
+          <span className="mt-0.5 block truncate font-mono text-[10px] text-muted-foreground">
+            {shortPath(session.cwd)}
+          </span>
+        </button>
+      )}
+      {/* Hidden rather than transparent, so a name gets the whole row until the pointer arrives. */}
+      <ItemActions className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex">
+        <ActionIconButton
+          size="icon-sm"
+          tooltip="Restart"
+          aria-label={`Restart ${session.name}`}
+          disabled={starting}
+          onClick={onRestart}
+        >
+          <RotateCcw />
+        </ActionIconButton>
+        <ActionIconButton
+          size="icon-sm"
+          className="hover:text-destructive"
+          tooltip="Close session"
+          aria-label={`Close ${session.name}`}
+          disabled={starting}
+          onClick={onClose}
+        >
+          <Trash2 />
+        </ActionIconButton>
+      </ItemActions>
+    </Item>
   );
 }
 
@@ -1446,41 +1392,27 @@ function App() {
                       <Plus />
                     </ActionIconButton>
                     {sessions.map((session) => (
-                      <SessionMenu
-                        key={session.id}
-                        session={session}
-                        active={session.id === selectedId}
-                        starting={startingIds.has(session.id)}
-                        onSelect={() => openRef.current(session)}
-                        onRename={() => {
-                          openRef.current(session);
-                          setRenamingId(session.id);
-                          glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size));
-                        }}
-                        onRestart={() => void restartSession(session)}
-                        onClose={() => setClosing(session)}
-                      >
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <button
-                                type="button"
-                                aria-pressed={session.id === selectedId}
-                                className={`rounded-lg p-1 ${session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"}`}
-                                onClick={() => openRef.current(session)}
-                              />
-                            }
-                          >
-                            <SessionBadge
-                              session={session}
-                              active={session.id === selectedId}
-                              starting={startingIds.has(session.id)}
-                              working={working.has(session.id)}
+                      <Tooltip key={session.id}>
+                        <TooltipTrigger
+                          render={
+                            <button
+                              type="button"
+                              aria-pressed={session.id === selectedId}
+                              data-context-session={session.id}
+                              className={`rounded-lg p-1 ${session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"}`}
+                              onClick={() => openRef.current(session)}
                             />
-                          </TooltipTrigger>
-                          <TooltipContent side="right">{session.name}</TooltipContent>
-                        </Tooltip>
-                      </SessionMenu>
+                          }
+                        >
+                          <SessionBadge
+                            session={session}
+                            active={session.id === selectedId}
+                            starting={startingIds.has(session.id)}
+                            working={working.has(session.id)}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent side="right">{session.name}</TooltipContent>
+                      </Tooltip>
                     ))}
                   </div>
                 </ScrollArea>
@@ -1796,7 +1728,19 @@ function App() {
         </Dialog>
         <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
         <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
-        <AppContextMenu />
+        <AppContextMenu
+          sessions={sessions}
+          selectedId={selectedId}
+          startingIds={startingIds}
+          onSelectSession={(session) => openRef.current(session)}
+          onRenameSession={(session) => {
+            openRef.current(session);
+            setRenamingId(session.id);
+            if (shut.sidebar) glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size));
+          }}
+          onRestartSession={(session) => void restartSession(session)}
+          onCloseSession={setClosing}
+        />
       </div>
     </TooltipProvider>
   );
