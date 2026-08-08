@@ -96,6 +96,13 @@ const GITHUB_STATE = {
   closed: "error",
 } as const;
 
+const GITHUB_STATE_ICON = {
+  open: "text-success",
+  draft: "text-muted-foreground",
+  merged: "text-violet-700 dark:text-violet-400",
+  closed: "text-red-700 dark:text-red-400",
+} as const;
+
 interface RepositoryGroup {
   branch: string | null;
   changes: string[];
@@ -503,7 +510,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
                 className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
                 render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
               >
-                <ItemMedia variant="icon" className="text-muted-foreground">
+                <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
                   {kind === "pull request" ? <GitPullRequest /> : <CircleDot />}
                 </ItemMedia>
                 <ItemContent>
