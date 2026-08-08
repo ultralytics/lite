@@ -572,18 +572,16 @@ function SessionBadge({
   );
 }
 
-// The provider's own mark, at the size a page can be about rather than the size a row can carry. It is
-// the same mark the sidebar tile and the agent chooser wear, so a session looks like itself wherever it
-// is met; here it is what the empty terminal is waiting on, so it is the thing worth looking at. While
-// a session is still coming up the mark keeps a turning ring, which says starting without adding a
-// second object to the page for the eye to land on.
+// The provider's own mark, at the size a page can be about rather than the size a row can carry. While
+// it starts, that same centered surface becomes the progress indicator.
 function SessionMark({ session, busy = false }: { session: Session; busy?: boolean }) {
   return (
-    <EmptyMedia variant="icon" className="relative size-14 rounded-2xl">
-      <ProviderIcon agent={session.agent} provider={session.provider} className="size-7" />
+    <EmptyMedia variant="icon" className="size-14 rounded-2xl">
       {busy ? (
-        <Spinner className="absolute -inset-1 size-auto text-muted-foreground/40" strokeWidth={1} aria-hidden="true" />
-      ) : null}
+        <Spinner className="size-7 text-muted-foreground" aria-hidden="true" />
+      ) : (
+        <ProviderIcon agent={session.agent} provider={session.provider} className="size-7" />
+      )}
     </EmptyMedia>
   );
 }
