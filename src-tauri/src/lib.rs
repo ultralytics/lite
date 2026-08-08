@@ -2281,6 +2281,12 @@ fn local_commit() -> Option<&'static str> {
     option_env!("LITE_COMMIT")
 }
 
+// The tree a local build came from, which is the one place a rebuild of it can be run.
+#[tauri::command]
+fn local_repo() -> Option<&'static str> {
+    option_env!("LITE_REPO")
+}
+
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
     app.updater_builder()
@@ -2392,6 +2398,7 @@ pub fn run() {
             check_update,
             install_update,
             local_commit,
+            local_repo,
             build_date,
             local_update
         ])

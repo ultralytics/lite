@@ -397,6 +397,19 @@ function startKimiConversation(sessionId: string) {
   const timer = setTimeout(send, 15_000);
 }
 
+// A session opened to run one command is sent it once the program in it has drawn something, which for
+// a shell is its prompt. The pty would hold the bytes either way, but a command typed before the prompt
+// is printed lands above it and reads as though it were never run.
+function runOnStart(sessionId: string, command: string) {
+  const unsubscribe = subscribeOutput(sessionId, () => {
+    unsubscribe();
+    void invoke("write_session", {
+      sessionId,
+      data: Array.from(new TextEncoder().encode(`${command}\r`)),
+    });
+  });
+}
+
 function folderName(cwd: string) {
   return cwd.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
 }
@@ -833,6 +846,32 @@ function App() {
     }
   }
 
+  // A local build is rebuilt by running one command in the tree it came from, so Lite opens that tree
+  // in a shell and runs it there rather than building out of sight: a build that fails says why, in the
+  // place its output belongs, and the tab stays afterwards like any other.
+  async function rebuild() {
+    try {
+      const repo = await invoke<string | null>("local_repo");
+      if (!repo) throw new Error("This build did not record where it came from");
+      const folder = await invoke<{ id: string; path: string }>("use_directory", { path: repo });
+      const session: Session = {
+        id: crypto.randomUUID(),
+        agent: "shell",
+        cwd: folder.path,
+        rootId: folder.id,
+        name: "Rebuild Lite",
+        renamed: true,
+        running: false,
+      };
+      setUpdateOpen(false);
+      createSession(session);
+      runOnStart(session.id, "bun run local");
+    } catch (reason) {
+      setUpdateError(String(reason));
+      setUpdateStatus("error");
+    }
+  }
+
   async function installUpdate() {
     setUpdateStatus("installing");
     try {
@@ -1202,7 +1241,7 @@ function App() {
                   ? `Lite ${availableVersion} is ready. Updating stops running sessions; their tabs resume after restart.`
                   : null}
                 {updateStatus === "rebuild"
-                  ? `This build is ${commit} and the tree is now ${availableVersion}. Run bun run local to rebuild.`
+                  ? `This build is ${commit} and the tree is now ${availableVersion}. Rebuilding runs bun run local in a shell tab, and replaces this build when it finishes.`
                   : null}
                 {updateStatus === "current"
                   ? commit
@@ -1226,7 +1265,18 @@ function App() {
                 <Button onClick={() => void installUpdate()}>Install and restart</Button>
               </DialogFooter>
             ) : null}
-            {updateStatus === "current" || updateStatus === "rebuild" ? (
+            {updateStatus === "rebuild" ? (
+              <DialogFooter>
+                <Button variant="outline" onClick={() => changeUpdateOpen(false)}>
+                  Not now
+                </Button>
+                <Button onClick={() => void rebuild()}>
+                  <Play />
+                  Rebuild
+                </Button>
+              </DialogFooter>
+            ) : null}
+            {updateStatus === "current" ? (
               <DialogFooter>
                 <Button onClick={() => changeUpdateOpen(false)}>Done</Button>
               </DialogFooter>
