@@ -484,19 +484,25 @@ function GitPanel({ rootId, sessionId }: { rootId: string; sessionId: string }) 
                     <Item
                       key={url}
                       size="xs"
-                      className="hover:bg-muted"
+                      className="flex-nowrap items-start hover:bg-muted"
                       render={<button type="button" title={url} onClick={() => void invoke("open_url", { url })} />}
                     >
                       <ItemMedia variant="icon" className="text-muted-foreground">
                         <GitPullRequest />
                       </ItemMedia>
                       <ItemContent>
-                        <ItemTitle className="underline-offset-2 group-hover/item:underline">
+                        <ItemTitle className="w-full underline-offset-2 group-hover/item:underline">
                           {title ?? pullLabel(url)}
                         </ItemTitle>
-                        {title ? <ItemDescription className="font-mono">{pullLabel(url)}</ItemDescription> : null}
+                        {title ? (
+                          <div className="flex min-w-0 items-center gap-2">
+                            <ItemDescription className="min-w-0 flex-1 truncate font-mono">
+                              {pullLabel(url)}
+                            </ItemDescription>
+                            {state ? <Badge variant={PULL_STATE[state]}>{state}</Badge> : null}
+                          </div>
+                        ) : null}
                       </ItemContent>
-                      {state ? <Badge variant={PULL_STATE[state]}>{state}</Badge> : null}
                     </Item>
                   ))}
                 </ItemGroup>
