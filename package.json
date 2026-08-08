@@ -12,7 +12,7 @@
     "build": "tsgo --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "local": "tauri build --bundles app --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'",
+    "local": "tauri build --bundles app --config '{\"productName\":\"Lite Dev\",\"bundle\":{\"createUpdaterArtifacts\":false}}'",
     "check": "bun run lint && bun run typecheck",
     "format": "biome check --write .",
     "lint": "biome check . --diagnostic-level=error",
