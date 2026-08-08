@@ -301,7 +301,9 @@ function SessionRow({
   return (
     <Item
       size="xs"
-      className={active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}
+      // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
+      // line takes the tooltip's anchor out from under the pointer that opened it.
+      className={`flex-nowrap ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge session={session} active={active} starting={starting} working={working} />
@@ -340,7 +342,7 @@ function SessionRow({
         </button>
       )}
       {/* Hidden rather than transparent, so a name gets the whole row until the pointer arrives. */}
-      <ItemActions className="hidden gap-0.5 group-hover/item:flex group-focus-within/item:flex">
+      <ItemActions className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex">
         <ActionIconButton
           size="icon-sm"
           tooltip="Restart"

@@ -82,9 +82,25 @@ function highlighted(source: string, language?: string) {
   return source.replace(/[&<>]/g, (character) => (character === "&" ? "&amp;" : character === "<" ? "&lt;" : "&gt;"));
 }
 
-function HighlightedCode({ source, language }: { source: string; language?: string }) {
+function HighlightedCode({ source, language, className }: { source: string; language?: string; className?: string }) {
   const html = useMemo(() => highlighted(source, language), [source, language]);
-  return <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <code className={`hljs ${className ?? ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+// A gutter beside the source rather than a number on each line: a highlighted span may open on one line
+// and close on another, so the markup cannot be cut per line without tearing. Nothing here wraps, so a
+// column of numbers on the same leading stays level with the code, and it is skipped by a copy and by a
+// screen reader because it belongs to neither.
+function LineNumbers({ count }: { count: number }) {
+  const numbers = useMemo(() => Array.from({ length: count }, (_, index) => index + 1).join("\n"), [count]);
+  return (
+    <span
+      aria-hidden="true"
+      className="sticky left-0 shrink-0 border-r border-border bg-background py-4 pr-3 pl-4 text-right text-muted-foreground tabular-nums select-none"
+    >
+      {numbers}
+    </span>
+  );
 }
 
 export default function CodePreview({ path, source }: { path: string; source: string }) {
@@ -118,8 +134,9 @@ export default function CodePreview({ path, source }: { path: string; source: st
     );
   }
   return (
-    <pre className="min-h-full overflow-auto p-4 font-mono text-[12.5px] leading-5">
-      <HighlightedCode source={source} language={extensionLanguages[extension]} />
+    <pre className="flex min-h-full overflow-auto font-mono text-[12.5px] leading-5">
+      <LineNumbers count={source.split("\n").length} />
+      <HighlightedCode source={source} language={extensionLanguages[extension]} className="py-4 pr-4 pl-3" />
     </pre>
   );
 }
