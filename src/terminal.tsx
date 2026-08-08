@@ -7,7 +7,7 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 
-import { subscribeOutput } from "@/output-store";
+import { subscribeOutput, writeSession } from "@/output-store";
 import type { Theme } from "@/theme";
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
@@ -129,16 +129,6 @@ export function TerminalView({
     let typed = "";
     // An event can end mid-sequence, so an unfinished tail waits for the rest instead of being read.
     let pending = "";
-    // Each write goes out behind the one before it. Every call across the bridge is dispatched on its
-    // own task, so two sent in the same breath can reach the pty in either order, and bytes that arrive
-    // out of order are bytes nobody typed — a paste landing inside the keystroke that followed it, or a
-    // character ahead of the one before it. A write that fails is the session's to report and must not
-    // take the writes queued behind it down with it.
-    let writing: Promise<unknown> = Promise.resolve();
-    const write = (data: string) => {
-      const bytes = Array.from(new TextEncoder().encode(data));
-      writing = writing.then(() => invoke("write_session", { sessionId, data: bytes }).catch(() => {}));
-    };
     const input = terminal.onData((data) => {
       const buffer = pending + data;
       const partial = buffer.match(PARTIAL);
@@ -151,7 +141,7 @@ export function TerminalView({
         } else if (character === "\u007f") typed = typed.slice(0, -1);
         else if (character >= " ") typed += character;
       }
-      write(data);
+      writeSession(sessionId, data);
     });
     const resize = () => {
       fit.fit();

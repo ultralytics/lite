@@ -616,76 +616,100 @@ fn pull_request_parts(url: &str) -> Option<(String, String, String)> {
     Some((owner.to_owned(), repository.to_owned(), number.to_owned()))
 }
 
+// What GitHub had to say, as opposed to whether Lite managed to ask. Missing is the only answer that
+// removes a link, so everything that is merely a failure to ask has to arrive as Unknown instead.
+enum Answer {
+    Found(serde_json::Value),
+    Missing,
+    Unknown,
+}
+
+fn gh_api(gh: &Path, endpoint: &str) -> Answer {
+    let Ok(output) = Command::new(gh).args(["api", endpoint]).output() else {
+        return Answer::Unknown;
+    };
+    if output.status.success() {
+        return serde_json::from_slice(&output.stdout).map_or(Answer::Unknown, Answer::Found);
+    }
+    if String::from_utf8_lossy(&output.stderr).contains("HTTP 404") {
+        Answer::Missing
+    } else {
+        Answer::Unknown
+    }
+}
+
+// A session prints as many links as it prints, and each one checked is a round trip; past a point the
+// panel would be waiting on the network rather than saying what a session did. The rest are shown the
+// way they were printed.
+const CHECKED_PULL_REQUESTS: usize = 20;
+
 // A pull request link is read back out of what a session printed, so a number mistyped into the
 // terminal reaches the panel looking exactly like one that exists. GitHub is the only thing that can
 // tell the two apart, and gh is how Lite asks: it is the tool that printed most of these links, it
-// already carries the sign-in a private repository needs, and asking it is not the same as reading
-// the sign-in itself. Only a 404 is an answer — the link names nothing and is dropped. Anything else
-// means the question went unanswered, so the link is shown exactly as it was, unlabelled: a laptop
-// offline, or gh not installed, is not evidence that a pull request does not exist.
-#[tauri::command]
-async fn pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
+// carries whatever sign-in the person using it has, and asking it is not the same as reading that
+// sign-in. A link is only dropped on evidence that it names nothing; everything else is shown exactly
+// as it was printed, whether gh is missing, the laptop is offline, or the repository is one this
+// sign-in cannot see. That last case is why a 404 alone is not evidence: GitHub answers 404 for a
+// private repository it will not admit to as readily as for a number that was never a pull request.
+// So the repository is asked for too, and only a repository that can be read makes the number a
+// mistake — otherwise a sign-in to the wrong account would quietly delete real work from the panel.
+fn check_pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
     let gh = resolve_executable("gh");
     let mut found = Vec::new();
+    let mut checked = 0;
     for url in urls {
         let Some((owner, repository, number)) = pull_request_parts(&url) else {
             continue;
         };
-        let Some(gh) = gh.as_ref() else {
-            found.push(PullRequest {
-                url,
-                title: None,
-                state: None,
-            });
+        let unchecked = PullRequest {
+            url: url.clone(),
+            title: None,
+            state: None,
+        };
+        let (Some(gh), true) = (gh.as_ref(), checked < CHECKED_PULL_REQUESTS) else {
+            found.push(unchecked);
             continue;
         };
-        let output = Command::new(gh)
-            .args(["api", &format!("repos/{owner}/{repository}/pulls/{number}")])
-            .output();
-        let Ok(output) = output else {
-            found.push(PullRequest {
-                url,
-                title: None,
-                state: None,
-            });
-            continue;
-        };
-        if !output.status.success() {
-            if String::from_utf8_lossy(&output.stderr).contains("HTTP 404") {
-                continue;
+        checked += 1;
+        match gh_api(gh, &format!("repos/{owner}/{repository}/pulls/{number}")) {
+            Answer::Found(body) => {
+                // Merged and draft are states of their own; GitHub reports both beside open or closed.
+                let state = if body["merged"].as_bool() == Some(true) {
+                    "merged"
+                } else if body["state"].as_str() == Some("closed") {
+                    "closed"
+                } else if body["draft"].as_bool() == Some(true) {
+                    "draft"
+                } else {
+                    "open"
+                };
+                found.push(PullRequest {
+                    url,
+                    title: body["title"].as_str().map(str::to_owned),
+                    state: Some(state.to_owned()),
+                });
             }
-            found.push(PullRequest {
-                url,
-                title: None,
-                state: None,
-            });
-            continue;
+            Answer::Missing => {
+                if !matches!(
+                    gh_api(gh, &format!("repos/{owner}/{repository}")),
+                    Answer::Found(_)
+                ) {
+                    found.push(unchecked);
+                }
+            }
+            Answer::Unknown => found.push(unchecked),
         }
-        let Ok(body) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-            found.push(PullRequest {
-                url,
-                title: None,
-                state: None,
-            });
-            continue;
-        };
-        // Merged and draft are states of their own here; GitHub reports both beside an open or closed one.
-        let state = if body["merged"].as_bool() == Some(true) {
-            "merged"
-        } else if body["state"].as_str() == Some("closed") {
-            "closed"
-        } else if body["draft"].as_bool() == Some(true) {
-            "draft"
-        } else {
-            "open"
-        };
-        found.push(PullRequest {
-            url,
-            title: body["title"].as_str().map(str::to_owned),
-            state: Some(state.to_owned()),
-        });
     }
     found
+}
+
+// Each check waits on a process and a network round trip, so the run is moved off the runtime the rest
+// of Lite's commands share rather than holding one of its workers for the length of it.
+#[tauri::command]
+async fn pull_requests(urls: Vec<String>) -> Vec<PullRequest> {
+    tauri::async_runtime::spawn_blocking(move || check_pull_requests(urls))
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -2287,6 +2311,16 @@ fn local_repo() -> Option<&'static str> {
     option_env!("LITE_REPO")
 }
 
+// That same tree, opened for the one thing Lite does with it. The path is the one compiled into this
+// build rather than one handed in, and it deliberately does not go through use_directory: that records
+// what it opens as the folder to offer next, and rebuilding Lite is not the same as choosing to work
+// in it. The sensitive-folder rule still applies, as it does to every other grant.
+#[tauri::command]
+async fn grant_repo(app: AppHandle, roots: State<'_, Roots>) -> Result<DirectoryGrant, String> {
+    let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
+    grant_directory(&app, &roots, PathBuf::from(repo))
+}
+
 #[tauri::command]
 async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
     app.updater_builder()
@@ -2398,6 +2432,7 @@ pub fn run() {
             check_update,
             install_update,
             local_commit,
+            grant_repo,
             local_repo,
             build_date,
             local_update

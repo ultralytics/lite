@@ -1,5 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+import { invoke } from "@tauri-apps/api/core";
+
 const MAX_BYTES = 1_000_000;
 
 interface Buffer {
@@ -78,4 +80,26 @@ export function readOutput(sessionId: string) {
 
 export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
+  writes.delete(sessionId);
+}
+
+// Everything written to a session goes out behind whatever was written before it. Each call across the
+// bridge is dispatched on its own task, so two sent together can reach the pty in either order, and
+// bytes that arrive out of order are bytes nobody typed. The order is kept per session and kept here,
+// beside the buffers, so a terminal, a restart, and a command a tab was opened to run all share one
+// queue rather than each holding its own — an order that only covers the keyboard is not an order.
+const writes = new Map<string, Promise<unknown>>();
+
+export function writeSession(sessionId: string, text: string) {
+  const data = Array.from(new TextEncoder().encode(text));
+  writes.set(
+    sessionId,
+    (writes.get(sessionId) ?? Promise.resolve()).then(() =>
+      // A write that fails must not take the writes queued behind it with it, and a session whose pty
+      // has gone is reported by the session itself; this is the only record that a keystroke was lost.
+      invoke("write_session", { sessionId, data }).catch((reason) =>
+        console.error(`Lite could not write to session ${sessionId}:`, reason),
+      ),
+    ),
+  );
 }

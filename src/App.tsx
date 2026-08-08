@@ -61,7 +61,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
-import { appendOutput, clearOutput, subscribeOutput } from "@/output-store";
+import { appendOutput, clearOutput, subscribeOutput, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
 import { type Session, sessionLabel } from "@/types";
@@ -138,21 +138,6 @@ const RELEASE_NOTE = {
 } as const;
 
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
-
-// The build stamp arrives as unix seconds and is shown in the reader's own zone, to the minute: two
-// builds made the same day are told apart by the time, and never by the seconds.
-const formatStamp = new Intl.DateTimeFormat(undefined, {
-  year: "numeric",
-  month: "numeric",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-function buildStamp(seconds: string) {
-  const stamp = Number(seconds);
-  return seconds && Number.isFinite(stamp) ? formatStamp.format(stamp * 1000) : "";
-}
 
 // How long a session has to stay quiet before it counts as connected but idle rather than working.
 // Long enough that the gaps between an agent's own writes do not flicker the dot.
@@ -403,7 +388,7 @@ function startKimiConversation(sessionId: string) {
     sent = true;
     unsubscribe();
     clearTimeout(timer);
-    void invoke("write_session", { sessionId, data: Array.from(new TextEncoder().encode("/new\r")) });
+    writeSession(sessionId, "/new\r");
   };
   const unsubscribe = subscribeOutput(sessionId, (data) => {
     seen += decoder.decode(data, { stream: true });
@@ -413,17 +398,30 @@ function startKimiConversation(sessionId: string) {
   const timer = setTimeout(send, 15_000);
 }
 
-// A session opened to run one command is sent it once the program in it has drawn something, which for
-// a shell is its prompt. The pty would hold the bytes either way, but a command typed before the prompt
-// is printed lands above it and reads as though it were never run.
+// A session opened to run one command is sent it once the program in it has finished arriving. A shell
+// drains whatever was typed while it was still setting itself up — a prompt framework rebuilding its
+// line editor throws the queue away — so the command waits for output to start and then to stop, rather
+// than for the first byte, which is the tty settling and not the prompt. A shell that prints nothing at
+// all is still sent the command rather than left holding it.
+const SETTLE_MS = 300;
+const GIVE_UP_MS = 5000;
+
 function runOnStart(sessionId: string, command: string) {
-  const unsubscribe = subscribeOutput(sessionId, () => {
+  let sent = false;
+  let settle = 0;
+  const send = () => {
+    if (sent) return;
+    sent = true;
+    window.clearTimeout(settle);
+    window.clearTimeout(patience);
     unsubscribe();
-    void invoke("write_session", {
-      sessionId,
-      data: Array.from(new TextEncoder().encode(`${command}\r`)),
-    });
+    writeSession(sessionId, `${command}\r`);
+  };
+  const unsubscribe = subscribeOutput(sessionId, () => {
+    window.clearTimeout(settle);
+    settle = window.setTimeout(send, SETTLE_MS);
   });
+  const patience = window.setTimeout(send, GIVE_UP_MS);
 }
 
 function folderName(cwd: string) {
@@ -481,7 +479,8 @@ function App() {
   // The tree a local build came from. A release came from no tree anyone here can see, and says so by
   // leaving this empty.
   const [repo, setRepo] = useState("");
-  const builtAt = buildStamp(built);
+  // A rebuild is running, so the button that started it does not start a second one.
+  const [rebuilding, setRebuilding] = useState(false);
   const [release, setRelease] = useState<"checking" | "current" | "behind" | "unknown">("checking");
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
@@ -873,10 +872,12 @@ function App() {
   // in a shell and runs it there rather than building out of sight: a build that fails says why, in the
   // place its output belongs, and the tab stays afterwards like any other.
   async function rebuild() {
+    // One build at a time: the dialog closes on the click, but checking again reopens it still behind
+    // its tree, and a second build would contend with the first over the same target and dist folders.
+    if (rebuilding) return;
+    setRebuilding(true);
     try {
-      const repo = await invoke<string | null>("local_repo");
-      if (!repo) throw new Error("This build did not record where it came from");
-      const folder = await invoke<{ id: string; path: string }>("use_directory", { path: repo });
+      const folder = await invoke<{ id: string; path: string }>("grant_repo");
       const session: Session = {
         id: crypto.randomUUID(),
         agent: "shell",
@@ -890,6 +891,7 @@ function App() {
       createSession(session);
       runOnStart(session.id, "bun run local");
     } catch (reason) {
+      setRebuilding(false);
       setUpdateError(String(reason));
       setUpdateStatus("error");
     }
@@ -937,7 +939,7 @@ function App() {
           <VersionBadge
             version={version}
             commit={commit}
-            built={builtAt}
+            built={built}
             release={release}
             onCheck={() => void checkForUpdates()}
           />
@@ -1252,7 +1254,7 @@ function App() {
                 <VersionBadge
                   version={version}
                   commit={commit}
-                  built={builtAt}
+                  built={built}
                   release={release}
                   onCheck={() => void checkForUpdates()}
                 />
@@ -1294,10 +1296,10 @@ function App() {
                       <dd className="truncate font-mono">{commit}</dd>
                     </>
                   ) : null}
-                  {builtAt ? (
+                  {built ? (
                     <>
                       <dt className="text-muted-foreground">{commit ? "Built" : "Released"}</dt>
-                      <dd className="truncate">{builtAt}</dd>
+                      <dd className="truncate">{built}</dd>
                     </>
                   ) : null}
                   {repo ? (
@@ -1325,7 +1327,7 @@ function App() {
                 <Button variant="outline" onClick={() => changeUpdateOpen(false)}>
                   Not now
                 </Button>
-                <Button onClick={() => void rebuild()}>
+                <Button disabled={rebuilding} onClick={() => void rebuild()}>
                   <Play />
                   Rebuild
                 </Button>
