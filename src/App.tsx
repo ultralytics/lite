@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  Check,
   ChevronLeft,
   ChevronRight,
   GitBranch,
@@ -462,6 +463,9 @@ function App() {
   // Undefined until asked: an empty string is a release, anything else is the commit it was built from.
   const [commit, setCommit] = useState<string>();
   const [built, setBuilt] = useState("");
+  // The tree a local build came from. A release came from no tree anyone here can see, and says so by
+  // leaving this empty.
+  const [repo, setRepo] = useState("");
   const [release, setRelease] = useState<"checking" | "current" | "behind" | "unknown">("checking");
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
@@ -577,6 +581,9 @@ function App() {
     void invoke<string | null>("local_commit")
       .then((value) => setCommit(value ?? ""))
       .catch(() => setCommit(""));
+    void invoke<string | null>("local_repo")
+      .then((value) => setRepo(value ?? ""))
+      .catch(() => setRepo(""));
   }, []);
 
   // One owner for the release question, so the startup check and a manual one cannot contradict each
@@ -1243,20 +1250,49 @@ function App() {
                 {updateStatus === "rebuild"
                   ? `This build is ${commit} and the tree is now ${availableVersion}. Rebuilding runs bun run local in a shell tab, and replaces this build when it finishes.`
                   : null}
-                {updateStatus === "current"
-                  ? commit
-                    ? "This build matches the tree it was built from."
-                    : "You have the latest version of Lite."
-                  : null}
+                {updateStatus === "current" ? (
+                  <span className="flex items-center gap-1.5">
+                    <Check className="size-4 shrink-0 text-success" />
+                    {commit ? "This build matches the tree it was built from." : "You have the latest version of Lite."}
+                  </span>
+                ) : null}
                 {updateStatus === "installing" ? "Downloading and installing the update…" : null}
                 {updateStatus === "error" ? `Update failed: ${updateError}` : null}
               </DialogDescription>
             </DialogHeader>
-            {updateStatus === "checking" || updateStatus === "installing" ? (
-              <DialogBody>
+            <DialogBody>
+              {updateStatus === "checking" || updateStatus === "installing" ? (
                 <Spinner className="mx-auto size-5 text-muted-foreground" />
-              </DialogBody>
-            ) : null}
+              ) : (
+                // What this copy of Lite actually is, which is the first thing worth knowing when it and
+                // the tree disagree. A release has no tree to name and leaves those rows out.
+                <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+                  <dt className="text-muted-foreground">Version</dt>
+                  <dd className="truncate font-mono">{version || "—"}</dd>
+                  {commit ? (
+                    <>
+                      <dt className="text-muted-foreground">Build</dt>
+                      <dd className="truncate font-mono">{commit}</dd>
+                    </>
+                  ) : null}
+                  {built ? (
+                    <>
+                      <dt className="text-muted-foreground">{commit ? "Built" : "Released"}</dt>
+                      <dd className="truncate">{built}</dd>
+                    </>
+                  ) : null}
+                  {repo ? (
+                    <>
+                      <dt className="text-muted-foreground">Source</dt>
+                      <dd className="truncate font-mono" title={repo}>
+                        {repo}
+                      </dd>
+                    </>
+                  ) : null}
+                </dl>
+              )}
+            </DialogBody>
+
             {updateStatus === "available" ? (
               <DialogFooter>
                 <Button variant="outline" onClick={() => changeUpdateOpen(false)}>
