@@ -41,7 +41,7 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 ### macOS
 
-1. Download `Lite_0.0.4_darwin_aarch64.dmg` for an Apple silicon Mac.
+1. Download the asset ending in `_darwin_aarch64.dmg` for an Apple silicon Mac.
 2. Open the disk image and drag **Lite** into **Applications**.
 3. Open Lite from **Applications**. If macOS blocks this first unsigned release, open **System Settings → Privacy & Security**, set **Allow applications from** to **App Store & Known Developers**, select **Open Anyway** for Lite, then confirm.
 
@@ -51,21 +51,21 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 ### Windows
 
-1. Download `Lite_0.0.4_windows_x64-setup.exe`.
+1. Download the asset ending in `_windows_x64-setup.exe`.
 2. Run the installer, then open **Lite** from the Start menu.
 3. If Microsoft Defender SmartScreen appears for this early unsigned release, select **More info → Run anyway**.
 
 ### Linux
 
-Download the portable `Lite_0.0.4_linux_amd64.AppImage`.
+Download the portable asset ending in `_linux_amd64.AppImage`.
 
 ```bash
 # AppImage
-chmod +x Lite_0.0.4_linux_amd64.AppImage
-./Lite_0.0.4_linux_amd64.AppImage
+chmod +x Lite_*_linux_amd64.AppImage
+./Lite_*_linux_amd64.AppImage
 ```
 
-After installing 0.0.4, open the Lite menu in the top bar and choose **Check for updates** to install signed updates and restart Lite. Lite never checks for updates in the background.
+After installing Lite, open the Lite menu in the top bar and choose **Check for updates** to install signed updates and restart Lite. Lite never checks for updates in the background.
 
 ## 🚀 First Run
 
@@ -115,7 +115,7 @@ Useful checks:
 
 ```bash
 bun run check       # Biome and native TypeScript checks
-bun run local       # App bundle you can double-click, marked as a local build
+bun run local       # Lite Dev bundle with a red icon that you can double-click
 bun run tauri build # Native installer for the current operating system
 ```
 
