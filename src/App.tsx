@@ -1119,11 +1119,6 @@ function App() {
         cols: 100,
         rows: 30,
       });
-      setStartingIds((current) => {
-        const next = new Set(current);
-        next.delete(session.id);
-        return next;
-      });
       if (runs.current.get(session.id) !== runId) return;
       setSessions((current) =>
         current.map((item) =>
@@ -1138,13 +1133,14 @@ function App() {
       );
     } catch (reason) {
       if (runs.current.get(session.id) === runId) runs.current.delete(session.id);
+      setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
+      setError(String(reason));
+    } finally {
       setStartingIds((current) => {
         const next = new Set(current);
         next.delete(session.id);
         return next;
       });
-      setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
-      setError(String(reason));
     }
   }, []);
 
@@ -1239,7 +1235,7 @@ function App() {
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
-  // Closing from a session row is reversible: the row leaves immediately and its PTY stops, while the
+  // Closing a session is reversible: the row leaves immediately and its PTY stops, while the
   // provider session metadata and directory grant remain until the toast closes without being undone.
   function closeSession(session: Session) {
     const index = sessions.findIndex((item) => item.id === session.id);
@@ -1397,9 +1393,9 @@ function App() {
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <button
-                    type="button"
-                    className="shrink-0"
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
                     aria-label="Lite on GitHub"
                     data-context-url="https://github.com/ultralytics/lite"
                     onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
@@ -1427,9 +1423,10 @@ function App() {
                   <Tooltip>
                     <TooltipTrigger
                       render={
-                        <button
-                          type="button"
-                          className="flex max-w-56 shrink-0 items-center gap-1.5 text-muted-foreground hover:text-foreground"
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="max-w-56 gap-1.5 text-muted-foreground"
                           data-context-url={remote}
                           onClick={() => void invoke("open_url", { url: remote })}
                         />
@@ -1531,11 +1528,15 @@ function App() {
                         <Tooltip key={session.id}>
                           <TooltipTrigger
                             render={
-                              <button
-                                type="button"
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
                                 aria-pressed={session.id === selectedId}
+                                aria-label={session.name}
                                 data-context-session={session.id}
-                                className={`rounded-lg p-1 ${session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"}`}
+                                className={
+                                  session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"
+                                }
                                 onClick={() => openRef.current(session)}
                               />
                             }

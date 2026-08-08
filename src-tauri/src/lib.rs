@@ -447,17 +447,25 @@ fn shell_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\\\""))
 }
 
-// Claude files a session under a key derived from its working directory. Searching for the transcript
-// by name avoids depending on how that key is spelled, and a session it never wrote cannot be resumed.
-fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
-    let Ok(home) = std::env::var_os("CLAUDE_CONFIG_DIR")
+fn provider_home(app: &AppHandle, variable: &str, fallback: &str) -> Result<PathBuf, String> {
+    std::env::var_os(variable)
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
         .map_or_else(
-            || app.path().home_dir().map(|home| home.join(".claude")),
+            || {
+                app.path()
+                    .home_dir()
+                    .map(|home| home.join(fallback))
+                    .map_err(|error| error.to_string())
+            },
             Ok,
         )
-    else {
+}
+
+// Claude files a session under a key derived from its working directory. Searching for the transcript
+// by name avoids depending on how that key is spelled, and a session it never wrote cannot be resumed.
+fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
+    let Ok(home) = provider_home(app, "CLAUDE_CONFIG_DIR", ".claude") else {
         return false;
     };
     let transcript = format!("{session_id}.jsonl");
@@ -1404,18 +1412,7 @@ fn executable_exists(name: &str) -> bool {
 }
 
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
-    std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .map_or_else(
-            || {
-                app.path()
-                    .home_dir()
-                    .map(|home| home.join(".codex"))
-                    .map_err(|error| error.to_string())
-            },
-            Ok,
-        )
+    provider_home(app, "CODEX_HOME", ".codex")
 }
 
 // Looks only for the section header. The DeepSeek credential lives in that file and is never read.
@@ -1454,18 +1451,7 @@ fn deepseek_profile_exists(app: &AppHandle) -> bool {
 }
 
 fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
-    std::env::var_os("KIMI_CODE_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .map_or_else(
-            || {
-                app.path()
-                    .home_dir()
-                    .map(|home| home.join(".kimi-code"))
-                    .map_err(|error| error.to_string())
-            },
-            Ok,
-        )
+    provider_home(app, "KIMI_CODE_HOME", ".kimi-code")
 }
 
 // Kimi groups sessions under an opaque per-directory key that its workspace index maps back to a path.

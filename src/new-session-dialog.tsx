@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -215,24 +216,32 @@ export function NewSessionDialog({
                   const state = availability[option.id];
                   const active = option.id === choiceId;
                   const row = (
-                    <button
+                    <Item
                       key={option.id}
-                      type="button"
-                      aria-pressed={active}
-                      onClick={() => (active && ready ? start() : setChoiceId(option.id))}
-                      className={`flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition-colors ${active ? "border-ring bg-accent" : "border-transparent hover:bg-muted/60"}`}
+                      size="xs"
+                      variant={active ? "outline" : "default"}
+                      className={active ? "border-ring bg-accent" : "hover:bg-muted/60"}
+                      render={
+                        <button
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => (active && ready ? start() : setChoiceId(option.id))}
+                        />
+                      }
                     >
                       {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
-                      <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+                      <ItemMedia variant="icon" className="size-7 rounded-md border bg-background">
                         <ProviderIcon agent={option.agent} provider={option.provider} />
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
-                        <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
-                      </span>
-                      {state && !state.available ? <Badge variant="outline">Not set up</Badge> : null}
-                      <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
-                    </button>
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle>{sessionLabel(option)}</ItemTitle>
+                        <ItemDescription className="truncate">{option.description}</ItemDescription>
+                      </ItemContent>
+                      <ItemActions>
+                        {state && !state.available ? <Badge variant="outline">Not set up</Badge> : null}
+                        <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
+                      </ItemActions>
+                    </Item>
                   );
                   return option.note ? (
                     <Tooltip key={option.id}>

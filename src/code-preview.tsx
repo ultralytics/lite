@@ -107,10 +107,7 @@ export default function CodePreview({ path, source }: { path: string; source: st
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (extension === "md" || extension === "mdx") {
     return (
-      <article
-        className="markdown-viewer max-w-none px-6 py-5 text-sm leading-7"
-        onContextMenu={(event) => event.stopPropagation()}
-      >
+      <article className="markdown-viewer max-w-none px-6 py-5 text-sm leading-7">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -137,10 +134,7 @@ export default function CodePreview({ path, source }: { path: string; source: st
     );
   }
   return (
-    <pre
-      className="flex min-h-full overflow-auto font-mono text-[12.5px] leading-5"
-      onContextMenu={(event) => event.stopPropagation()}
-    >
+    <pre className="flex min-h-full overflow-auto font-mono text-[12.5px] leading-5">
       <LineNumbers count={source.split("\n").length} />
       <HighlightedCode source={source} language={extensionLanguages[extension]} className="py-4 pr-4 pl-3" />
     </pre>

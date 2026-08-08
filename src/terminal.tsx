@@ -101,8 +101,6 @@ export function TerminalView({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const keepNativeMenu = (event: MouseEvent) => event.stopPropagation();
-    container.addEventListener("contextmenu", keepNativeMenu);
 
     const terminal = new Terminal({
       cursorBlink: true,
@@ -178,7 +176,6 @@ export function TerminalView({
 
     return () => {
       window.clearTimeout(settle);
-      container.removeEventListener("contextmenu", keepNativeMenu);
       observer.disconnect();
       input.dispose();
       unsubscribe();
@@ -198,7 +195,7 @@ export function TerminalView({
   // them past the edge, which also left the last row below the viewport where the scrollbar could
   // neither show nor reach it.
   return (
-    <div className="h-full w-full bg-background p-3">
+    <div data-context-session={sessionId} className="h-full w-full bg-background p-3">
       <div ref={containerRef} className="h-full w-full" />
     </div>
   );
