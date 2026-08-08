@@ -11,7 +11,7 @@ use std::{
     process::{Command, Stdio},
     sync::Mutex,
     thread,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
@@ -505,7 +505,10 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     let mut windows = Vec::new();
-    for (key, label) in [("five_hour", "5 hour"), ("seven_day", "7 day")] {
+    for (key, label) in [
+        ("five_hour", "Current session"),
+        ("seven_day", "Current week"),
+    ] {
         if let Some(window) = input.get("rate_limits").and_then(|limits| limits.get(key)) {
             if let Some(used_percent) = window
                 .get("used_percentage")
@@ -1761,6 +1764,7 @@ async fn spawn_session(
     session_id: String,
     run_id: String,
     root_id: String,
+    cwd: String,
     mut provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
@@ -1770,6 +1774,21 @@ async fn spawn_session(
     cols: u16,
     rows: u16,
 ) -> Result<Option<String>, String> {
+    if !roots
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .contains_key(&root_id)
+    {
+        uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid folder permission")?;
+        let path = fs::canonicalize(cwd).map_err(|_| "The selected folder no longer exists")?;
+        if is_sensitive_root(&path) {
+            return Err("Credential and configuration folders cannot be opened".into());
+        }
+        update_roots(&app, &roots, |roots| {
+            roots.entry(root_id.clone()).or_insert(path);
+        })?;
+    }
     let cwd = root_path(&roots, &root_id)?;
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
@@ -2277,18 +2296,55 @@ async fn read_usage(
     }
     match agent.as_str() {
         "claude" => {
-            let path = app
+            let directory = app
                 .path()
                 .app_data_dir()
-                .map_err(|error| error.to_string())?
-                .join(format!("usage-{session_id}.json"));
-            match fs::read(path) {
-                Ok(bytes) => serde_json::from_slice(&bytes)
-                    .map(Some)
-                    .map_err(|error| error.to_string()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(error) => Err(error.to_string()),
+                .map_err(|error| error.to_string())?;
+            let path = directory.join(format!("usage-{session_id}.json"));
+            let mut usage = match fs::read(path) {
+                Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    UsageSnapshot::default()
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            // Claude's limits are account-wide, while its context and cost belong to this session.
+            // Use the newest limits Claude reported from any Lite session rather than hiding them
+            // when the selected session has not sent a message yet.
+            if let Ok(entries) = fs::read_dir(directory) {
+                if let Some(windows) = entries
+                    .flatten()
+                    .filter(|entry| {
+                        entry.file_name().to_str().is_some_and(|name| {
+                            name.starts_with("usage-") && name.ends_with(".json")
+                        })
+                    })
+                    .filter_map(|entry| {
+                        let modified = entry.metadata().ok()?.modified().ok()?;
+                        let snapshot: UsageSnapshot =
+                            serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
+                        (!snapshot.windows.is_empty()).then_some((modified, snapshot.windows))
+                    })
+                    .max_by_key(|(modified, _)| *modified)
+                    .map(|(_, windows)| windows)
+                {
+                    usage.windows = windows;
+                }
             }
+            for window in &mut usage.windows {
+                window.label = match window.label.as_str() {
+                    "5 hour" => "Current session".into(),
+                    "7 day" => "Current week".into(),
+                    _ => continue,
+                };
+            }
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs());
+            usage
+                .windows
+                .retain(|window| window.resets_at.is_none_or(|reset| reset > now));
+            Ok((usage.context_tokens.is_some() || !usage.windows.is_empty()).then_some(usage))
         }
         "codex" => codex_usage(&codex_server).map(Some),
         "kimi" | "shell" => Ok(None),

@@ -1109,6 +1109,7 @@ function App() {
         sessionId: session.id,
         runId,
         rootId: session.rootId,
+        cwd: session.cwd,
         providerSessionId: session.providerSessionId,
         agent: session.agent,
         provider: session.provider,
@@ -1288,7 +1289,7 @@ function App() {
       type: "success",
       timeout: 8000,
       onClose: async () => {
-        if (!undone && (await stopped)) await cleanupSession(session);
+        if ((await stopped) && !undone) await cleanupSession(session);
       },
       actionProps: {
         children: "Undo",
