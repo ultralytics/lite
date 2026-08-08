@@ -572,16 +572,11 @@ function SessionBadge({
   );
 }
 
-// The provider's own mark, at the size a page can be about rather than the size a row can carry. While
-// it starts, that same centered surface becomes the progress indicator.
-function SessionMark({ session, busy = false }: { session: Session; busy?: boolean }) {
+// The provider's own mark, at the size a page can be about rather than the size a row can carry.
+function SessionMark({ session }: { session: Session }) {
   return (
-    <EmptyMedia variant="icon" className="size-14 rounded-2xl">
-      {busy ? (
-        <Spinner className="size-7 text-muted-foreground" aria-hidden="true" />
-      ) : (
-        <ProviderIcon agent={session.agent} provider={session.provider} className="size-7" />
-      )}
+    <EmptyMedia variant="icon" className="size-16 rounded-2xl">
+      <ProviderIcon agent={session.agent} provider={session.provider} className="size-8" />
     </EmptyMedia>
   );
 }
@@ -1516,8 +1511,11 @@ function App() {
                     ) : startingIds.has(selected.id) ? (
                       <Empty className="h-full">
                         <EmptyHeader>
-                          <SessionMark session={selected} busy />
-                          <EmptyTitle>Starting {sessionLabel(selected)}…</EmptyTitle>
+                          <SessionMark session={selected} />
+                          <EmptyTitle className="flex items-center gap-2">
+                            <Spinner className="size-4 text-muted-foreground" aria-hidden="true" />
+                            Starting {sessionLabel(selected)}…
+                          </EmptyTitle>
                           <EmptyDescription>{shortPath(selected.cwd)}</EmptyDescription>
                         </EmptyHeader>
                       </Empty>
