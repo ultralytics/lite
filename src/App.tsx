@@ -227,16 +227,16 @@ function menuContext(target: EventTarget | null): AppMenuContext {
 function hasMenuItems(context: AppMenuContext): boolean {
   return Boolean(
     context.collapsePanel ||
-      context.collapseSessions ||
-      context.editable ||
-      context.expandPanel ||
-      context.expandSessions ||
-      context.newSession ||
-      context.refresh ||
-      context.selectedText ||
-      context.terminal ||
-      context.url ||
-      context.value,
+    context.collapseSessions ||
+    context.editable ||
+    context.expandPanel ||
+    context.expandSessions ||
+    context.newSession ||
+    context.refresh ||
+    context.selectedText ||
+    context.terminal ||
+    context.url ||
+    context.value,
   );
 }
 
@@ -273,11 +273,11 @@ function AppContextMenu() {
   const linkGroup = Boolean(context.url || context.value);
   const surfaceGroup = Boolean(
     context.collapsePanel ||
-      context.collapseSessions ||
-      context.expandPanel ||
-      context.expandSessions ||
-      context.newSession ||
-      context.refresh,
+    context.collapseSessions ||
+    context.expandPanel ||
+    context.expandSessions ||
+    context.newSession ||
+    context.refresh,
   );
   const editGroup = Boolean(context.terminal || context.editable || context.selectedText);
 
