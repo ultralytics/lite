@@ -750,9 +750,20 @@ export function Inspector({
   onCollapse: () => void;
 }) {
   const [tab, setTab] = useState<string>(TABS[0].value);
+  const [visited, setVisited] = useState(() => new Set<string>([TABS[0].value]));
   // A tab already names the panel it shows, so the panel does not name itself again. One button beside
   // the tabs rereads whichever is open, by rebuilding it, and only that one ever reads the disk.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
+
+  function selectTab(value: string) {
+    setTab(value);
+    setVisited((current) => {
+      if (current.has(value)) return current;
+      const next = new Set(current);
+      next.add(value);
+      return next;
+    });
+  }
 
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
   // on. What it was showing is hidden rather than thrown away, so the file you had open is still open
@@ -777,7 +788,7 @@ export function Inspector({
           tooltipSide="left"
           aria-label={label}
           onClick={() => {
-            setTab(value);
+            selectTab(value);
             onExpand();
           }}
         >
@@ -791,7 +802,7 @@ export function Inspector({
     <>
       {collapsed ? rail : null}
       <div className={collapsed ? "hidden" : "h-full"}>
-        <Tabs value={tab} onValueChange={setTab} className="h-full min-h-0 gap-0">
+        <Tabs value={tab} onValueChange={selectTab} className="h-full min-h-0 gap-0">
           <div className="flex h-11 shrink-0 items-center gap-0.5 border-b pr-3 pl-1.5">
             <ActionIconButton size="icon-sm" tooltip="Collapse panel" aria-label="Collapse panel" onClick={onCollapse}>
               <ChevronRight />
@@ -819,15 +830,21 @@ export function Inspector({
               )}
             </span>
           </div>
-          <TabsContent value="files" className="min-h-0 overflow-hidden">
-            <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
-          </TabsContent>
-          <TabsContent value="git" className="min-h-0 overflow-hidden">
-            <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} remote={remote} />
-          </TabsContent>
-          <TabsContent value="usage" className="min-h-0 overflow-hidden">
-            <UsagePanel key={reload.usage} session={session} />
-          </TabsContent>
+          {visited.has("files") ? (
+            <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
+              <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
+            </TabsContent>
+          ) : null}
+          {visited.has("git") ? (
+            <TabsContent value="git" keepMounted className="min-h-0 overflow-hidden">
+              <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} remote={remote} />
+            </TabsContent>
+          ) : null}
+          {visited.has("usage") ? (
+            <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
+              <UsagePanel key={reload.usage} session={session} />
+            </TabsContent>
+          ) : null}
         </Tabs>
       </div>
     </>
