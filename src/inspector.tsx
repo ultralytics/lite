@@ -850,7 +850,7 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SearchInput value={query} placeholder="Search changes and items" onChange={setQuery} />
+      <SearchInput value={query} placeholder="Search items" onChange={setQuery} />
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
           {error ? <p className="text-sm text-destructive">{error}</p> : null}

@@ -1457,8 +1457,8 @@ function App() {
             className="relative flex h-9 shrink-0 items-center border-b bg-sidebar text-sidebar-foreground"
           >
             <div
-              className="flex h-full shrink-0 items-center gap-2 overflow-hidden px-3 in-data-[titlebar=overlay]:pl-[86px]"
-              style={{ width: "var(--sidebar-width, 20%)" }}
+              className={`flex h-full shrink-0 items-center gap-2 overflow-hidden ${shut.sidebar ? "p-0" : "px-3 in-data-[titlebar=overlay]:pl-[86px]"}`}
+              style={{ width: shut.sidebar ? 0 : "var(--sidebar-width, 20%)" }}
             >
               {shut.sidebar ? null : (
                 <>
@@ -1490,7 +1490,7 @@ function App() {
               )}
             </div>
             <div
-              className={`flex h-full min-w-0 flex-1 items-center gap-2 pr-3 pl-[13px] ${shut.sidebar ? "in-data-[titlebar=overlay]:pl-[42px]" : ""}`}
+              className={`flex h-full min-w-0 flex-1 items-center gap-2 pr-3 pl-[13px] ${shut.sidebar ? "in-data-[titlebar=overlay]:pl-[86px]" : ""}`}
             >
               {selected ? (
                 <>
@@ -1517,7 +1517,7 @@ function App() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className={`absolute top-0.5 right-20 min-w-0 gap-1.5 text-muted-foreground ${shut.inspector ? "max-w-56" : "left-[9px] justify-start"}`}
+                          className={`absolute top-0.5 right-20 min-w-0 gap-1.5 text-muted-foreground ${shut.inspector ? "max-w-56" : "left-[3px] justify-start"}`}
                           data-context-url={remote}
                           onClick={() => void invoke("open_url", { url: remote })}
                         />
