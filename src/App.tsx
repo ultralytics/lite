@@ -1219,7 +1219,7 @@ function App() {
   }, [markDirectory, markWorking, markTitle]);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
-    if (runs.current.has(session.id)) return;
+    if (runs.current.has(session.id)) return true;
     const runId = crypto.randomUUID();
     runs.current.set(session.id, runId);
     setStartingIds((current) => new Set(current).add(session.id));
@@ -1239,7 +1239,7 @@ function App() {
         cols: 100,
         rows: 30,
       });
-      if (runs.current.get(session.id) !== runId) return;
+      if (runs.current.get(session.id) !== runId) return false;
       setSessions((current) =>
         current.map((item) =>
           item.id === session.id
@@ -1251,10 +1251,12 @@ function App() {
             : item,
         ),
       );
+      return true;
     } catch (reason) {
       if (runs.current.get(session.id) === runId) runs.current.delete(session.id);
       setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
       setError(String(reason));
+      return false;
     } finally {
       setStartingIds((current) => {
         const next = new Set(current);
@@ -1328,7 +1330,17 @@ function App() {
       setSelectedId(fresh.id);
       resumed.current = fresh.id;
     }
-    await launch(fresh, false);
+    if (!(await launch(fresh, false))) {
+      await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
+      clearOutput(fresh.id);
+      clearUsageCache(fresh.id);
+      const restored = { ...session, running: false };
+      setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
+      setSelectedId((current) => (current === fresh.id ? session.id : current));
+      resumed.current = session.id;
+      if (await launch(restored, true)) setError("Restart failed; the original session was restored.");
+      return;
+    }
     if (fresh.agent === "kimi") startKimiConversation(fresh.id);
 
     let undone = false;

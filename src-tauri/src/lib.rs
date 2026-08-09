@@ -1899,6 +1899,53 @@ fn qwen_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "QWEN_HOME", ".qwen")
 }
 
+fn native_session_exists(app: &AppHandle, agent: &str, session_id: &str) -> bool {
+    let (home, directory) = match agent {
+        "gemini" => (gemini_home(app), "tmp"),
+        "qwen" => (qwen_home(app), "projects"),
+        _ => return false,
+    };
+    let Ok(projects) =
+        home.and_then(|home| fs::read_dir(home.join(directory)).map_err(|error| error.to_string()))
+    else {
+        return false;
+    };
+    let expected = if agent == "qwen" {
+        format!("{session_id}.jsonl")
+    } else {
+        format!("-{}.jsonl", session_id.chars().take(8).collect::<String>())
+    };
+    projects.flatten().take(512).any(|project| {
+        fs::read_dir(project.path().join("chats")).is_ok_and(|chats| {
+            chats.flatten().take(512).any(|chat| {
+                let name = chat.file_name();
+                let name = name.to_string_lossy();
+                if agent == "qwen" {
+                    name == expected
+                } else {
+                    name.ends_with(&expected)
+                        && fs::File::open(chat.path()).is_ok_and(|file| {
+                            BufReader::new(file)
+                                .lines()
+                                .next()
+                                .and_then(Result::ok)
+                                .and_then(|line| {
+                                    serde_json::from_str::<serde_json::Value>(&line).ok()
+                                })
+                                .and_then(|value| {
+                                    value
+                                        .get("sessionId")
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(str::to_owned)
+                                })
+                                .is_some_and(|id| id == session_id)
+                        })
+                }
+            })
+        })
+    })
+}
+
 fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "KIMI_CODE_HOME", ".kimi-code")
 }
@@ -2380,8 +2427,13 @@ async fn spawn_session(
     let cwd = root_path(&roots, &root_id)?;
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
-    // Resuming a Claude session it never recorded fails outright, so that tab starts one instead.
-    let resume = resume && (agent != "claude" || claude_session_exists(&app, &session_id));
+    // A tab whose provider history was removed starts again instead of becoming permanently unusable.
+    let resume = resume
+        && match agent.as_str() {
+            "claude" => claude_session_exists(&app, &session_id),
+            "gemini" | "qwen" => native_session_exists(&app, &agent, &session_id),
+            _ => true,
+        };
     if !signing_in && (agent == "codex" || agent == "kimi") {
         if let Some(saved_provider_session_id) = provider_sessions
             .0
