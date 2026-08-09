@@ -63,7 +63,7 @@ const providers: {
     provider: "deepseek",
     label: "DeepSeek",
     variable: "DEEPSEEK_API_KEY",
-    configured: "Using Codex configuration",
+    configured: "Using API key",
     signIn: false,
   },
   {
@@ -71,7 +71,7 @@ const providers: {
     agent: "kimi",
     label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
-    configured: "Using Kimi Code OAuth",
+    configured: "Using Kimi Code sign-in",
     signIn: true,
   },
 ];
@@ -165,8 +165,8 @@ export function SettingsDialog({
         <DialogHeader>
           <DialogTitle>API keys</DialogTitle>
           <DialogDescription>
-            Each status shows the authentication Lite will use for the next session. A Lite key takes priority over the
-            provider's own sign-in and stays in Lite's data folder on this computer.
+            Each row shows how new sessions sign in. API keys saved here stay on this computer and take priority over
+            provider sign-in.
           </DialogDescription>
         </DialogHeader>
         <DialogBody>
@@ -178,9 +178,9 @@ export function SettingsDialog({
               const shown = revealed.has(option.id);
               const hint = status?.keyHint ?? status?.cliKeyHint;
               const configured = status?.keyHint
-                ? "Using Lite key"
+                ? "Using API key"
                 : status?.cliKeyHint
-                  ? `Using ${option.label} key`
+                  ? "Using API key"
                   : option.configured;
               return (
                 <Item key={option.id} variant="outline">
@@ -216,11 +216,7 @@ export function SettingsDialog({
                         </Button>
                       ) : null}
                       <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
-                        {status?.keyHint
-                          ? "Replace Lite key"
-                          : status?.cliAuthMethod
-                            ? "Override in Lite"
-                            : "Use a Lite key"}
+                        {status?.keyHint ? "Replace API key" : "Use API key"}
                       </Button>
                       {status?.keyHint ? (
                         <ActionIconButton
