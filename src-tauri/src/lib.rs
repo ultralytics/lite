@@ -519,18 +519,79 @@ fn provider_home(app: &AppHandle, variable: &str, fallback: &str) -> Result<Path
         )
 }
 
-// Claude files a session under a key derived from its working directory. Searching for the transcript
-// by name avoids depending on how that key is spelled, and a session it never wrote cannot be resumed.
-fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
-    let Ok(home) = provider_home(app, "CLAUDE_CONFIG_DIR", ".claude") else {
-        return false;
-    };
+fn claude_transcript_lines(path: &Path) -> impl Iterator<Item = String> {
+    fs::File::open(path)
+        .map(|file| {
+            BufReader::new(file)
+                .lines()
+                .take(20_000)
+                .map_while(Result::ok)
+        })
+        .into_iter()
+        .flatten()
+}
+
+// A session that moved stamps the id it started as on every record it writes into the conversation it
+// moved to, and only that stamp is a link: the id is quoted in ordinary output too, a directory listing
+// naming the transcript being enough to read as one.
+fn claude_transcript_quotes(path: &Path, session_id: &str) -> bool {
+    claude_transcript_lines(path)
+        .filter(|line| line.contains(session_id))
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+        .any(|record| {
+            record.get("session_id").and_then(serde_json::Value::as_str) == Some(session_id)
+        })
+}
+
+// Claude will not resume a transcript that carries no message, nor reuse the id it is named after.
+fn claude_transcript_has_messages(path: &Path) -> bool {
+    claude_transcript_lines(path)
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+        .any(|record| {
+            matches!(
+                record.get("type").and_then(serde_json::Value::as_str),
+                Some("user" | "assistant" | "system")
+            )
+        })
+}
+
+// Claude resumes a conversation by the name of its transcript, filed under a key derived from the working
+// directory, so it is found by name rather than by key. `/resume` moves the session into an older
+// conversation and writes the turns that follow there, quoting the id it started as, so that transcript is
+// the one to reopen. A session that moved nowhere is quoted by nothing and its id is spent, so it needs
+// a new one. Returns the id to launch with and whether it names a conversation to resume.
+fn claude_launch_id(app: &AppHandle, session_id: &str) -> (String, bool) {
     let transcript = format!("{session_id}.jsonl");
-    fs::read_dir(home.join("projects")).is_ok_and(|projects| {
-        projects
-            .flatten()
-            .any(|project| project.path().join(&transcript).is_file())
-    })
+    let Some(project) = provider_home(app, "CLAUDE_CONFIG_DIR", ".claude")
+        .ok()
+        .and_then(|home| fs::read_dir(home.join("projects")).ok())
+        .and_then(|projects| {
+            projects
+                .flatten()
+                .map(|project| project.path())
+                .find(|project| project.join(&transcript).is_file())
+        })
+    else {
+        return (session_id.to_owned(), false);
+    };
+    let marker = project.join(&transcript);
+    if claude_transcript_has_messages(&marker) {
+        return (session_id.to_owned(), true);
+    }
+    // The conversation was written into after the session moved, so older transcripts cannot hold it.
+    let moved = fs::metadata(&marker)
+        .and_then(|marker| marker.modified())
+        .ok();
+    fs::read_dir(&project)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|conversation| conversation.path())
+        .filter(|path| path.extension() == Some("jsonl".as_ref()) && path != &marker)
+        .filter(|path| fs::metadata(path).and_then(|path| path.modified()).ok() >= moved)
+        .find(|path| claude_transcript_quotes(path, session_id))
+        .and_then(|path| Some((path.file_stem()?.to_str()?.to_owned(), true)))
+        .unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), false))
 }
 
 fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<PathBuf, String> {
@@ -2025,6 +2086,7 @@ fn agent_command(
     let mut command = match agent {
         "claude" => {
             let mut command = agent_builder(agent)?;
+            let session_id = provider_session_id.unwrap_or(session_id);
             if resume {
                 command.args(["--resume", session_id]);
             } else {
@@ -2428,12 +2490,19 @@ async fn spawn_session(
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
     // A tab whose provider history was removed starts again instead of becoming permanently unusable.
+    let claude_launch = (resume && !signing_in && agent == "claude")
+        .then(|| claude_launch_id(&app, provider_session_id.as_deref().unwrap_or(&session_id)));
     let resume = resume
         && match agent.as_str() {
-            "claude" => claude_session_exists(&app, &session_id),
+            "claude" => claude_launch.as_ref().is_some_and(|(_, resume)| *resume),
             "gemini" | "qwen" => native_session_exists(&app, &agent, &session_id),
             _ => true,
         };
+    // The id Claude answers to is the tab's own until a session leaves one behind, and the tab keeps
+    // whichever it was given so the next launch reopens the same conversation.
+    if let Some((claude_id, _)) = claude_launch.filter(|(id, _)| id != &session_id) {
+        provider_session_id = Some(claude_id);
+    }
     if !signing_in && (agent == "codex" || agent == "kimi") {
         if let Some(saved_provider_session_id) = provider_sessions
             .0
