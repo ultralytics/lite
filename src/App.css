@@ -18,7 +18,7 @@
   display: none;
 }
 
-.xterm .xterm-viewport {
+[data-context-session] .xterm .xterm-viewport {
   background-color: var(--background);
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklch, var(--muted-foreground) 40%, transparent) transparent;

@@ -86,10 +86,10 @@ export function NewSessionDialog({
     setError("");
     setAvailability({});
     setAuth(undefined);
-    void invoke<DirectoryGrant>("default_directory")
+    void invoke<DirectoryGrant | null>("default_directory")
       .then((selected) => {
-        if (disposed) void invoke("revoke_directory", { rootId: selected.id });
-        else {
+        if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
+        else if (selected) {
           setDirectory(selected);
           setPath(selected.path);
         }

@@ -425,16 +425,16 @@ fn grant_directory(
     })
 }
 
-fn default_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn default_directory_path(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(path) = last_directory_path(app)
         .and_then(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
     {
         let path = PathBuf::from(path);
         if path.is_dir() {
-            return Ok(path);
+            return Some(path);
         }
     }
-    app.path().home_dir().map_err(|error| error.to_string())
+    None
 }
 
 #[cfg(unix)]
@@ -558,8 +558,13 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn default_directory(app: AppHandle, roots: State<Roots>) -> Result<DirectoryGrant, String> {
-    grant_directory(&app, &roots, default_directory_path(&app)?)
+fn default_directory(
+    app: AppHandle,
+    roots: State<Roots>,
+) -> Result<Option<DirectoryGrant>, String> {
+    default_directory_path(&app)
+        .map(|path| grant_directory(&app, &roots, path))
+        .transpose()
 }
 
 #[tauri::command]
@@ -568,7 +573,7 @@ async fn choose_directory(
     roots: State<'_, Roots>,
 ) -> Result<Option<DirectoryGrant>, String> {
     let mut dialog = app.dialog().file().set_title("Choose a project");
-    if let Ok(path) = default_directory_path(&app) {
+    if let Some(path) = default_directory_path(&app) {
         dialog = dialog.set_directory(path);
     }
     let Some(path) = dialog.blocking_pick_folder() else {

@@ -89,7 +89,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearInspectorCache, Inspector } from "@/inspector";
+import { clearUsageCache, Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
@@ -1172,7 +1172,10 @@ function App() {
   async function signIn(agent: Session["agent"]) {
     setSettingsOpen(false);
     try {
-      const grant = await invoke<{ id: string; path: string }>("default_directory");
+      const grant =
+        (await invoke<{ id: string; path: string } | null>("default_directory")) ??
+        (await invoke<{ id: string; path: string } | null>("choose_directory"));
+      if (!grant) return;
       createSession({
         id: crypto.randomUUID(),
         agent,
@@ -1206,7 +1209,7 @@ function App() {
       setError(String(reason));
     }
     clearOutput(session.id);
-    clearInspectorCache(session.id, session.rootId);
+    clearUsageCache(session.id);
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
     if (select) {
@@ -1234,7 +1237,7 @@ function App() {
       cleanupError ||= String(reason);
     }
     clearOutput(session.id);
-    clearInspectorCache(session.id, session.rootId);
+    clearUsageCache(session.id);
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
