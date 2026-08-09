@@ -73,9 +73,8 @@ const CodePreview = lazy(() => import("@/code-preview"));
 // the output Lite already keeps: every whole pull request or issue link GitHub prints verbatim, the
 // "owner/repo#12" GitHub itself links work by, and the bare "#12" a conversation names one by. Neither
 // short form is a link, so both are sent separately and only shown once GitHub confirms them, and a
-// bare number names no repository so it can only mean the session's own. A bare number is also how a
-// terminal counts things that are not work, as in "[Image #1]" or "Task #3", so only one a verb or a
-// preposition introduces is read as a reference, and only recent output is read at all.
+// bare number names no repository so it can only mean the session's own. It is also how a terminal
+// counts what is not work, as in "[Image #1]", so only one a verb or a preposition introduces counts.
 // Only CSI is stripped, so a link inside an OSC hyperlink survives being uncoloured.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
@@ -88,15 +87,11 @@ const SCANNED_OUTPUT = 50_000;
 
 function namedInSession(sessionId: string, remote: string) {
   const buffered = readOutput(sessionId);
-  // The window starts at the line after it opens, so a link is never read as the half of it that fit,
-  // and at the cut itself when the rest of the buffer is one line.
+  // The window opens at a line boundary, so a link is never read as the half of it that fit.
   const cut = buffered.length - SCANNED_OUTPUT;
   const text = buffered.slice(cut > 0 ? Math.max(cut, buffered.indexOf("\n", cut) + 1) : 0).replace(COLOR, "");
   const urls = [...new Set(text.match(GITHUB_ITEM) ?? [])];
-  // A guess is spelled with the lowercase host the checker strips, and as an issue whichever kind it
-  // names, because the answer names the kind and carries the canonical URL. The checker is also where
-  // a guess is dropped for the printed link to the same item, along with every other way one item is
-  // named twice.
+  // A guess is spelled with the lowercase host the checker strips, and as an issue whichever kind it names.
   const prefix = "https://github.com/";
   const guessed = new Set(
     [...text.matchAll(QUALIFIED_ITEM)].map((match) => `${prefix}${match[1]}/${match[2]}/issues/${match[3]}`),
