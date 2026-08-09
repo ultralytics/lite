@@ -1546,20 +1546,19 @@ function App() {
                     className="size-4 shrink-0"
                   />
                   <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          className="min-w-0 flex-1 truncate text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
-                          onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
-                        />
-                      }
-                    >
-                      {selected.cwd}
-                    </TooltipTrigger>
-                    <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>
-                  </Tooltip>
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 overflow-hidden text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
+                    aria-label={`Open ${selected.cwd} in file browser`}
+                    onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
+                  >
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="block w-fit max-w-full truncate" />}>
+                        {selected.cwd}
+                      </TooltipTrigger>
+                      <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>
+                    </Tooltip>
+                  </button>
                 </>
               ) : (
                 <span className="text-sm font-semibold">Lite</span>
@@ -1568,23 +1567,22 @@ function App() {
             {selected ? (
               <div className="relative h-full shrink-0" style={{ width: "var(--inspector-width, 25%)" }}>
                 {remote ? (
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className={`absolute top-0.5 right-20 min-w-0 gap-1.5 text-muted-foreground ${shut.inspector ? "max-w-56" : "left-[3px] justify-start"}`}
-                          data-context-url={remote}
-                          onClick={() => void invoke("open_url", { url: remote })}
-                        />
-                      }
-                    >
-                      <GitBranch className="size-3.5 shrink-0" />
-                      <span className="truncate font-mono text-[11px]">{repoName(remote)}</span>
-                    </TooltipTrigger>
-                    <TooltipContent>Open {remote}</TooltipContent>
-                  </Tooltip>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className={`absolute top-0.5 right-20 min-w-0 gap-1.5 text-muted-foreground ${shut.inspector ? "max-w-56" : "left-[3px] justify-start"}`}
+                    data-context-url={remote}
+                    aria-label={`Open ${remote}`}
+                    onClick={() => void invoke("open_url", { url: remote })}
+                  >
+                    <GitBranch className="size-3.5 shrink-0" />
+                    <Tooltip>
+                      <TooltipTrigger render={<span className="min-w-0 truncate font-mono text-[11px]" />}>
+                        {repoName(remote)}
+                      </TooltipTrigger>
+                      <TooltipContent>Open {remote}</TooltipContent>
+                    </Tooltip>
+                  </Button>
                 ) : null}
               </div>
             ) : null}
