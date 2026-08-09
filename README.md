@@ -24,8 +24,9 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 - Run Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and shell sessions side by side
 - Run Codex against DeepSeek or OpenRouter without changing your default Codex provider
 - Resume session tabs automatically after closing Lite or restarting your computer
+- Undo a restart or close for eight seconds before Lite stops the terminal
 - Authenticate once with each provider and reuse its existing local credentials
-- Or save an API key per provider in Lite and skip the sign-in flows entirely
+- Or save API keys for supported providers in Lite and skip their sign-in flows entirely
 - Browse files on demand with syntax highlighting for popular languages
 - Preview rendered Markdown safely alongside source files
 - See the active Git branch, worktree, and changed files
@@ -79,7 +80,7 @@ Install the provider CLIs you want to use:
 
 Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
 
-If you would rather use API keys, open **API keys** in the Lite menu and paste one per provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
+If you would rather use API keys, open **API keys** in the Lite menu and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/2955ffef-6003-43d1-a5c0-51c58e2612c9" width="100%" alt="Saving provider API keys in Lite">
