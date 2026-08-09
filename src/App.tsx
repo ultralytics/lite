@@ -664,6 +664,42 @@ function SessionMark({ session }: { session: Session }) {
   );
 }
 
+function SessionActionButtons({
+  name,
+  disabled = false,
+  onRestart,
+  onClose,
+}: {
+  name: string;
+  disabled?: boolean;
+  onRestart: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <>
+      <ActionIconButton
+        size="icon-sm"
+        tooltip="Restart"
+        aria-label={`Restart ${name}`}
+        disabled={disabled}
+        onClick={onRestart}
+      >
+        <RotateCcw />
+      </ActionIconButton>
+      <ActionIconButton
+        size="icon-sm"
+        className="hover:text-destructive"
+        tooltip="Close session"
+        aria-label={`Close ${name}`}
+        disabled={disabled}
+        onClick={onClose}
+      >
+        <Trash2 />
+      </ActionIconButton>
+    </>
+  );
+}
+
 function SessionRow({
   session,
   agent,
@@ -754,25 +790,7 @@ function SessionRow({
         className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex"
         onClick={(event) => event.stopPropagation()}
       >
-        <ActionIconButton
-          size="icon-sm"
-          tooltip="Restart"
-          aria-label={`Restart ${session.name}`}
-          disabled={starting}
-          onClick={onRestart}
-        >
-          <RotateCcw />
-        </ActionIconButton>
-        <ActionIconButton
-          size="icon-sm"
-          className="hover:text-destructive"
-          tooltip="Close session"
-          aria-label={`Close ${session.name}`}
-          disabled={starting}
-          onClick={onClose}
-        >
-          <Trash2 />
-        </ActionIconButton>
+        <SessionActionButtons name={session.name} disabled={starting} onRestart={onRestart} onClose={onClose} />
       </ItemActions>
     </Item>
   );
@@ -1793,19 +1811,18 @@ function App() {
                       )}
                     </Suspense>
                     {selected.running ? (
-                      <ActionIconButton
-                        variant="outline"
-                        size="icon-sm"
-                        className="absolute top-2 right-2 z-10 hidden bg-background/90 hover:text-destructive"
-                        tooltip="Close session"
-                        tooltipSide="left"
-                        aria-label={`Close ${selected.name}`}
+                      <fieldset
+                        aria-label="Session actions"
+                        className="absolute top-2 right-2 z-10 hidden items-center gap-0.5"
                         data-terminal-action
                         onMouseDown={(event) => event.preventDefault()}
-                        onClick={() => closeSession(selected)}
                       >
-                        <Trash2 />
-                      </ActionIconButton>
+                        <SessionActionButtons
+                          name={selected.name}
+                          onRestart={() => void restartSession(selected)}
+                          onClose={() => closeSession(selected)}
+                        />
+                      </fieldset>
                     ) : null}
                     {selected.running ? null : startingIds.has(selected.id) ? (
                       <Empty className="h-full">
