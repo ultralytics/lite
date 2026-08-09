@@ -6,6 +6,7 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 
+import { SEMANTIC_BADGE_CLASSES } from "@/lib/semantic-styles";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
@@ -20,11 +21,9 @@ const badgeVariants = cva(
         outline: "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost: "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
-        // Added to the Nova set for the version badge, which answers in a color. Copied verbatim from
-        // portal's SEMANTIC_BADGE_CLASSES so the two apps tell the same three answers apart the same way.
-        success: "border-transparent bg-success/10 text-success",
-        warning: "border-transparent bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400",
-        error: "border-transparent bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400",
+        success: SEMANTIC_BADGE_CLASSES.success,
+        warning: SEMANTIC_BADGE_CLASSES.warning,
+        error: SEMANTIC_BADGE_CLASSES.error,
         purple: "border-transparent bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400",
       },
     },

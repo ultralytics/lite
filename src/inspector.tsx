@@ -52,6 +52,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { readOutput } from "@/output-store";
 import {
   type DirectoryCursor,
@@ -381,14 +382,12 @@ function SearchInput({
   );
 }
 
-// A window that is nearly spent is the one thing here worth a color, so it recolors the bar it fills.
+// Capacity gets more urgent as it is spent; all consumers share these tones with status badges.
 function Meter({ label, value }: { label: string; value: number }) {
   const bounded = Math.max(0, Math.min(100, value));
+  const tone: SemanticTone = bounded >= 90 ? "error" : bounded >= 75 ? "warning" : "success";
   return (
-    <Progress
-      value={bounded}
-      className={bounded >= 90 ? "[&_[data-slot=progress-indicator]]:bg-destructive" : undefined}
-    >
+    <Progress value={bounded} className={SEMANTIC_PROGRESS_CLASSES[tone]}>
       <ProgressLabel className="truncate">{label}</ProgressLabel>
       <ProgressValue />
     </Progress>
