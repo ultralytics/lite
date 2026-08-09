@@ -487,11 +487,13 @@ function FileTree({
     }
   }
 
-  // A search has to see the whole tree, so the first keystroke loads it and the next keystroke — not
-  // the render a failure causes — retries a walk that failed; one that succeeded is not repeated.
+  // A search has to see the whole tree, so the first keystroke loads it and the next query — not the
+  // render a failure causes — retries a walk that failed; one that succeeded is not repeated, and a
+  // cleared search forgets the failure so the same query asks again.
   const attempted = useRef("");
   useEffect(() => {
-    if (query && query !== attempted.current && !walked.current && !expandingAll) {
+    if (!query) attempted.current = "";
+    else if (query !== attempted.current && !walked.current && !expandingAll) {
       attempted.current = query;
       void walk(false);
     }
@@ -532,7 +534,7 @@ function FileTree({
                 data-context-value={entry.path}
                 data-context-label="Copy path"
                 data-context-directory={entry.isDirectory ? "" : undefined}
-                data-context-expanded={entry.isDirectory ? open : undefined}
+                data-context-expanded={entry.isDirectory ? expanded.has(entry.path) : undefined}
                 onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
               >
                 {entry.isDirectory ? (
@@ -593,7 +595,7 @@ function FileTree({
           data-context-value={root}
           data-context-label="Copy path"
           data-context-directory
-          data-context-expanded={rootOpen}
+          data-context-expanded={expanded.has(root)}
           onClick={() => void toggle(root)}
         >
           <ChevronRight
