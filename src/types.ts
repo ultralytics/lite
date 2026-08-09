@@ -48,6 +48,13 @@ export function folderName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? "";
 }
 
+// A session is named for its folder until someone or something names it better; a root path that
+// names no folder falls back to "Session". Creation and every is-it-still-the-default comparison
+// share this one spelling.
+export function defaultSessionName(cwd: string): string {
+  return folderName(cwd) || "Session";
+}
+
 // A remote names a repository; the scheme and host that reach it are the tooltip's job.
 export function repoName(url: string): string {
   return url.replace(/^https:\/\/[^/]+\//, "");

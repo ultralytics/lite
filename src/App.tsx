@@ -95,7 +95,7 @@ import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
-import { type Agent, folderName, repoName, type Session, sessionLabel } from "@/types";
+import { type Agent, defaultSessionName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -600,7 +600,7 @@ function loadSessions(): Session[] {
       .map((session) => ({
         ...session,
         running: false,
-        renamed: session.renamed ?? session.name !== folderName(session.cwd),
+        renamed: session.renamed ?? session.name !== defaultSessionName(session.cwd),
       }));
   } catch {
     return [];
@@ -1149,7 +1149,12 @@ function App() {
       const session = current.find((item) => item.id === sessionId);
       if (!session || session.mode || session.renamed) return current;
       const name = subject(title);
-      if (!name || name === session.name || name === sessionLabel(session) || name === folderName(session.cwd)) {
+      if (
+        !name ||
+        name === session.name ||
+        name === sessionLabel(session) ||
+        name === defaultSessionName(session.cwd)
+      ) {
         return current;
       }
       return current.map((item) => (item.id === sessionId ? { ...item, name } : item));
@@ -1931,7 +1936,9 @@ function App() {
                                   );
                                 setSessions((current) =>
                                   current.map((item) =>
-                                    item.id === session.id && !item.renamed && item.name === folderName(item.cwd)
+                                    item.id === session.id &&
+                                    !item.renamed &&
+                                    item.name === defaultSessionName(item.cwd)
                                       ? { ...item, name: subject(text) }
                                       : item,
                                   ),
