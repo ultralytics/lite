@@ -73,7 +73,7 @@ const CodePreview = lazy(() => import("@/code-preview"));
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
-const BARE_ITEM = /(?:^|[^\w#])#(\d{1,9})(?!\w)/g;
+const BARE_ITEM = /(?:^|[^\w#])#([1-9]\d{0,8})(?!\w)/g;
 
 function namedInSession(sessionId: string, remote: string) {
   const text = readOutput(sessionId).replace(COLOR, "");
@@ -479,10 +479,14 @@ function FileTree({
     }
   }
 
-  // A search has to see the whole tree, so the first keystroke loads it and a later one retries a
-  // walk that failed; one that succeeded is not repeated.
+  // A search has to see the whole tree, so the first keystroke loads it and the next keystroke — not
+  // the render a failure causes — retries a walk that failed; one that succeeded is not repeated.
+  const attempted = useRef("");
   useEffect(() => {
-    if (query && !walked.current && !expandingAll) void walk(false);
+    if (query && query !== attempted.current && !walked.current && !expandingAll) {
+      attempted.current = query;
+      void walk(false);
+    }
   });
 
   const lowered = query.trim().toLowerCase();

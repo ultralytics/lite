@@ -630,8 +630,11 @@ fn github_item_parts(url: &str) -> Option<(String, String, String)> {
     if !matches!(parts.next()?, "pull" | "issues") {
         return None;
     }
+    // A leading zero would also make the number an invalid GraphQL Int literal, poisoning the batch.
     let number = parts.next()?;
-    if number.is_empty() || number.len() > 9 || !number.chars().all(|digit| digit.is_ascii_digit())
+    if !matches!(number.chars().next(), Some('1'..='9'))
+        || number.len() > 9
+        || !number.chars().all(|digit| digit.is_ascii_digit())
     {
         return None;
     }
