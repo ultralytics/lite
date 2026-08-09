@@ -70,27 +70,35 @@ import {
 const CodePreview = lazy(() => import("@/code-preview"));
 
 // A session's terminal is the only record of what it worked on, so what it named is read back out of
-// the output Lite already keeps: every whole pull request or issue link GitHub prints verbatim, and
-// every bare "#12" the conversation names one by. A bare number is a guess — it is as easily a line
-// number — so it is sent separately and only shown once GitHub confirms it names real work in the
-// session's own repository, which is the only repository a bare number can mean.
+// the output Lite already keeps: every whole pull request or issue link GitHub prints verbatim, the
+// "owner/repo#12" GitHub itself links work by, and the bare "#12" a conversation names one by. Neither
+// short form is a link, so both are sent separately and only shown once GitHub confirms them, and a
+// bare number names no repository so it can only mean the session's own. It is also how a terminal
+// counts what is not work, as in "[Image #1]", so only one a verb or a preposition introduces counts.
 // Only CSI is stripped, so a link inside an OSC hyperlink survives being uncoloured.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
-const BARE_ITEM = /(?:^|[^\w#])#([1-9]\d{0,8})(?!\w)/g;
+// Not preceded by a path character, so the fragment of a documentation link is not read as a reference.
+const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
+const BARE_ITEM =
+  /(?:^|[^\w#])(?:prs?|pull(?:s|\s+requests?)?|issues?|close[sd]?|fix(?:e[sd])?|resolve[sd]?|see|at|in|on|and|to)\s+#([1-9]\d{0,8})(?!\w)/gi;
+const SCANNED_OUTPUT = 50_000;
 
 function namedInSession(sessionId: string, remote: string) {
-  const text = readOutput(sessionId).replace(COLOR, "");
+  const buffered = readOutput(sessionId);
+  // The window opens at a line boundary, so a link is never read as the half of it that fit.
+  const cut = buffered.length - SCANNED_OUTPUT;
+  const text = buffered.slice(cut > 0 ? Math.max(cut, buffered.indexOf("\n", cut) + 1) : 0).replace(COLOR, "");
   const urls = [...new Set(text.match(GITHUB_ITEM) ?? [])];
-  // A guess is spelled with the lowercase host the checker strips, however the remote cased it.
+  // A guess is spelled with the lowercase host the checker strips, and as an issue whichever kind it names.
   const prefix = "https://github.com/";
+  const guessed = new Set(
+    [...text.matchAll(QUALIFIED_ITEM)].map((match) => `${prefix}${match[1]}/${match[2]}/issues/${match[3]}`),
+  );
   const base = remote.toLowerCase().startsWith(prefix) ? prefix + remote.slice(prefix.length) : "";
-  const numbers = new Set(base ? [...text.matchAll(BARE_ITEM)].map((match) => match[1]) : []);
-  for (const url of urls) {
-    if (url.toLowerCase().startsWith(`${base.toLowerCase()}/`)) numbers.delete(url.split("/").pop() ?? "");
-  }
-  return { urls, guessed: [...numbers].map((number) => `${base}/issues/${number}`) };
+  if (base) for (const match of text.matchAll(BARE_ITEM)) guessed.add(`${base}/issues/${match[1]}`);
+  return { urls, guessed: [...guessed] };
 }
 
 interface GitHubReference {
