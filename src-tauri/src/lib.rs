@@ -9,7 +9,10 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, SystemTime},
 };
@@ -35,10 +38,12 @@ struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     run_id: String,
-    agent_watch: u64,
+    alive: Arc<AtomicBool>,
+    agent_watch: Arc<AtomicU64>,
 }
 
 fn stop_pty(session: &mut PtySession) -> Result<(), String> {
+    session.alive.store(false, Ordering::Relaxed);
     let running = session
         .child
         .try_wait()
@@ -2245,7 +2250,8 @@ async fn spawn_session(
             master: pair.master,
             writer,
             run_id: run_id.clone(),
-            agent_watch: 0,
+            alive: Arc::new(AtomicBool::new(true)),
+            agent_watch: Arc::new(AtomicU64::new(0)),
         },
     );
     drop(running);
@@ -2393,14 +2399,19 @@ fn watch_shell_agent(
     if !matches!(agent.as_str(), "claude" | "codex" | "kimi") {
         return Err("Unknown agent".into());
     }
-    let (root, run_id) = {
+    let (root, run_id, alive, agent_watch) = {
         let sessions = sessions.0.lock().map_err(|error| error.to_string())?;
         let session = sessions.get(&session_id).ok_or("Session is not running")?;
         let root = session
             .child
             .process_id()
             .ok_or("Session has no process id")?;
-        (sysinfo::Pid::from_u32(root), session.run_id.clone())
+        (
+            sysinfo::Pid::from_u32(root),
+            session.run_id.clone(),
+            Arc::clone(&session.alive),
+            Arc::clone(&session.agent_watch),
+        )
     };
     thread::spawn(move || {
         let discover = ProcessRefreshKind::nothing()
@@ -2409,38 +2420,20 @@ fn watch_shell_agent(
         let mut system = System::new();
         let mut processes = Vec::new();
         for _ in 0..10 {
-            system.refresh_processes_specifics(ProcessesToUpdate::All, true, discover);
-            let running = app.state::<Sessions>().0.lock().is_ok_and(|sessions| {
-                sessions
-                    .get(&session_id)
-                    .is_some_and(|session| session.run_id == run_id)
-            });
-            if !running {
+            if !alive.load(Ordering::Relaxed) {
                 return;
             }
+            system.refresh_processes_specifics(ProcessesToUpdate::All, true, discover);
             processes = agent_descendants(&system, root, &agent);
             if !processes.is_empty() {
                 break;
             }
             thread::sleep(Duration::from_millis(500));
         }
-        if processes.is_empty() {
+        if processes.is_empty() || !alive.load(Ordering::Relaxed) {
             return;
         }
-        let watch = {
-            let sessions_state = app.state::<Sessions>();
-            let Ok(mut sessions) = sessions_state.0.lock() else {
-                return;
-            };
-            let Some(session) = sessions.get_mut(&session_id) else {
-                return;
-            };
-            if session.run_id != run_id {
-                return;
-            }
-            session.agent_watch += 1;
-            session.agent_watch
-        };
+        let watch = agent_watch.fetch_add(1, Ordering::Relaxed) + 1;
         let _ = app.emit(
             "shell-agent",
             ShellAgent {
@@ -2458,6 +2451,9 @@ fn watch_shell_agent(
         );
         loop {
             thread::sleep(Duration::from_secs(1));
+            if !alive.load(Ordering::Relaxed) || agent_watch.load(Ordering::Relaxed) != watch {
+                return;
+            }
             system.refresh_processes_specifics(
                 ProcessesToUpdate::Some(&processes),
                 true,
@@ -2465,21 +2461,14 @@ fn watch_shell_agent(
             );
             processes.retain(|pid| system.process(*pid).is_some());
             if processes.is_empty() {
-                let current = app.state::<Sessions>().0.lock().is_ok_and(|sessions| {
-                    sessions.get(&session_id).is_some_and(|session| {
-                        session.run_id == run_id && session.agent_watch == watch
-                    })
-                });
-                if current {
-                    let _ = app.emit(
-                        "shell-agent",
-                        ShellAgent {
-                            session_id,
-                            run_id,
-                            agent: None,
-                        },
-                    );
-                }
+                let _ = app.emit(
+                    "shell-agent",
+                    ShellAgent {
+                        session_id,
+                        run_id,
+                        agent: None,
+                    },
+                );
                 return;
             }
         }

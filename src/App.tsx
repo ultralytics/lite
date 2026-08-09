@@ -1460,32 +1460,38 @@ function App() {
               className="flex h-full shrink-0 items-center gap-2 overflow-hidden px-3 in-data-[titlebar=overlay]:pl-[86px]"
               style={{ width: "var(--sidebar-width, 20%)" }}
             >
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className="shrink-0"
-                      aria-label="Lite on GitHub"
-                      data-context-url="https://github.com/ultralytics/lite"
-                      onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
-                    />
-                  }
-                >
-                  <LiteLogomark className="size-5" />
-                </TooltipTrigger>
-                <TooltipContent>View Lite on GitHub</TooltipContent>
-              </Tooltip>
-              <VersionBadge
-                version={version}
-                commit={commit}
-                built={built}
-                release={release}
-                onCheck={() => void checkForUpdates()}
-              />
+              {shut.sidebar ? null : (
+                <>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="shrink-0"
+                          aria-label="Lite on GitHub"
+                          data-context-url="https://github.com/ultralytics/lite"
+                          onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+                        />
+                      }
+                    >
+                      <LiteLogomark className="size-5" />
+                    </TooltipTrigger>
+                    <TooltipContent>View Lite on GitHub</TooltipContent>
+                  </Tooltip>
+                  <VersionBadge
+                    version={version}
+                    commit={commit}
+                    built={built}
+                    release={release}
+                    onCheck={() => void checkForUpdates()}
+                  />
+                </>
+              )}
             </div>
-            <div className="flex h-full min-w-0 flex-1 items-center gap-2 border-l px-3">
+            <div
+              className={`flex h-full min-w-0 flex-1 items-center gap-2 pr-3 pl-[13px] ${shut.sidebar ? "in-data-[titlebar=overlay]:pl-[42px]" : ""}`}
+            >
               {selected ? (
                 <>
                   <ProviderIcon
@@ -1503,7 +1509,7 @@ function App() {
               )}
             </div>
             {selected ? (
-              <div className="relative h-full shrink-0 border-l" style={{ width: "var(--inspector-width, 25%)" }}>
+              <div className="relative h-full shrink-0" style={{ width: "var(--inspector-width, 25%)" }}>
                 {remote ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -1511,7 +1517,7 @@ function App() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className={`absolute top-0.5 right-20 min-w-0 gap-1.5 text-muted-foreground ${shut.inspector ? "max-w-56" : "left-2 justify-start"}`}
+                          className={`absolute top-0.5 right-20 min-w-0 gap-1.5 text-muted-foreground ${shut.inspector ? "max-w-56" : "left-[9px] justify-start"}`}
                           data-context-url={remote}
                           onClick={() => void invoke("open_url", { url: remote })}
                         />
