@@ -1357,39 +1357,42 @@ fn kimi_provider_name(config: &toml_edit::DocumentMut) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn kimi_env_api_key(provider: &dyn toml_edit::TableLike) -> Option<&'static str> {
+    match provider.get("type")?.as_str()? {
+        "kimi" => Some("KIMI_API_KEY"),
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        "openai" | "openai_responses" => Some("OPENAI_API_KEY"),
+        "google-genai" => Some("GOOGLE_API_KEY"),
+        "vertexai" => Some("VERTEXAI_API_KEY"),
+        _ => None,
+    }
+}
+
 fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
     let config = fs::read_to_string(kimi_home(app).ok()?.join("config.toml")).ok()?;
     let config = config.parse::<toml_edit::DocumentMut>().ok()?;
     let provider = kimi_provider_name(&config)?;
-    let provider = config.get("providers")?.get(&provider)?.as_table()?;
+    let provider = config.get("providers")?.get(&provider)?.as_table_like()?;
 
     let api_key = provider
         .get("api_key")
         .and_then(toml_edit::Item::as_str)
         .filter(|key| !key.trim().is_empty())
         .or_else(|| {
+            let name = kimi_env_api_key(provider)?;
             provider
                 .get("env")
-                .and_then(toml_edit::Item::as_table)
-                .and_then(|env| {
-                    env.iter().find_map(|(name, value)| {
-                        if !name.ends_with("_API_KEY") {
-                            return None;
-                        }
-                        value.as_str().filter(|key| !key.trim().is_empty())
-                    })
-                })
+                .and_then(toml_edit::Item::as_table_like)
+                .and_then(|env| env.get(name))
+                .and_then(toml_edit::Item::as_str)
+                .filter(|key| !key.trim().is_empty())
         });
     if let Some(api_key) = api_key {
         Some(CliAuth {
             method: CliAuthMethod::ApiKey,
             key_hint: Some(key_hint(api_key)),
         })
-    } else if provider
-        .get("oauth")
-        .and_then(toml_edit::Item::as_table)
-        .is_some()
-    {
+    } else if provider.get("oauth").is_some() {
         Some(CliAuth {
             method: CliAuthMethod::Provider,
             key_hint: None,
@@ -1401,6 +1404,9 @@ fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
 
 fn delete_kimi_api_key(app: &AppHandle) -> Result<(), String> {
     let path = kimi_home(app)?.join("config.toml");
+    let permissions = fs::metadata(&path)
+        .map_err(|error| error.to_string())?
+        .permissions();
     let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
     let mut config = text
         .parse::<toml_edit::DocumentMut>()
@@ -1408,28 +1414,22 @@ fn delete_kimi_api_key(app: &AppHandle) -> Result<(), String> {
     let provider = kimi_provider_name(&config).ok_or("Kimi's default provider is missing")?;
     let provider = config
         .get_mut("providers")
-        .and_then(toml_edit::Item::as_table_mut)
+        .and_then(toml_edit::Item::as_table_like_mut)
         .and_then(|providers| providers.get_mut(&provider))
-        .and_then(toml_edit::Item::as_table_mut)
+        .and_then(toml_edit::Item::as_table_like_mut)
         .ok_or("Kimi's default provider is missing")?;
 
-    let mut removed = provider.remove("api_key").is_some();
-    if let Some(env) = provider
-        .get_mut("env")
-        .and_then(toml_edit::Item::as_table_mut)
-    {
-        let api_keys: Vec<String> = env
-            .iter()
-            .filter(|(name, _)| name.ends_with("_API_KEY"))
-            .map(|(name, _)| name.to_owned())
-            .collect();
-        removed |= !api_keys.is_empty();
-        for name in api_keys {
-            env.remove(&name);
-        }
-    }
+    let env_api_key = kimi_env_api_key(provider);
+    let removed = provider.remove("api_key").is_some()
+        || env_api_key.is_some_and(|name| {
+            provider
+                .get_mut("env")
+                .and_then(toml_edit::Item::as_table_like_mut)
+                .is_some_and(|env| env.remove(name).is_some())
+        });
     if removed {
         write_atomic(&path, config.to_string().as_bytes())?;
+        fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
     }
     Ok(())
 }

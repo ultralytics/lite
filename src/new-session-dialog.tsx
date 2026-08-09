@@ -101,8 +101,8 @@ export function NewSessionDialog({
       .then((result) => {
         if (!disposed) setAuth(result);
       })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
+      .catch(() => {
+        if (!disposed) setAuth([]);
       });
     // Checked only while the dialog is open, so Lite never probes the system in the background.
     for (const option of choices) {

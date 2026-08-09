@@ -657,6 +657,12 @@ const gitStatusCache = new Map<string, GitStatus | null>();
 const githubItemsCache = new Map<string, GitHubItem[]>();
 const usageCache = new Map<string, UsageSnapshot | null>();
 
+export function clearInspectorCache(sessionId: string, rootId: string) {
+  gitStatusCache.delete(rootId);
+  githubItemsCache.delete(sessionId);
+  usageCache.delete(sessionId);
+}
+
 function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
   // A mount revalidates the cached snapshot, and the refresh button mounts the panel again. Nothing
   // watches Git or GitHub between those explicit reads.

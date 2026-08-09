@@ -170,6 +170,7 @@ export function TerminalView({
         !event.altKey &&
         !event.ctrlKey &&
         !event.metaKey &&
+        event.keyCode !== 229 &&
         event.key.length === 1 &&
         event.key >= "A" &&
         event.key <= "Z"
