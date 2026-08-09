@@ -722,6 +722,20 @@ fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem
         // prints that body either way; only a body that never arrived is no answer at all.
         serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()
     });
+    // Dropping a reference takes GitHub's word for it: a NOT_FOUND filed against the alias. An item
+    // that is merely null — a resolver that failed some other way in an otherwise partial answer —
+    // proved nothing.
+    let not_found: HashSet<&str> = answer
+        .as_ref()
+        .and_then(|body| body["errors"].as_array())
+        .map(|errors| {
+            errors
+                .iter()
+                .filter(|error| error["type"].as_str() == Some("NOT_FOUND"))
+                .filter_map(|error| error["path"][0].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
     let mut found = Vec::new();
     for (index, lookup) in lookups.iter().enumerate() {
         let alias = format!("q{index}");
@@ -757,7 +771,7 @@ fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem
                 });
             }
             // The repository was read and searched, and the number names nothing in it.
-            Some(repository) if !repository.is_null() => {}
+            Some(repository) if !repository.is_null() && not_found.contains(alias.as_str()) => {}
             _ if !lookup.guessed => found.push(GitHubItem {
                 url: lookup.url.clone(),
                 title: None,
