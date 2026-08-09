@@ -995,7 +995,6 @@ function UsagePanel({ session }: { session: Session }) {
       agent: session.agent,
       provider: session.provider,
       sessionId: session.id,
-      providerSessionId: session.providerSessionId,
     })
       .then((next) => {
         if (!disposed) {
@@ -1009,7 +1008,7 @@ function UsagePanel({ session }: { session: Session }) {
     return () => {
       disposed = true;
     };
-  }, [session.agent, session.provider, session.id, session.providerSessionId]);
+  }, [session.agent, session.provider, session.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

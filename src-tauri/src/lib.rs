@@ -1213,27 +1213,21 @@ fn codex_requests(
     codex_requests_once(&endpoint, requests)
 }
 
-// Codex records what a thread holds in context only in the thread's own rollout file, and the newest
-// count sits at its end. The tail is read rather than the file so a long thread stays cheap, and a
-// line the CLI is still writing simply fails to parse and is passed over.
-fn codex_context(path: &Path) -> Option<(f64, u64, u64)> {
+// The newest token count in a thread's rollout file, less the baseline Codex itself discounts.
+fn codex_context(path: &Path) -> Option<UsageSnapshot> {
     const BASELINE_TOKENS: u64 = 12_000;
+    const TAIL_BYTES: u64 = 256 * 1024;
     let mut file = fs::File::open(path).ok()?;
     let length = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(length.saturating_sub(256 * 1024)))
+    file.seek(SeekFrom::Start(length.saturating_sub(TAIL_BYTES)))
         .ok()?;
     let mut tail = Vec::new();
-    file.read_to_end(&mut tail).ok()?;
+    file.take(TAIL_BYTES).read_to_end(&mut tail).ok()?;
     let (tokens, window) = String::from_utf8_lossy(&tail)
         .lines()
         .rev()
+        .filter(|line| line.contains("token_count"))
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|event| {
-            event
-                .pointer("/payload/type")
-                .and_then(serde_json::Value::as_str)
-                == Some("token_count")
-        })
         .find_map(|event| {
             let info = event.pointer("/payload/info")?;
             Some((
@@ -1243,15 +1237,16 @@ fn codex_context(path: &Path) -> Option<(f64, u64, u64)> {
                     .and_then(serde_json::Value::as_u64)?,
             ))
         })?;
-    // Codex measures the window the user can fill, past the system prompt and tool instructions that
-    // are always in it, so the panel reports the share the Codex CLI itself would report.
     let effective = window.checked_sub(BASELINE_TOKENS)?;
-    let used = tokens.saturating_sub(BASELINE_TOKENS);
-    Some((
-        (used as f64 / effective as f64 * 100.0).clamp(0.0, 100.0),
-        tokens,
-        window,
-    ))
+    Some(UsageSnapshot {
+        context_used_percent: Some(
+            (tokens.saturating_sub(BASELINE_TOKENS) as f64 / effective as f64 * 100.0)
+                .clamp(0.0, 100.0),
+        ),
+        context_window: Some(window),
+        context_tokens: Some(tokens),
+        ..UsageSnapshot::default()
+    })
 }
 
 fn codex_usage(server: &CodexServer, thread_id: Option<&str>) -> Result<UsageSnapshot, String> {
@@ -1319,14 +1314,11 @@ fn codex_usage(server: &CodexServer, thread_id: Option<&str>) -> Result<UsageSna
         .and_then(serde_json::Value::as_str)
         .and_then(|path| codex_context(Path::new(path)));
     Ok(UsageSnapshot {
-        context_used_percent: context.map(|(percent, _, _)| percent),
-        context_window: context.map(|(_, _, window)| window),
-        context_tokens: context.map(|(_, tokens, _)| tokens),
         lifetime_tokens: summary
             .and_then(|value| value.pointer("/summary/lifetimeTokens"))
             .and_then(serde_json::Value::as_u64),
         windows,
-        ..UsageSnapshot::default()
+        ..context.unwrap_or_default()
     })
 }
 
@@ -3194,10 +3186,10 @@ async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<S
 async fn read_usage(
     app: AppHandle,
     codex_server: State<'_, CodexServer>,
+    provider_sessions: State<'_, ProviderSessions>,
     agent: String,
     provider: Option<String>,
     session_id: String,
-    provider_session_id: Option<String>,
 ) -> Result<Option<UsageSnapshot>, String> {
     // A custom-provider Codex session does not bill OpenAI, so OpenAI account limits are not its usage.
     if agent == "codex" && codex_provider(provider.as_deref()).is_some() {
@@ -3279,7 +3271,16 @@ async fn read_usage(
                 || !usage.windows.is_empty())
             .then_some(usage))
         }
-        "codex" => codex_usage(&codex_server, provider_session_id.as_deref()).map(Some),
+        "codex" => {
+            // The thread is discovered after the session starts, so it is read here, not passed in.
+            let thread_id = provider_sessions
+                .0
+                .lock()
+                .map_err(|error| error.to_string())?
+                .get(&session_id)
+                .cloned();
+            codex_usage(&codex_server, thread_id.as_deref()).map(Some)
+        }
         "gemini" | "kimi" | "qwen" | "shell" => Ok(None),
         _ => Err("Unknown session type".into()),
     }
