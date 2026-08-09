@@ -679,9 +679,11 @@ function FileViewer({
 
   // Escape and ArrowLeft step back to the tree from anywhere focus has wandered — after a menu closes,
   // after a click on nothing — but never out from under typing: a terminal, a field, or an open layer
-  // reads its own keys, and a key one of them has already answered is not answered again.
+  // reads its own keys, and a key one of them has already answered is not answered again. The panel
+  // stays mounted behind other tabs and the collapsed rail, so a viewer nobody can see answers nothing.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
+      if (!viewer.current || viewer.current.offsetParent === null) return;
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
       const target = event.target;
