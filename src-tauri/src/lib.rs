@@ -2068,6 +2068,7 @@ fn login_command(agent: &str) -> Result<CommandBuilder, String> {
 #[serde(rename_all = "camelCase")]
 struct Availability {
     available: bool,
+    installable: bool,
     detail: String,
 }
 
@@ -2096,6 +2097,7 @@ async fn agent_availability(
         "shell" => {
             return Ok(Availability {
                 available: true,
+                installable: false,
                 detail: String::new(),
             });
         }
@@ -2104,6 +2106,7 @@ async fn agent_availability(
     if !agent_executable(&agent).is_some_and(executable_exists) {
         return Ok(Availability {
             available: false,
+            installable: true,
             detail: missing.into(),
         });
     }
@@ -2115,6 +2118,7 @@ async fn agent_availability(
             || codex_declares_provider(&app, codex_provider.id);
         return Ok(Availability {
             available: configured,
+            installable: false,
             detail: if configured {
                 String::new()
             } else {
@@ -2127,8 +2131,68 @@ async fn agent_availability(
     }
     Ok(Availability {
         available: true,
+        installable: false,
         detail: String::new(),
     })
+}
+
+#[tauri::command]
+async fn install_agent(agent: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut command = if agent == "kimi" {
+            #[cfg(windows)]
+            {
+                let powershell = resolve_executable("powershell")
+                    .ok_or("Could not find PowerShell in your PATH")?;
+                let mut command = Command::new(powershell);
+                command.args([
+                    "-NoProfile",
+                    "-Command",
+                    "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
+                ]);
+                command
+            }
+            #[cfg(unix)]
+            {
+                let mut command = Command::new("/bin/sh");
+                command.args([
+                    "-c",
+                    "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+                ]);
+                command
+            }
+        } else {
+            let package = match agent.as_str() {
+                "claude" => "@anthropic-ai/claude-code",
+                "codex" => "@openai/codex",
+                "gemini" => "@google/gemini-cli",
+                "qwen" => "@qwen-code/qwen-code@latest",
+                _ => return Err("This session type cannot be installed automatically".into()),
+            };
+            let npm = resolve_executable("npm").ok_or("Install Node.js and npm first")?;
+            let mut command = Command::new(npm);
+            command.args(["install", "-g", package]);
+            command
+        };
+        if let Some(path) = user_path() {
+            command.env("PATH", path);
+        }
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not run the installer: {error}"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = detail.trim();
+        Err(if detail.is_empty() {
+            format!("The {agent} installer exited with {}", output.status)
+        } else {
+            detail.to_owned()
+        })
+    })
+    .await
+    .map_err(|error| format!("Could not finish the install: {error}"))?
 }
 
 #[tauri::command]
@@ -3225,6 +3289,7 @@ pub fn run() {
             git_remote,
             read_usage,
             agent_availability,
+            install_agent,
             open_setup_docs,
             open_url,
             open_directory,

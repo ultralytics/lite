@@ -1,6 +1,6 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { Route, SquareTerminal } from "lucide-react";
+import { SquareTerminal } from "lucide-react";
 
 import type { Agent, ModelProvider } from "@/types";
 
@@ -18,7 +18,7 @@ export const ProviderIcon = ({
     return provider === "deepseek" ? (
       <DeepSeekLogomark className={className} />
     ) : provider === "openrouter" ? (
-      <Route className={className} />
+      <OpenRouterLogomark className={className} />
     ) : (
       <OpenAILogomark className={className} />
     );
@@ -27,6 +27,16 @@ export const ProviderIcon = ({
   if (agent === "qwen") return <AlibabaLogomark className={className} />;
   return <SquareTerminal className={className} />;
 };
+
+const OpenRouterLogomark = ({ className = "size-4" }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 401.4 293.7" role="img" aria-label="OpenRouter">
+    <title>OpenRouter</title>
+    <path
+      className="fill-[#7624F4] dark:fill-[#C8FF00]"
+      d="M303.9475 17.1993c42.7973 0 77.4893 34.6933 77.4893 77.4893s-34.692 77.4893-77.4893 77.4893l76.8617 76.8625c9.7636 9.7631 2.849 26.4566-10.957 26.4566H148.9688c-71.3268 0-129.1489-57.822-129.1489-129.1489S77.642 17.1993 148.9688 17.1993h154.9787ZM148.9688 68.8588c-42.796 0-77.4893 34.6933-77.4893 77.4893s34.6933 77.4894 77.4893 77.4894 77.4894-34.6933 77.4894-77.4894-34.6933-77.4893-77.4894-77.4893Z"
+    />
+  </svg>
+);
 
 // Reused from Portal's shared icon source.
 const GoogleIcon = ({ className = "size-4" }: { className?: string }) => (

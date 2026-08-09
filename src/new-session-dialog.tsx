@@ -39,6 +39,7 @@ interface DirectoryGrant {
 
 interface Availability {
   available: boolean;
+  installable: boolean;
   detail: string;
 }
 
@@ -56,10 +57,11 @@ export function NewSessionDialog({
   const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
+  const [installing, setInstalling] = useState("");
   const [error, setError] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
-  // An agent that is not installed cannot take a session yet, so the dialog offers its setup guide instead.
+  // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
 
   useEffect(() => {
@@ -129,6 +131,7 @@ export function NewSessionDialog({
   }
 
   function changeOpen(open: boolean) {
+    if (!open && installing) return;
     if (!open && directory) {
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
@@ -153,12 +156,31 @@ export function NewSessionDialog({
     onOpenChange(false);
   }
 
+  async function install() {
+    setInstalling(choice.id);
+    setError("");
+    try {
+      await invoke("install_agent", { agent: choice.agent });
+      const result = await invoke<Availability>("agent_availability", {
+        agent: choice.agent,
+        provider: choice.provider,
+      });
+      setAvailability((current) => ({ ...current, [choice.id]: result }));
+      if (!result.available) setError(result.detail);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setInstalling("");
+    }
+  }
+
   // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
   // and a second click on the agent already chosen. An agent that is not installed reads them all as a
-  // request for its setup guide, which is the only one of the two it can answer.
-  const ready = Boolean(missing || (path.trim() && status));
+  // request to install it, which is the only one of the two it can answer.
+  const ready = Boolean(!installing && (missing || (path.trim() && status)));
   function start() {
-    if (missing)
+    if (missing?.installable) void install();
+    else if (missing)
       void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
         setError(String(reason)),
       );
@@ -220,6 +242,7 @@ export function NewSessionDialog({
                         <button
                           type="button"
                           aria-pressed={active}
+                          disabled={Boolean(installing)}
                           onClick={() => (active && ready ? start() : setChoiceId(option.id))}
                         />
                       }
@@ -258,12 +281,18 @@ export function NewSessionDialog({
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => changeOpen(false)}>
+            <Button variant="outline" disabled={Boolean(installing)} onClick={() => changeOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!ready}>
-              {status ? null : <Spinner />}
-              {missing ? "Open setup guide" : "Start session"}
+              {!status || installing ? <Spinner /> : null}
+              {installing
+                ? `Installing ${sessionLabel(choice)}…`
+                : missing?.installable
+                  ? `Install ${sessionLabel(choice)}`
+                  : missing
+                    ? "Open setup guide"
+                    : "Start session"}
             </Button>
           </DialogFooter>
         </form>
