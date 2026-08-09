@@ -632,19 +632,23 @@ function SessionBadge({
   session,
   agent = session.agent,
   active,
+  attention,
   starting,
   working,
 }: {
   session: Session;
   agent?: Agent;
   active: boolean;
+  attention: boolean;
   starting: boolean;
   working: boolean;
 }) {
   const status = SESSION_STATUS[!session.running ? "disconnected" : working ? "working" : "idle"];
   const ring = active ? "ring-sidebar-accent" : "ring-sidebar";
   return (
-    <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
+    <span
+      className={`relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background ${attention ? "border-sky-500 ring-2 ring-sky-500/70 ring-offset-1 ring-offset-sidebar" : ""}`}
+    >
       <ProviderIcon agent={agent} provider={session.provider} />
       {starting ? (
         <Spinner
@@ -654,7 +658,7 @@ function SessionBadge({
         <span
           role="img"
           className={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ${ring} ${status.dot}`}
-          aria-label={status.label}
+          aria-label={attention ? `${status.label}; needs attention` : status.label}
         />
       )}
     </span>
@@ -710,6 +714,7 @@ function SessionRow({
   session,
   agent,
   active,
+  attention,
   starting,
   working,
   renaming,
@@ -722,6 +727,7 @@ function SessionRow({
   session: Session;
   agent?: Agent;
   active: boolean;
+  attention: boolean;
   starting: boolean;
   working: boolean;
   renaming: boolean;
@@ -750,7 +756,14 @@ function SessionRow({
       className={`flex-nowrap transition-[color,background-color,opacity] active:opacity-70 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
-        <SessionBadge session={session} agent={agent} active={active} starting={starting} working={working} />
+        <SessionBadge
+          session={session}
+          agent={agent}
+          active={active}
+          attention={attention}
+          starting={starting}
+          working={working}
+        />
       </ItemMedia>
       {renaming ? (
         <Input
@@ -900,6 +913,7 @@ function commandAgent(command: string): Agent | undefined {
 function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
+  const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
@@ -938,6 +952,7 @@ function App() {
   const updateDialog = useRef<HTMLDivElement>(null);
   const runs = useRef(new Map<string, string>());
   const sessionsRef = useRef(sessions);
+  const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
   const pendingCleanups = useRef(new Set<() => Promise<void>>());
   const resumed = useRef("");
@@ -946,6 +961,21 @@ function App() {
   const selectedRef = useRef<Session>(undefined);
   const closeRef = useRef<(session: Session) => void>(() => {});
   const openRef = useRef<(session: Session) => void>(() => {});
+  const markAttention = useCallback((sessionId: string) => {
+    const current = attentionRef.current;
+    if (current[current.length - 1] === sessionId) return;
+    const next = current.filter((id) => id !== sessionId);
+    next.push(sessionId);
+    attentionRef.current = next;
+    setAttention(next);
+  }, []);
+  const clearAttention = useCallback((sessionId: string) => {
+    const current = attentionRef.current;
+    if (!current.includes(sessionId)) return;
+    const next = current.filter((id) => id !== sessionId);
+    attentionRef.current = next;
+    setAttention(next);
+  }, []);
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
   const selectedStarting = selected ? startingIds.has(selected.id) : false;
   // A session is found by what names it: the subject it was given and the folder it works in.
@@ -962,6 +992,7 @@ function App() {
   selectedRef.current = selected;
   closeRef.current = closeSession;
   openRef.current = (session) => {
+    clearAttention(session.id);
     setSelectedId(session.id);
     if (!session.running && !startingIds.has(session.id)) void launch(session, true);
   };
@@ -1040,6 +1071,21 @@ function App() {
     return () => void closing.then((unlisten) => unlisten());
   }, []);
 
+  // Opening a session reads its current notifications. A later notification remains highlighted until
+  // the user returns to that session, including when it arrives in the already selected session.
+  useEffect(() => {
+    if (selectedId && document.hasFocus()) clearAttention(selectedId);
+  }, [selectedId, clearAttention]);
+
+  useEffect(() => {
+    const readSelected = () => {
+      const sessionId = selectedRef.current?.id;
+      if (sessionId) clearAttention(sessionId);
+    };
+    window.addEventListener("focus", readSelected);
+    return () => window.removeEventListener("focus", readSelected);
+  }, [clearAttention]);
+
   // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1047,7 +1093,14 @@ function App() {
       if (event.key === "n") setNewSessionOpen(true);
       else if (event.key === ",") setSettingsOpen(true);
       else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
-      else if (event.key >= "1" && event.key <= "9") {
+      else if (event.shiftKey && event.key.toLowerCase() === "u") {
+        const target = [...attentionRef.current]
+          .reverse()
+          .map((id) => sessionsRef.current.find((session) => session.id === id))
+          .find((session) => session !== undefined);
+        if (!target) return;
+        openRef.current(target);
+      } else if (event.key >= "1" && event.key <= "9") {
         // The numbers count the sessions the sidebar is showing, so a search narrows them with the list.
         const target = visibleRef.current[Number(event.key) - 1];
         if (!target) return;
@@ -1181,9 +1234,10 @@ function App() {
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const { title, path, activity } = appendOutput(payload.sessionId, payload.data);
+        const { title, path, activity, notification } = appendOutput(payload.sessionId, payload.data);
         if (title) markTitle(payload.sessionId, title);
         if (path) markDirectory(payload.sessionId, path);
+        if (notification) markAttention(payload.sessionId);
         if (activity !== false) markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
@@ -1229,7 +1283,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [markDirectory, markWorking, markTitle]);
+  }, [markAttention, markDirectory, markWorking, markTitle]);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
     if (runs.current.has(session.id)) return true;
@@ -1376,6 +1430,7 @@ function App() {
   // session it resumed by id is retained only until the shared Undo window expires.
   function restartSession(session: Session, select = true) {
     if (startingIds.has(session.id)) return;
+    clearAttention(session.id);
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     const restarted = restartSessionNow(session, fresh, select);
     sessionUndoToast(
@@ -1499,6 +1554,7 @@ function App() {
   // metadata and directory grant remain until the toast closes without being undone.
   function closeSession(session: Session) {
     if (startingIds.has(session.id)) return;
+    clearAttention(session.id);
     const index = sessions.findIndex((item) => item.id === session.id);
     const wasSelected = selectedId === session.id;
     const nextSelectedId = sessions.find((item) => item.id !== session.id)?.id ?? "";
@@ -1831,6 +1887,7 @@ function App() {
                               session={session}
                               agent={shellAgents.get(session.id)}
                               active={session.id === selectedId}
+                              attention={attention.includes(session.id)}
                               starting={startingIds.has(session.id)}
                               working={working.has(session.id)}
                             />
@@ -1888,6 +1945,7 @@ function App() {
                             session={session}
                             agent={shellAgents.get(session.id)}
                             active={session.id === selectedId}
+                            attention={attention.includes(session.id)}
                             starting={startingIds.has(session.id)}
                             working={working.has(session.id)}
                             renaming={renamingId === session.id}
