@@ -59,6 +59,7 @@ import {
   type DirectoryListing,
   type FileEntry,
   type GitStatus,
+  providerLabel,
   type Session,
   sessionLabel,
 } from "@/types";
@@ -882,8 +883,8 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
 function missingUsage(session: Session): string {
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "kimi") return "Kimi Code keeps session usage inside its own terminal view.";
-  if (session.agent === "codex" && session.provider === "deepseek")
-    return "DeepSeek publishes no account limits locally. Codex reports this session's usage in the terminal.";
+  if (session.agent === "codex" && session.provider && session.provider !== "openai")
+    return `${providerLabel(session.provider)} publishes no account limits locally. Codex reports this session's usage in the terminal.`;
   if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
   return "This provider reports no usage locally.";
 }
@@ -920,11 +921,7 @@ function UsagePanel({ session }: { session: Session }) {
         <div className="p-3">
           <div className="mb-3 flex items-center gap-2 text-sm font-medium">
             <ProviderIcon agent={session.agent} provider={session.provider} className="size-5" />
-            {session.agent === "codex"
-              ? session.provider === "deepseek"
-                ? "DeepSeek"
-                : "OpenAI"
-              : sessionLabel(session)}
+            {session.agent === "codex" && session.provider ? providerLabel(session.provider) : sessionLabel(session)}
           </div>
           {error ? (
             <p className="text-sm text-destructive">{error}</p>

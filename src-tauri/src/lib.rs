@@ -29,9 +29,44 @@ const MAX_GIT_DIFF_BYTES: u64 = 1_000_000;
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const DEEPSEEK_PROFILE: &str = "deepseek";
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
-const SUPPORTED_KEYS: [&str; 4] = ["claude", "codex", "deepseek", "kimi"];
+const SUPPORTED_KEYS: [&str; 6] = [
+    "claude",
+    "codex",
+    "deepseek",
+    "openrouter",
+    "gemini",
+    "kimi",
+];
+
+#[derive(Clone, Copy)]
+struct CodexProvider {
+    id: &'static str,
+    name: &'static str,
+    base_url: &'static str,
+    env_key: &'static str,
+    model: &'static str,
+    setup_url: &'static str,
+}
+
+const CODEX_PROVIDERS: [CodexProvider; 2] = [
+    CodexProvider {
+        id: "deepseek",
+        name: "DeepSeek",
+        base_url: "https://api.deepseek.com/",
+        env_key: "DEEPSEEK_API_KEY",
+        model: DEEPSEEK_MODEL,
+        setup_url: "https://api-docs.deepseek.com/quick_start/agent_integrations/codex",
+    },
+    CodexProvider {
+        id: "openrouter",
+        name: "OpenRouter",
+        base_url: "https://openrouter.ai/api/v1",
+        env_key: "OPENROUTER_API_KEY",
+        model: "~openai/gpt-latest",
+        setup_url: "https://openrouter.ai/docs/cookbook/coding-agents/codex-cli",
+    },
+];
 
 struct PtySession {
     child: Box<dyn Child + Send + Sync>,
@@ -220,12 +255,14 @@ fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
             ".codex",
             ".config",
             ".docker",
+            ".gemini",
             ".git-credentials",
             ".gnupg",
             ".kimi-code",
             ".netrc",
             ".npmrc",
             ".pypirc",
+            ".qwen",
             ".ssh",
             "id_ed25519",
             "id_rsa",
@@ -1333,21 +1370,69 @@ fn shell_path(shell: &str) -> Option<String> {
 
 // An account shell that does not speak this command leaves nothing usable, so the search falls back to
 // the POSIX shell rather than losing every provider CLI.
-// Asking costs a login shell, and the answer holds for as long as Lite is open, so it is asked once
-// and every command Lite resolves afterwards is free.
+// Asking costs a login shell, so the answer is cached until Lite itself installs a CLI that changes it.
 #[cfg(unix)]
 fn user_path() -> Option<String> {
-    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    path_cache().lock().ok().and_then(|path| path.clone())
+}
+
+#[cfg(unix)]
+fn path_cache() -> &'static Mutex<Option<String>> {
+    static PATH: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
-        shell_path(&CommandBuilder::new_default_prog().get_shell())
-            .or_else(|| shell_path("/bin/sh"))
+        Mutex::new(
+            shell_path(&CommandBuilder::new_default_prog().get_shell())
+                .or_else(|| shell_path("/bin/sh")),
+        )
     })
-    .clone()
+}
+
+#[cfg(unix)]
+fn refresh_user_path() {
+    let refreshed = shell_path(&CommandBuilder::new_default_prog().get_shell())
+        .or_else(|| shell_path("/bin/sh"));
+    if let Ok(mut path) = path_cache().lock() {
+        *path = refreshed;
+    }
 }
 
 #[cfg(windows)]
 fn user_path() -> Option<String> {
-    std::env::var("PATH").ok()
+    path_cache()
+        .lock()
+        .ok()
+        .and_then(|path| path.clone())
+        .or_else(|| std::env::var("PATH").ok())
+}
+
+#[cfg(windows)]
+fn path_cache() -> &'static Mutex<Option<String>> {
+    static PATH: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(windows)]
+fn refresh_user_path() {
+    let refreshed = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "[Environment]::GetEnvironmentVariable('Path','User')",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty());
+    if let Some(refreshed) = refreshed
+        && let Ok(mut path) = path_cache().lock()
+    {
+        *path = Some(format!(
+            "{refreshed};{}",
+            std::env::var("PATH").unwrap_or_default()
+        ));
+    }
 }
 
 // Keys live in one owner-only file beside Lite's other local state, which is what the Codex and Kimi
@@ -1459,11 +1544,23 @@ fn api_keys_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("api-keys.json"))
 }
 
+fn codex_provider(id: Option<&str>) -> Option<CodexProvider> {
+    CODEX_PROVIDERS
+        .iter()
+        .copied()
+        .find(|provider| Some(provider.id) == id)
+}
+
 fn api_key_env(agent: &str, provider: Option<&str>) -> Option<(&'static str, &'static str)> {
+    if agent == "codex"
+        && let Some(provider) = codex_provider(provider)
+    {
+        return Some((provider.id, provider.env_key));
+    }
     match (agent, provider) {
         ("claude", _) => Some(("claude", "ANTHROPIC_API_KEY")),
-        ("codex", Some("deepseek")) => Some(("deepseek", "DEEPSEEK_API_KEY")),
         ("codex", _) => Some(("codex", "OPENAI_API_KEY")),
+        ("gemini", _) => Some(("gemini", "GEMINI_API_KEY")),
         ("kimi", _) => Some(("kimi", "MOONSHOT_API_KEY")),
         _ => None,
     }
@@ -1636,13 +1733,27 @@ fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuth> {
                 method: CliAuthMethod::Provider,
                 key_hint: None,
             }),
-        "deepseek" => {
-            (deepseek_profile_exists(app) || codex_declares_deepseek(app)).then_some(CliAuth {
-                method: CliAuthMethod::ApiKey,
-                key_hint: None,
-            })
+        name if CODEX_PROVIDERS.iter().any(|provider| provider.id == name) => {
+            let provider = codex_provider(Some(name))?;
+            (codex_profile_exists(app, provider.id) || codex_declares_provider(app, provider.id))
+                .then_some(CliAuth {
+                    method: CliAuthMethod::ApiKey,
+                    key_hint: None,
+                })
         }
+        "gemini" => gemini_home(app)
+            .is_ok_and(|home| home.join("oauth_creds.json").is_file())
+            .then_some(CliAuth {
+                method: CliAuthMethod::Provider,
+                key_hint: None,
+            }),
         "kimi" => kimi_auth(app),
+        "qwen" => qwen_home(app)
+            .is_ok_and(|home| home.join("oauth_creds.json").is_file())
+            .then_some(CliAuth {
+                method: CliAuthMethod::Provider,
+                key_hint: None,
+            }),
         _ => None,
     }
 }
@@ -1661,12 +1772,14 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
     let keys = load_api_keys(&app);
     Ok(SUPPORTED_KEYS
         .iter()
+        .copied()
+        .chain(["qwen"])
         .map(|name| {
             let cli_auth = cli_auth(&app, name);
             ProviderAuth {
-                name: (*name).to_owned(),
+                name: name.to_owned(),
                 // Only the last characters travel to the interface, enough to tell two keys apart.
-                key_hint: keys.get(*name).map(|key| key_hint(key)),
+                key_hint: keys.get(name).map(|key| key_hint(key)),
                 cli_auth_method: cli_auth.as_ref().map(|auth| auth.method),
                 cli_key_hint: cli_auth.and_then(|auth| auth.key_hint),
             }
@@ -1724,12 +1837,30 @@ fn executable_exists(name: &str) -> bool {
     resolve_executable(name).is_some()
 }
 
+fn agent_executable(agent: &str) -> Option<&'static str> {
+    match agent {
+        "claude" => Some("claude"),
+        "codex" => Some("codex"),
+        "gemini" => Some("gemini"),
+        "kimi" => Some("kimi"),
+        "qwen" => Some("qwen"),
+        _ => None,
+    }
+}
+
+fn agent_builder(agent: &str) -> Result<CommandBuilder, String> {
+    let executable = agent_executable(agent).ok_or("Unknown session type")?;
+    let path = resolve_executable(executable)
+        .ok_or_else(|| format!("Could not find {executable} in your PATH"))?;
+    Ok(CommandBuilder::new(path))
+}
+
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "CODEX_HOME", ".codex")
 }
 
-// Looks only for the section header. The DeepSeek credential lives in that file and is never read.
-fn codex_declares_deepseek(app: &AppHandle) -> bool {
+// Looks only for the section header. Provider credentials in that file are never read.
+fn codex_declares_provider(app: &AppHandle, provider: &str) -> bool {
     let Ok(home) = codex_home(app) else {
         return false;
     };
@@ -1739,7 +1870,7 @@ fn codex_declares_deepseek(app: &AppHandle) -> bool {
     BufReader::new(file)
         .lines()
         .map_while(Result::ok)
-        .any(|line| line.trim() == "[model_providers.deepseek]")
+        .any(|line| line.trim() == format!("[model_providers.{provider}]"))
 }
 
 // A catalog is a replacement rather than a merge, so one the user configured is left to win.
@@ -1756,10 +1887,62 @@ fn codex_declares_catalog(app: &AppHandle) -> bool {
         .any(|line| line.trim_start().starts_with("model_catalog_json"))
 }
 
-fn deepseek_profile_exists(app: &AppHandle) -> bool {
-    codex_home(app).is_ok_and(|home| {
-        home.join(format!("{DEEPSEEK_PROFILE}.config.toml"))
-            .is_file()
+fn codex_profile_exists(app: &AppHandle, provider: &str) -> bool {
+    codex_home(app).is_ok_and(|home| home.join(format!("{provider}.config.toml")).is_file())
+}
+
+fn gemini_home(app: &AppHandle) -> Result<PathBuf, String> {
+    provider_home(app, "GEMINI_CLI_HOME", ".gemini")
+}
+
+fn qwen_home(app: &AppHandle) -> Result<PathBuf, String> {
+    provider_home(app, "QWEN_HOME", ".qwen")
+}
+
+fn native_session_exists(app: &AppHandle, agent: &str, session_id: &str) -> bool {
+    let (home, directory) = match agent {
+        "gemini" => (gemini_home(app), "tmp"),
+        "qwen" => (qwen_home(app), "projects"),
+        _ => return false,
+    };
+    let Ok(projects) =
+        home.and_then(|home| fs::read_dir(home.join(directory)).map_err(|error| error.to_string()))
+    else {
+        return false;
+    };
+    let expected = if agent == "qwen" {
+        format!("{session_id}.jsonl")
+    } else {
+        format!("-{}.jsonl", session_id.chars().take(8).collect::<String>())
+    };
+    projects.flatten().take(512).any(|project| {
+        fs::read_dir(project.path().join("chats")).is_ok_and(|chats| {
+            chats.flatten().take(512).any(|chat| {
+                let name = chat.file_name();
+                let name = name.to_string_lossy();
+                if agent == "qwen" {
+                    name == expected
+                } else {
+                    name.ends_with(&expected)
+                        && fs::File::open(chat.path()).is_ok_and(|file| {
+                            BufReader::new(file)
+                                .lines()
+                                .next()
+                                .and_then(Result::ok)
+                                .and_then(|line| {
+                                    serde_json::from_str::<serde_json::Value>(&line).ok()
+                                })
+                                .and_then(|value| {
+                                    value
+                                        .get("sessionId")
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(str::to_owned)
+                                })
+                                .is_some_and(|id| id == session_id)
+                        })
+                }
+            })
+        })
     })
 }
 
@@ -1841,7 +2024,7 @@ fn agent_command(
 ) -> Result<CommandBuilder, String> {
     let mut command = match agent {
         "claude" => {
-            let mut command = CommandBuilder::new("claude");
+            let mut command = agent_builder(agent)?;
             if resume {
                 command.args(["--resume", session_id]);
             } else {
@@ -1852,31 +2035,38 @@ fn agent_command(
             command
         }
         "codex" => {
-            let mut command = CommandBuilder::new("codex");
-            // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
-            if provider == Some("deepseek") {
-                let key = saved_api_key(app, agent, provider).is_some();
-                if !key && deepseek_profile_exists(app) {
+            let mut command = agent_builder(agent)?;
+            // Providers are selected per launch so the user's default Codex provider stays untouched.
+            if let Some(provider) = codex_provider(provider) {
+                let key = saved_api_key(app, agent, Some(provider.id)).is_some();
+                if !key && codex_profile_exists(app, provider.id) {
                     // A profile the user wrote owns the whole model configuration, catalog included.
-                    command.args(["--profile", DEEPSEEK_PROFILE]);
+                    command.args(["--profile", provider.id]);
                 } else {
                     if key {
                         // A key held by Lite defines the provider inline and is read from the
                         // environment, so no Codex configuration file has to exist or be written.
                         for override_value in [
-                            "model_providers.deepseek.name=\"deepseek\"",
-                            "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
-                            "model_providers.deepseek.wire_api=\"responses\"",
-                            "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
+                            format!("model_providers.{}.name=\"{}\"", provider.id, provider.name),
+                            format!(
+                                "model_providers.{}.base_url=\"{}\"",
+                                provider.id, provider.base_url
+                            ),
+                            format!("model_providers.{}.wire_api=\"responses\"", provider.id),
+                            format!(
+                                "model_providers.{}.env_key=\"{}\"",
+                                provider.id, provider.env_key
+                            ),
                         ] {
-                            command.args(["-c", override_value]);
+                            command.args(["-c", &override_value]);
                         }
                     }
-                    command.args(["-c", "model_provider=\"deepseek\""]);
-                    command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
-                    if let Some(catalog) = (!codex_declares_catalog(app))
-                        .then(|| deepseek_catalog(app))
-                        .flatten()
+                    command.args(["-c", &format!("model_provider=\"{}\"", provider.id)]);
+                    command.args(["-c", &format!("model=\"{}\"", provider.model)]);
+                    if let Some(catalog) = (provider.id == "deepseek"
+                        && !codex_declares_catalog(app))
+                    .then(|| deepseek_catalog(app))
+                    .flatten()
                     {
                         // A Windows path is full of backslashes, which TOML reads as escapes.
                         let catalog = path_text(&catalog)
@@ -1891,14 +2081,32 @@ fn agent_command(
             }
             command
         }
+        "gemini" => {
+            let mut command = agent_builder(agent)?;
+            command.args(if resume {
+                ["--resume", session_id]
+            } else {
+                ["--session-id", session_id]
+            });
+            command
+        }
         "kimi" => {
             // Only an exact id resumes. `--continue` would reopen whatever ran last in the directory,
             // which two tabs there would both land on, and it creates no entry for discovery to record,
             // so the tab could never learn which session it is showing.
-            let mut command = CommandBuilder::new("kimi");
+            let mut command = agent_builder(agent)?;
             if let Some(provider_session_id) = provider_session_id {
                 command.args(["--session", provider_session_id]);
             }
+            command
+        }
+        "qwen" => {
+            let mut command = agent_builder(agent)?;
+            command.args(if resume {
+                ["--resume", session_id]
+            } else {
+                ["--session-id", session_id]
+            });
             command
         }
         "shell" => {
@@ -1916,7 +2124,10 @@ fn agent_command(
     if let Some((_, variable)) = api_key_env(agent, provider)
         && let Some(key) = saved_api_key(app, agent, provider)
     {
-        command.env(variable, key);
+        command.env(variable, &key);
+        if agent == "gemini" {
+            command.env("GEMINI_DEFAULT_AUTH_TYPE", "gemini-api-key");
+        }
     }
     Ok(command)
 }
@@ -1925,20 +2136,22 @@ fn agent_command(
 fn login_command(agent: &str) -> Result<CommandBuilder, String> {
     let mut command = match agent {
         "claude" => {
-            let mut command = CommandBuilder::new("claude");
+            let mut command = agent_builder(agent)?;
             command.args(["auth", "login"]);
             command
         }
         "codex" => {
-            let mut command = CommandBuilder::new("codex");
+            let mut command = agent_builder(agent)?;
             command.arg("login");
             command
         }
+        "gemini" => agent_builder(agent)?,
         "kimi" => {
-            let mut command = CommandBuilder::new("kimi");
+            let mut command = agent_builder(agent)?;
             command.arg("login");
             command
         }
+        "qwen" => agent_builder(agent)?,
         _ => return Err("This provider signs in with an API key".into()),
     };
     if let Some(path) = user_path() {
@@ -1951,6 +2164,7 @@ fn login_command(agent: &str) -> Result<CommandBuilder, String> {
 #[serde(rename_all = "camelCase")]
 struct Availability {
     available: bool,
+    installable: bool,
     detail: String,
 }
 
@@ -1960,69 +2174,178 @@ async fn agent_availability(
     agent: String,
     provider: Option<String>,
 ) -> Result<Availability, String> {
-    let (executable, missing) = match agent.as_str() {
-        "claude" => (
-            "claude",
-            "Install the Claude Code CLI, then sign in with `claude`.",
-        ),
-        "codex" => (
-            "codex",
-            "Install the Codex CLI, then sign in with `codex login`.",
-        ),
-        "kimi" => (
-            "kimi",
+    let missing = match agent.as_str() {
+        "claude" => "Install the Claude Code CLI, then sign in with `claude`.",
+        "codex" => "Install the Codex CLI, then sign in with `codex login`.",
+        "gemini" => {
+            "Install Gemini CLI with `npm install -g @google/gemini-cli`, then run `gemini`."
+        }
+        "kimi" => {
             if cfg!(windows) {
                 "Install Git for Windows, then run `irm https://code.kimi.com/kimi-code/install.ps1 | iex` in PowerShell."
             } else {
                 "Install Kimi Code with `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`."
-            },
-        ),
+            }
+        }
+        "qwen" => {
+            "Install Qwen Code with `npm install -g @qwen-code/qwen-code@latest`, then run `qwen`."
+        }
         "shell" => {
             return Ok(Availability {
                 available: true,
+                installable: false,
                 detail: String::new(),
             });
         }
         _ => return Err("Unknown session type".into()),
     };
-    if !executable_exists(executable) {
+    if !agent_executable(&agent).is_some_and(executable_exists) {
         return Ok(Availability {
             available: false,
+            installable: true,
             detail: missing.into(),
         });
     }
-    if agent == "codex" && provider.as_deref() == Some("deepseek") {
+    if agent == "codex"
+        && let Some(codex_provider) = codex_provider(provider.as_deref())
+    {
         let configured = saved_api_key(&app, &agent, provider.as_deref()).is_some()
-            || deepseek_profile_exists(&app)
-            || codex_declares_deepseek(&app);
+            || codex_profile_exists(&app, codex_provider.id)
+            || codex_declares_provider(&app, codex_provider.id);
         return Ok(Availability {
             available: configured,
+            installable: false,
             detail: if configured {
                 String::new()
             } else {
                 format!(
-                    "Save a DeepSeek key in Lite's settings, or add a DeepSeek provider to your Codex configuration. Either way Lite launches `{DEEPSEEK_MODEL}` through it."
+                    "Save a {} key in Lite's settings, or add a {} provider to your Codex configuration. Either way Lite launches `{}` through it.",
+                    codex_provider.name, codex_provider.name, codex_provider.model
                 )
             },
         });
     }
     Ok(Availability {
         available: true,
+        installable: false,
         detail: String::new(),
     })
 }
 
 #[tauri::command]
+async fn install_agent(agent: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut command = if agent == "kimi" {
+            #[cfg(windows)]
+            {
+                let powershell = resolve_executable("powershell")
+                    .ok_or("Could not find PowerShell in your PATH")?;
+                let mut command = Command::new(powershell);
+                command.args([
+                    "-NoProfile",
+                    "-Command",
+                    "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
+                ]);
+                command
+            }
+            #[cfg(unix)]
+            {
+                let mut command = Command::new("/bin/sh");
+                command.args([
+                    "-c",
+                    "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
+                ]);
+                command
+            }
+        } else {
+            let package = match agent.as_str() {
+                "claude" => "@anthropic-ai/claude-code",
+                "codex" => "@openai/codex",
+                "gemini" => "@google/gemini-cli",
+                "qwen" => "@qwen-code/qwen-code@latest",
+                _ => return Err("This session type cannot be installed automatically".into()),
+            };
+            let npm = resolve_executable("npm").ok_or("Install Node.js and npm first")?;
+            let mut command = Command::new(npm);
+            command.args(["install", "-g", package]);
+            command
+        };
+        if let Some(path) = user_path() {
+            command.env("PATH", path);
+        }
+        command.stdout(Stdio::null()).stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
+            .map_err(|error| format!("Could not run the installer: {error}"))?;
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or("Could not read installer errors")?;
+        let mut detail = Vec::with_capacity(16_384);
+        let mut buffer = [0_u8; 4096];
+        while let Ok(count) = stderr.read(&mut buffer) {
+            if count == 0 {
+                break;
+            }
+            detail.extend_from_slice(&buffer[..count]);
+            if detail.len() > 16_384 {
+                detail.drain(..detail.len() - 16_384);
+            }
+        }
+        let status = child
+            .wait()
+            .map_err(|error| format!("Could not finish the installer: {error}"))?;
+        if status.success() {
+            refresh_user_path();
+            let executable = agent_executable(&agent).ok_or("Unknown session type")?;
+            let path = resolve_executable(executable)
+                .ok_or_else(|| format!("Installed {agent}, but could not find it in your PATH"))?;
+            let mut probe = Command::new(path);
+            probe
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if let Some(path) = user_path() {
+                probe.env("PATH", path);
+            }
+            return probe
+                .status()
+                .map_err(|error| format!("Installed {agent}, but could not run it: {error}"))?
+                .success()
+                .then_some(())
+                .ok_or_else(|| {
+                    format!(
+                        "Installed {agent}, but it cannot run with the current system requirements"
+                    )
+                });
+        }
+        let detail = String::from_utf8_lossy(&detail);
+        let detail = detail.trim();
+        Err(if detail.is_empty() {
+            format!("The {agent} installer exited with {status}")
+        } else {
+            detail.to_owned()
+        })
+    })
+    .await
+    .map_err(|error| format!("Could not finish the install: {error}"))?
+}
+
+#[tauri::command]
 async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), String> {
+    if agent == "codex"
+        && let Some(provider) = codex_provider(provider.as_deref())
+    {
+        return open_external(provider.setup_url);
+    }
     let url = match (agent.as_str(), provider.as_deref()) {
         ("claude", _) => "https://code.claude.com/docs/en/setup",
-        ("codex", Some("deepseek")) => {
-            "https://api-docs.deepseek.com/quick_start/agent_integrations/codex"
-        }
         ("codex", _) => "https://developers.openai.com/codex/cli",
+        ("gemini", _) => "https://google-gemini.github.io/gemini-cli/",
         ("kimi", _) => {
             "https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html"
         }
+        ("qwen", _) => "https://qwenlm.github.io/qwen-code-docs/en/",
         _ => return Err("No setup guide for this session type".into()),
     };
     open_external(url)
@@ -2104,8 +2427,13 @@ async fn spawn_session(
     let cwd = root_path(&roots, &root_id)?;
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
-    // Resuming a Claude session it never recorded fails outright, so that tab starts one instead.
-    let resume = resume && (agent != "claude" || claude_session_exists(&app, &session_id));
+    // A tab whose provider history was removed starts again instead of becoming permanently unusable.
+    let resume = resume
+        && match agent.as_str() {
+            "claude" => claude_session_exists(&app, &session_id),
+            "gemini" | "qwen" => native_session_exists(&app, &agent, &session_id),
+            _ => true,
+        };
     if !signing_in && (agent == "codex" || agent == "kimi") {
         if let Some(saved_provider_session_id) = provider_sessions
             .0
@@ -2371,7 +2699,9 @@ fn is_agent_process(process: &sysinfo::Process, agent: &str) -> bool {
             .unwrap_or_default();
         executable.strip_suffix(".exe").unwrap_or(executable) == agent
             || (agent == "codex" && executable == "codex.js")
+            || (agent == "gemini" && executable == "gemini.js")
             || (agent == "kimi" && argument.contains("kimi-code"))
+            || (agent == "qwen" && argument.contains("qwen-code"))
     })
 }
 
@@ -2404,7 +2734,10 @@ fn watch_shell_agent(
     session_id: String,
     agent: String,
 ) -> Result<(), String> {
-    if !matches!(agent.as_str(), "claude" | "codex" | "kimi") {
+    if !matches!(
+        agent.as_str(),
+        "claude" | "codex" | "gemini" | "kimi" | "qwen"
+    ) {
         return Err("Unknown agent".into());
     }
     let (root, run_id, alive, agent_watch) = {
@@ -2811,8 +3144,8 @@ async fn read_usage(
     provider: Option<String>,
     session_id: String,
 ) -> Result<Option<UsageSnapshot>, String> {
-    // A DeepSeek-backed Codex session bills DeepSeek, so the OpenAI account limits are not its usage.
-    if agent == "codex" && provider.as_deref() == Some("deepseek") {
+    // A custom-provider Codex session does not bill OpenAI, so OpenAI account limits are not its usage.
+    if agent == "codex" && codex_provider(provider.as_deref()).is_some() {
         return Ok(None);
     }
     match agent.as_str() {
@@ -2892,7 +3225,7 @@ async fn read_usage(
             .then_some(usage))
         }
         "codex" => codex_usage(&codex_server).map(Some),
-        "kimi" | "shell" => Ok(None),
+        "gemini" | "kimi" | "qwen" | "shell" => Ok(None),
         _ => Err("Unknown session type".into()),
     }
 }
@@ -3097,6 +3430,7 @@ pub fn run() {
             git_remote,
             read_usage,
             agent_availability,
+            install_agent,
             open_setup_docs,
             open_url,
             open_directory,

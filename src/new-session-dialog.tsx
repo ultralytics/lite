@@ -21,30 +21,12 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle }
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AUTH_PROVIDERS, type AuthProviderId, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
-import { type Agent, type ModelProvider, type Session, sessionLabel } from "@/types";
+import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import { type Session, sessionLabel } from "@/types";
 
-interface Choice {
-  id: string;
-  agent: Agent;
-  provider?: ModelProvider;
-  auth?: AuthProviderId;
-  description?: string;
-  note?: string;
-}
-
-const choices: Choice[] = [
-  { id: "claude", agent: "claude", auth: "claude" },
-  { id: "codex", agent: "codex", provider: "openai", auth: "codex" },
-  {
-    id: "codex-deepseek",
-    agent: "codex",
-    provider: "deepseek",
-    auth: "deepseek",
-    note: "Runs the Codex harness against the DeepSeek provider in your Codex configuration. Usage bills DeepSeek, not OpenAI.",
-  },
-  { id: "kimi", agent: "kimi", auth: "kimi" },
-  { id: "shell", agent: "shell", description: "Open your default shell" },
+const choices = [
+  ...Object.values(AUTH_PROVIDERS),
+  { id: "shell", agent: "shell" as const, provider: undefined, description: "Open your default shell" },
 ];
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
@@ -57,6 +39,7 @@ interface DirectoryGrant {
 
 interface Availability {
   available: boolean;
+  installable: boolean;
   detail: string;
 }
 
@@ -74,10 +57,11 @@ export function NewSessionDialog({
   const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
+  const [installing, setInstalling] = useState("");
   const [error, setError] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
-  // An agent that is not installed cannot take a session yet, so the dialog offers its setup guide instead.
+  // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
 
   useEffect(() => {
@@ -147,6 +131,7 @@ export function NewSessionDialog({
   }
 
   function changeOpen(open: boolean) {
+    if (!open && installing) return;
     if (!open && directory) {
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
@@ -171,12 +156,42 @@ export function NewSessionDialog({
     onOpenChange(false);
   }
 
+  async function install() {
+    setInstalling(choice.id);
+    setError("");
+    try {
+      await invoke("install_agent", { agent: choice.agent });
+      const results = await Promise.all(
+        choices
+          .filter((option) => option.agent === choice.agent)
+          .map(
+            async (option) =>
+              [
+                option.id,
+                await invoke<Availability>("agent_availability", {
+                  agent: option.agent,
+                  provider: option.provider,
+                }),
+              ] as const,
+          ),
+      );
+      setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
+      const result = results.find(([id]) => id === choice.id)?.[1];
+      if (result && !result.available) setError(result.detail);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setInstalling("");
+    }
+  }
+
   // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
   // and a second click on the agent already chosen. An agent that is not installed reads them all as a
-  // request for its setup guide, which is the only one of the two it can answer.
-  const ready = Boolean(missing || (path.trim() && status));
+  // request to install it, which is the only one of the two it can answer.
+  const ready = Boolean(!installing && (missing || (path.trim() && status)));
   function start() {
-    if (missing)
+    if (missing?.installable) void install();
+    else if (missing)
       void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
         setError(String(reason)),
       );
@@ -226,7 +241,7 @@ export function NewSessionDialog({
                 {choices.map((option) => {
                   const state = availability[option.id];
                   const active = option.id === choiceId;
-                  const authProvider = option.auth ? AUTH_PROVIDERS[option.auth] : undefined;
+                  const authProvider = "configured" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   const row = (
                     <Item
@@ -238,6 +253,7 @@ export function NewSessionDialog({
                         <button
                           type="button"
                           aria-pressed={active}
+                          disabled={Boolean(installing)}
                           onClick={() => (active && ready ? start() : setChoiceId(option.id))}
                         />
                       }
@@ -251,7 +267,7 @@ export function NewSessionDialog({
                         {authProvider ? (
                           <ProviderAuthDescription provider={authProvider} status={authStatus} />
                         ) : (
-                          <ItemDescription>{option.description}</ItemDescription>
+                          <ItemDescription>{"description" in option ? option.description : undefined}</ItemDescription>
                         )}
                       </ItemContent>
                       <ItemActions>
@@ -260,7 +276,7 @@ export function NewSessionDialog({
                       </ItemActions>
                     </Item>
                   );
-                  return option.note ? (
+                  return "note" in option ? (
                     <Tooltip key={option.id}>
                       <TooltipTrigger render={row} />
                       <TooltipContent className="max-w-64">{option.note}</TooltipContent>
@@ -276,12 +292,18 @@ export function NewSessionDialog({
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" onClick={() => changeOpen(false)}>
+            <Button variant="outline" disabled={Boolean(installing)} onClick={() => changeOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!ready}>
-              {status ? null : <Spinner />}
-              {missing ? "Open setup guide" : "Start session"}
+              {!status || installing ? <Spinner /> : null}
+              {installing
+                ? `Installing ${sessionLabel(choice)}…`
+                : missing?.installable
+                  ? `Install ${sessionLabel(choice)}`
+                  : missing
+                    ? "Open setup guide"
+                    : "Start session"}
             </Button>
           </DialogFooter>
         </form>

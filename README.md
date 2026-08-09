@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli) on OpenAI or [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), [Kimi Code](https://www.kimi.com/code), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
+Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli) on OpenAI, [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), or [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli), [Gemini CLI](https://google-gemini.github.io/gemini-cli/), [Kimi Code](https://www.kimi.com/code), [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
 
 <div align="center">
   <br>
@@ -21,11 +21,12 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 
 ## ✨ Features
 
-- Run Claude Code, Codex, Kimi Code, and shell sessions side by side
-- Run Codex against DeepSeek when your Codex configuration provides that model
+- Run Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and shell sessions side by side
+- Run Codex against DeepSeek or OpenRouter without changing your default Codex provider
 - Resume session tabs automatically after closing Lite or restarting your computer
+- Undo a restart or close for eight seconds before Lite stops the terminal
 - Authenticate once with each provider and reuse its existing local credentials
-- Or save an API key per provider in Lite and skip the sign-in flows entirely
+- Or save API keys for supported providers in Lite and skip their sign-in flows entirely
 - Browse files on demand with syntax highlighting for popular languages
 - Preview rendered Markdown safely alongside source files
 - See the active Git branch, worktree, and changed files
@@ -73,11 +74,13 @@ Install the provider CLIs you want to use:
 
 - [Claude Code](https://code.claude.com/docs/en/setup)
 - [Codex](https://developers.openai.com/codex/cli)
+- [Gemini CLI](https://google-gemini.github.io/gemini-cli/)
 - [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) — Windows also needs Git for Windows
+- [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/)
 
-Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog tells you when a CLI is missing and links to its setup guide.
+Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
 
-If you would rather use API keys, open **API keys** in the Lite menu and paste one per provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `MOONSHOT_API_KEY`). Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
+If you would rather use API keys, open **API keys** in the Lite menu and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/2955ffef-6003-43d1-a5c0-51c58e2612c9" width="100%" alt="Saving provider API keys in Lite">
@@ -97,6 +100,8 @@ experimental_bearer_token = "<your DeepSeek API key>"
 ```
 
 Leave `preferred_auth_method` and `forced_login_method` out. Codex applies those globally, and setting them signs you out of ChatGPT the next time it runs. Lite selects the DeepSeek provider per launch, so your default Codex provider and existing OpenAI sessions are untouched, and it never reads or stores the DeepSeek key.
+
+**Codex · OpenRouter** works the same way: save an OpenRouter key in Lite or configure an `openrouter` Codex provider, and Lite launches OpenRouter's current OpenAI model route without changing your default Codex setup.
 
 Choose a project folder, create a session, and work. Lite saves only the local metadata needed to restore tabs; provider conversation history remains owned by the provider CLI.
 
