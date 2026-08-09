@@ -187,6 +187,8 @@ export function TerminalView({
         !event.ctrlKey &&
         !event.metaKey
       ) {
+        // Returning false leaves the keypress to follow and send a bare carriage return.
+        event.preventDefault();
         writeSession(sessionId, "\x1b\r");
         return false;
       }
