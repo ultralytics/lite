@@ -85,7 +85,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -862,6 +861,7 @@ function App() {
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
+  const layout = useRef<HTMLDivElement>(null);
   const sidebarPanel = useRef<PanelImperativeHandle>(null);
   const inspectorPanel = useRef<PanelImperativeHandle>(null);
   // The browse URL of the selected folder's origin, empty when it has none or Lite cannot open it.
@@ -914,6 +914,7 @@ function App() {
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
   const rail = useCallback((side: keyof typeof SIDES, size: { inPixels: number }) => {
+    layout.current?.style.setProperty(`--${side}-width`, `${size.inPixels}px`);
     const next = size.inPixels < SHUT;
     // A shut sidebar has nowhere to show a search field, so the filter closes with it rather than
     // leaving the rail and the number shortcuts counting two different lists.
@@ -1449,41 +1450,60 @@ function App() {
         onRestartAll={() => void restartAllSessions()}
         onCloseAll={() => setClosingAll(true)}
       >
-        <div className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
+        <div ref={layout} className="flex h-screen flex-col overflow-hidden bg-background text-foreground">
           {/* The window buttons sit inside this bar on macOS, so it doubles as the title bar and drags the window. */}
           <header
             data-tauri-drag-region
-            className="flex h-9 shrink-0 items-center gap-2 border-b bg-sidebar px-3 text-sidebar-foreground in-data-[titlebar=overlay]:pl-[86px]"
+            className="relative flex h-9 shrink-0 items-center border-b bg-sidebar text-sidebar-foreground"
           >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Lite on GitHub"
-                    data-context-url="https://github.com/ultralytics/lite"
-                    onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+            <div
+              className="flex h-full shrink-0 items-center gap-2 overflow-hidden px-3 in-data-[titlebar=overlay]:pl-[86px]"
+              style={{ width: "var(--sidebar-width, 20%)" }}
+            >
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className="shrink-0"
+                      aria-label="Lite on GitHub"
+                      data-context-url="https://github.com/ultralytics/lite"
+                      onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+                    />
+                  }
+                >
+                  <LiteLogomark className="size-5" />
+                </TooltipTrigger>
+                <TooltipContent>View Lite on GitHub</TooltipContent>
+              </Tooltip>
+              <VersionBadge
+                version={version}
+                commit={commit}
+                built={built}
+                release={release}
+                onCheck={() => void checkForUpdates()}
+              />
+            </div>
+            <div className="flex h-full min-w-0 flex-1 items-center gap-2 border-l px-3">
+              {selected ? (
+                <>
+                  <ProviderIcon
+                    agent={shellAgents.get(selected.id) ?? selected.agent}
+                    provider={selected.provider}
+                    className="size-4 shrink-0"
                   />
-                }
-              >
-                <LiteLogomark className="size-5" />
-              </TooltipTrigger>
-              <TooltipContent>View Lite on GitHub</TooltipContent>
-            </Tooltip>
-            <VersionBadge
-              version={version}
-              commit={commit}
-              built={built}
-              release={release}
-              onCheck={() => void checkForUpdates()}
-            />
+                  <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+                    {selected.cwd}
+                  </span>
+                </>
+              ) : (
+                <span className="text-sm font-semibold">Lite</span>
+              )}
+            </div>
             {selected ? (
-              <>
-                <Separator orientation="vertical" className="mx-1 h-4" />
-                <ProviderIcon agent={shellAgents.get(selected.id) ?? selected.agent} provider={selected.provider} />
-                <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
-                <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
+              <div className="relative h-full shrink-0 border-l" style={{ width: "var(--inspector-width, 25%)" }}>
                 {remote ? (
                   <Tooltip>
                     <TooltipTrigger
@@ -1491,7 +1511,7 @@ function App() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="max-w-56 gap-1.5 text-muted-foreground"
+                          className={`absolute top-0.5 right-20 min-w-0 gap-1.5 text-muted-foreground ${shut.inspector ? "max-w-56" : "left-2 justify-start"}`}
                           data-context-url={remote}
                           onClick={() => void invoke("open_url", { url: remote })}
                         />
@@ -1503,11 +1523,9 @@ function App() {
                     <TooltipContent>Open {remote}</TooltipContent>
                   </Tooltip>
                 ) : null}
-              </>
-            ) : (
-              <span className="text-sm font-semibold">Lite</span>
-            )}
-            <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              </div>
+            ) : null}
+            <div className="absolute right-3 flex shrink-0 items-center gap-0.5">
               <Tooltip>
                 <TooltipTrigger
                   render={
