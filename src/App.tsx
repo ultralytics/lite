@@ -1532,9 +1532,20 @@ function App() {
                     className="size-4 shrink-0"
                   />
                   <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
-                    {selected.cwd}
-                  </span>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          className="min-w-0 flex-1 truncate text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
+                          onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
+                        />
+                      }
+                    >
+                      {selected.cwd}
+                    </TooltipTrigger>
+                    <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>
+                  </Tooltip>
                 </>
               ) : (
                 <span className="text-sm font-semibold">Lite</span>

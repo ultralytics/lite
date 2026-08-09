@@ -2038,6 +2038,14 @@ async fn open_url(url: String) -> Result<(), String> {
     open_external(&url)
 }
 
+// A session root has already been chosen by the user and registered with Lite. Resolve that grant
+// again here so the interface cannot ask the operating system to open an arbitrary path.
+#[tauri::command]
+fn open_directory(root_id: String, roots: State<'_, Roots>) -> Result<(), String> {
+    let path = root_path(&roots, &root_id)?;
+    open_external(&path_text(&path))
+}
+
 fn open_external(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
@@ -3084,6 +3092,7 @@ pub fn run() {
             agent_availability,
             open_setup_docs,
             open_url,
+            open_directory,
             provider_auth,
             save_api_key,
             delete_api_key,
