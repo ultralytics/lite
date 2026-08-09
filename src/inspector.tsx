@@ -78,12 +78,14 @@ const BARE_ITEM = /(?:^|[^\w#])#([1-9]\d{0,8})(?!\w)/g;
 function namedInSession(sessionId: string, remote: string) {
   const text = readOutput(sessionId).replace(COLOR, "");
   const urls = [...new Set(text.match(GITHUB_ITEM) ?? [])];
-  const guessable = remote.toLowerCase().startsWith("https://github.com/");
-  const numbers = new Set(guessable ? [...text.matchAll(BARE_ITEM)].map((match) => match[1]) : []);
+  // A guess is spelled with the lowercase host the checker strips, however the remote cased it.
+  const prefix = "https://github.com/";
+  const base = remote.toLowerCase().startsWith(prefix) ? prefix + remote.slice(prefix.length) : "";
+  const numbers = new Set(base ? [...text.matchAll(BARE_ITEM)].map((match) => match[1]) : []);
   for (const url of urls) {
-    if (url.toLowerCase().startsWith(`${remote.toLowerCase()}/`)) numbers.delete(url.split("/").pop() ?? "");
+    if (url.toLowerCase().startsWith(`${base.toLowerCase()}/`)) numbers.delete(url.split("/").pop() ?? "");
   }
-  return { urls, guessed: [...numbers].map((number) => `${remote}/issues/${number}`) };
+  return { urls, guessed: [...numbers].map((number) => `${base}/issues/${number}`) };
 }
 
 interface GitHubReference {
@@ -850,7 +852,7 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
           {shown.map((repository) => (
             <RepositoryCard key={(repository.url ?? repository.path)?.toLowerCase()} repository={repository} />
           ))}
-          {lowered && repositories.length && !shown.length ? (
+          {lowered && status !== undefined && items && repositories.length && !shown.length ? (
             <p className="text-sm text-muted-foreground">No matches</p>
           ) : null}
           {items === undefined && (named.urls.length || named.guessed.length) ? (
