@@ -519,14 +519,10 @@ fn provider_home(app: &AppHandle, variable: &str, fallback: &str) -> Result<Path
         )
 }
 
+// A transcript is read a record at a time rather than held, so a conversation of any length costs a line.
 fn claude_transcript_lines(path: &Path) -> impl Iterator<Item = String> {
     fs::File::open(path)
-        .map(|file| {
-            BufReader::new(file)
-                .lines()
-                .take(20_000)
-                .map_while(Result::ok)
-        })
+        .map(|file| BufReader::new(file).lines().map_while(Result::ok))
         .into_iter()
         .flatten()
 }
