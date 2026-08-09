@@ -74,10 +74,6 @@ const FONT_SIZE_KEY = "lite.terminal.fontSize";
 const MIN_FONT_SIZE = 9;
 const MAX_FONT_SIZE = 24;
 
-function themeReport(theme: Theme) {
-  return theme === "dark" ? "\x1b[?997;1n" : "\x1b[?997;2n";
-}
-
 function storedFontSize(): number {
   const saved = Number(localStorage.getItem(FONT_SIZE_KEY));
   return saved >= MIN_FONT_SIZE && saved <= MAX_FONT_SIZE ? saved : 13;
@@ -97,7 +93,6 @@ export function TerminalView({
   const promptRef = useRef(onPrompt);
   promptRef.current = onPrompt;
   const terminalRef = useRef<Terminal | null>(null);
-  const themeReportingRef = useRef(false);
   // Read when a terminal is built, so switching sessions paints the new one in the current theme
   // without rebuilding it every time the theme changes.
   const themeRef = useRef(theme);
@@ -126,21 +121,6 @@ export function TerminalView({
       }),
     );
     terminal.open(container);
-    const themeQuery = terminal.parser.registerCsiHandler({ prefix: "?", final: "n" }, (params) => {
-      if (params.length !== 1 || params[0] !== 996) return false;
-      writeSession(sessionId, themeReport(themeRef.current));
-      return true;
-    });
-    const enableThemeReporting = terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
-      if (params.length !== 1 || params[0] !== 2031) return false;
-      themeReportingRef.current = true;
-      return true;
-    });
-    const disableThemeReporting = terminal.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
-      if (params.length !== 1 || params[0] !== 2031) return false;
-      themeReportingRef.current = false;
-      return true;
-    });
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
     // Typing, pasting, and the terminal's own answers to the program's cursor, focus, and color
@@ -215,22 +195,16 @@ export function TerminalView({
     return () => {
       window.clearTimeout(settle);
       observer.disconnect();
-      themeQuery.dispose();
-      enableThemeReporting.dispose();
-      disableThemeReporting.dispose();
       input.dispose();
       unsubscribe();
       terminal.dispose();
       terminalRef.current = null;
-      themeReportingRef.current = false;
     };
   }, [sessionId]);
 
   useEffect(() => {
-    if (!terminalRef.current) return;
-    terminalRef.current.options.theme = themes[theme];
-    if (themeReportingRef.current) writeSession(sessionId, themeReport(theme));
-  }, [sessionId, theme]);
+    if (terminalRef.current) terminalRef.current.options.theme = themes[theme];
+  }, [theme]);
 
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,

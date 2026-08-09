@@ -2,6 +2,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import type { Theme } from "@/theme";
+
 const MAX_BYTES = 1_000_000;
 
 interface Buffer {
@@ -11,6 +13,8 @@ interface Buffer {
   // decoder holds a character's remaining bytes and the tail holds an unfinished sequence.
   decoder: TextDecoder;
   tail: string;
+  controlTail: string;
+  themeReporting: boolean;
 }
 
 const buffers = new Map<string, Buffer>();
@@ -32,11 +36,35 @@ const TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const UNTERMINATED = /\x1b(?:\](?:(?!\x07|\x1b\\)[\s\S])*)?$/;
 const MAX_TAIL = 512;
+// Modern TUIs request a report whenever the terminal switches between dark and light. This state is
+// read here, where every session's output arrives, so background sessions and trimmed buffers keep it.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: these are terminal control sequences
+const THEME_CONTROL = /\x1b\[\?(2031([hl])|996n)/g;
+const CONTROL_TAIL = 7;
+let terminalTheme: Theme = "dark";
+
+function themeReport(theme: Theme) {
+  return theme === "dark" ? "\x1b[?997;1n" : "\x1b[?997;2n";
+}
+
+export function syncTerminalTheme(theme: Theme) {
+  terminalTheme = theme;
+  for (const [sessionId, buffer] of buffers) {
+    if (buffer.themeReporting) writeSession(sessionId, themeReport(theme));
+  }
+}
 
 // Returns the last window title the chunk set, empty when it set none.
 export function appendOutput(sessionId: string, data: number[]): string {
   const bytes = new Uint8Array(data);
-  const buffer = buffers.get(sessionId) ?? { chunks: [], size: 0, decoder: new TextDecoder(), tail: "" };
+  const buffer = buffers.get(sessionId) ?? {
+    chunks: [],
+    size: 0,
+    decoder: new TextDecoder(),
+    tail: "",
+    controlTail: "",
+    themeReporting: false,
+  };
   buffer.chunks.push(bytes);
   buffer.size += bytes.byteLength;
   while (buffer.size > MAX_BYTES && buffer.chunks.length > 1) {
@@ -45,7 +73,18 @@ export function appendOutput(sessionId: string, data: number[]): string {
   }
   buffers.set(sessionId, buffer);
   for (const listener of listeners.get(sessionId) ?? []) listener(bytes);
-  const text = buffer.tail + buffer.decoder.decode(bytes, { stream: true });
+  const decoded = buffer.decoder.decode(bytes, { stream: true });
+  const controls = buffer.controlTail + decoded;
+  const previous = buffer.controlTail.length;
+  THEME_CONTROL.lastIndex = 0;
+  for (let match = THEME_CONTROL.exec(controls); match; match = THEME_CONTROL.exec(controls)) {
+    if (THEME_CONTROL.lastIndex <= previous) continue;
+    if (match[1] === "996n") writeSession(sessionId, themeReport(terminalTheme));
+    else buffer.themeReporting = match[2] === "h";
+  }
+  buffer.controlTail = controls.slice(-CONTROL_TAIL);
+
+  const text = buffer.tail + decoded;
   let title = "";
   let read = 0;
   TITLE.lastIndex = 0;
