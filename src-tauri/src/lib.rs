@@ -519,7 +519,6 @@ fn provider_home(app: &AppHandle, variable: &str, fallback: &str) -> Result<Path
         )
 }
 
-// A transcript is read a record at a time rather than held, so a conversation of any length costs a line.
 fn claude_transcript_lines(path: &Path) -> impl Iterator<Item = String> {
     fs::File::open(path)
         .map(|file| BufReader::new(file).lines().map_while(Result::ok))
@@ -527,9 +526,7 @@ fn claude_transcript_lines(path: &Path) -> impl Iterator<Item = String> {
         .flatten()
 }
 
-// A session that moved stamps the id it started as on every record it writes into the conversation it
-// moved to, and only that stamp is a link: the id is quoted in ordinary output too, a directory listing
-// naming the transcript being enough to read as one.
+// Only the stamped field is a link, since ordinary output quotes ids too, a directory listing among it.
 fn claude_transcript_quotes(path: &Path, session_id: &str) -> bool {
     claude_transcript_lines(path)
         .filter(|line| line.contains(session_id))
@@ -539,7 +536,6 @@ fn claude_transcript_quotes(path: &Path, session_id: &str) -> bool {
         })
 }
 
-// Claude will not resume a transcript that carries no message, nor reuse the id it is named after.
 fn claude_transcript_has_messages(path: &Path) -> bool {
     claude_transcript_lines(path)
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
@@ -551,11 +547,10 @@ fn claude_transcript_has_messages(path: &Path) -> bool {
         })
 }
 
-// Claude resumes a conversation by the name of its transcript, filed under a key derived from the working
-// directory, so it is found by name rather than by key. `/resume` moves the session into an older
-// conversation and writes the turns that follow there, quoting the id it started as, so that transcript is
-// the one to reopen. A session that moved nowhere is quoted by nothing and its id is spent, so it needs
-// a new one. Returns the id to launch with and whether it names a conversation to resume.
+// Claude resumes by transcript name, so `/resume` leaves the id it started as a marker holding no message
+// and writes the turns that follow into the conversation it moved to, stamping each with that id. Claude
+// reopens neither the marker nor its id, so an unstamped one is spent. Returns the id to launch and
+// whether it names a conversation to resume.
 fn claude_launch_id(app: &AppHandle, session_id: &str) -> (String, bool) {
     let transcript = format!("{session_id}.jsonl");
     let Some(project) = provider_home(app, "CLAUDE_CONFIG_DIR", ".claude")
@@ -2488,16 +2483,28 @@ async fn spawn_session(
     // A tab whose provider history was removed starts again instead of becoming permanently unusable.
     let claude_launch = (resume && !signing_in && agent == "claude")
         .then(|| claude_launch_id(&app, provider_session_id.as_deref().unwrap_or(&session_id)));
-    let resume = resume
+    let mut resume = resume
         && match agent.as_str() {
             "claude" => claude_launch.as_ref().is_some_and(|(_, resume)| *resume),
             "gemini" | "qwen" => native_session_exists(&app, &agent, &session_id),
             _ => true,
         };
-    // The id Claude answers to is the tab's own until a session leaves one behind, and the tab keeps
-    // whichever it was given so the next launch reopens the same conversation.
+    // The tab keeps the id it was given so the next launch reopens the same conversation, and a
+    // conversation another tab already owns is left to it rather than written by both.
     if let Some((claude_id, _)) = claude_launch.filter(|(id, _)| id != &session_id) {
-        provider_session_id = Some(claude_id);
+        let claimed = update_provider_session(
+            &app,
+            &provider_sessions,
+            &session_id,
+            Some(claude_id.clone()),
+        )
+        .unwrap_or(true);
+        provider_session_id = Some(if claimed {
+            claude_id
+        } else {
+            resume = false;
+            uuid::Uuid::new_v4().to_string()
+        });
     }
     if !signing_in && (agent == "codex" || agent == "kimi") {
         if let Some(saved_provider_session_id) = provider_sessions
