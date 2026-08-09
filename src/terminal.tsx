@@ -82,10 +82,12 @@ function storedFontSize(): number {
 export function TerminalView({
   sessionId,
   theme,
+  active,
   onPrompt,
 }: {
   sessionId: string;
   theme: Theme;
+  active: boolean;
   onPrompt: (text: string) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -190,7 +192,6 @@ export function TerminalView({
       return false;
     });
     resize();
-    terminal.focus();
 
     return () => {
       window.clearTimeout(settle);
@@ -201,6 +202,10 @@ export function TerminalView({
       terminalRef.current = null;
     };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (active) terminalRef.current?.focus();
+  }, [active]);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = themes[theme];

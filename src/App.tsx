@@ -1633,6 +1633,32 @@ function App() {
               <section className="flex h-full min-w-0 flex-col">
                 {selected ? (
                   <div className="relative min-h-0 flex-1">
+                    <Suspense fallback={<div className="absolute inset-0 bg-background" />}>
+                      {sessions.map((session) =>
+                        session.running ? (
+                          <div
+                            key={session.id}
+                            aria-hidden={!selected.running || session.id !== selectedId}
+                            className={`absolute inset-0 ${selected.running && session.id === selectedId ? "visible" : "invisible"}`}
+                          >
+                            <TerminalView
+                              sessionId={session.id}
+                              theme={theme}
+                              active={selected.running && session.id === selectedId}
+                              onPrompt={(text) =>
+                                setSessions((current) =>
+                                  current.map((item) =>
+                                    item.id === session.id && !item.renamed && item.name === folderName(item.cwd)
+                                      ? { ...item, name: subject(text) }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </div>
+                        ) : null,
+                      )}
+                    </Suspense>
                     {selected.running ? (
                       <ActionIconButton
                         variant="outline"
@@ -1646,23 +1672,7 @@ function App() {
                         <Trash2 />
                       </ActionIconButton>
                     ) : null}
-                    {selected.running ? (
-                      <Suspense fallback={<div className="h-full bg-background" />}>
-                        <TerminalView
-                          sessionId={selected.id}
-                          theme={theme}
-                          onPrompt={(text) =>
-                            setSessions((current) =>
-                              current.map((item) =>
-                                item.id === selected.id && !item.renamed && item.name === folderName(item.cwd)
-                                  ? { ...item, name: subject(text) }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Suspense>
-                    ) : startingIds.has(selected.id) ? (
+                    {selected.running ? null : startingIds.has(selected.id) ? (
                       <Empty className="h-full">
                         <EmptyHeader>
                           <SessionMark session={selected} />
