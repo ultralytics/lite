@@ -866,6 +866,7 @@ function App() {
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState("");
   const runs = useRef(new Map<string, string>());
+  const sessionsRef = useRef(sessions);
   const workTimers = useRef(new Map<string, number>());
   const resumed = useRef("");
   const themeRef = useRef<Theme>("dark");
@@ -883,6 +884,7 @@ function App() {
     );
   }, [sessions, query]);
   visibleRef.current = visible;
+  sessionsRef.current = sessions;
   themeRef.current = theme;
   selectedRef.current = selected;
   closeRef.current = closeSession;
@@ -1062,6 +1064,18 @@ function App() {
     });
   }, []);
 
+  const markDirectory = useCallback((sessionId: string, path: string) => {
+    const session = sessionsRef.current.find((item) => item.id === sessionId);
+    if (session?.agent !== "shell" || session.cwd === path) return;
+    void invoke<{ id: string; path: string }>("follow_directory", { rootId: session.rootId, path })
+      .then((grant) => {
+        setSessions((current) =>
+          current.map((item) => (item.id === sessionId ? { ...item, cwd: grant.path, rootId: grant.id } : item)),
+        );
+      })
+      .catch((reason) => setError(String(reason)));
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     let unlistenOutput: (() => void) | undefined;
@@ -1069,8 +1083,9 @@ function App() {
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const title = appendOutput(payload.sessionId, payload.data);
+        const { title, path } = appendOutput(payload.sessionId, payload.data);
         if (title) markTitle(payload.sessionId, title);
+        if (path) markDirectory(payload.sessionId, path);
         markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
@@ -1097,7 +1112,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [markWorking, markTitle]);
+  }, [markDirectory, markWorking, markTitle]);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
     if (runs.current.has(session.id)) return;

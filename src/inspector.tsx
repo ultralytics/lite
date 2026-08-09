@@ -286,24 +286,20 @@ const FILE_FAMILIES: (FileKind & { extensions: string[] })[] = [
   { icon: FileCode, color: "text-orange-500", extensions: ["html", "htm", "xml", "vue", "svelte"] },
   { icon: FileCode, color: "text-fuchsia-500", extensions: ["css", "scss", "sass", "less"] },
   { icon: FileJson, color: "text-amber-500", extensions: ["json", "jsonc", "json5"] },
-  {
-    icon: FileCog,
-    color: "text-violet-500",
-    extensions: ["yaml", "yml", "toml", "ini", "cfg", "conf", "editorconfig"],
-  },
-  { icon: FileCog, color: "text-orange-500", extensions: ["gitignore", "gitattributes", "dockerignore"] },
+  { icon: FileCog, color: "text-stone-500", extensions: ["yaml", "yml", "toml", "ini", "cfg", "conf", "editorconfig"] },
+  { icon: FileCog, color: "text-stone-500", extensions: ["gitignore", "gitattributes", "dockerignore"] },
   { icon: FileKey, color: "text-amber-600", extensions: ["env", "pem", "key", "crt", "cert"] },
-  { icon: FileLock, color: "text-amber-500", extensions: ["lock", "lockb"] },
+  { icon: FileLock, color: "text-stone-500", extensions: ["lock", "lockb"] },
   { icon: FileTerminal, color: "text-emerald-500", extensions: ["sh", "bash", "zsh", "fish", "ps1", "bat", "cmd"] },
   { icon: FileImage, color: "text-pink-500", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "avif"] },
   { icon: FileAudio, color: "text-purple-500", extensions: ["mp3", "wav", "flac", "ogg", "m4a"] },
   { icon: FileVideo, color: "text-purple-500", extensions: ["mp4", "mov", "mkv", "webm", "avi"] },
   { icon: FileSpreadsheet, color: "text-green-600", extensions: ["csv", "tsv", "xls", "xlsx", "parquet"] },
-  { icon: FileArchive, color: "text-amber-600", extensions: ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar"] },
+  { icon: FileArchive, color: "text-stone-500", extensions: ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar"] },
   { icon: Database, color: "text-indigo-500", extensions: ["sql", "db", "sqlite", "sqlite3"] },
-  { icon: FileType, color: "text-cyan-500", extensions: ["woff", "woff2", "ttf", "otf"] },
-  { icon: FileDiff, color: "text-orange-500", extensions: ["diff", "patch"] },
-  { icon: FileText, color: "text-blue-500", extensions: ["md", "mdx", "rst", "txt", "adoc"] },
+  { icon: FileType, color: "text-muted-foreground", extensions: ["woff", "woff2", "ttf", "otf"] },
+  { icon: FileDiff, color: "text-muted-foreground", extensions: ["diff", "patch"] },
+  { icon: FileText, color: "text-muted-foreground", extensions: ["md", "mdx", "rst", "txt", "adoc"] },
 ];
 
 const FILE_TYPES = new Map<string, FileKind>(
@@ -313,9 +309,9 @@ const FILE_TYPES = new Map<string, FileKind>(
 // The few files a project names rather than extends, which say more than the extension they lack.
 const FILE_NAMES = new Map<string, FileKind>([
   ["dockerfile", { icon: Container, color: "text-blue-500" }],
-  ["makefile", { icon: Hammer, color: "text-amber-500" }],
-  ["cmakelists.txt", { icon: Hammer, color: "text-amber-500" }],
-  ["license", { icon: Scale, color: "text-blue-500" }],
+  ["makefile", { icon: Hammer, color: "text-stone-500" }],
+  ["cmakelists.txt", { icon: Hammer, color: "text-stone-500" }],
+  ["license", { icon: Scale, color: "text-muted-foreground" }],
 ]);
 
 function FileIcon({ name, directory }: { name: string; directory?: boolean }) {
@@ -324,7 +320,7 @@ function FileIcon({ name, directory }: { name: string; directory?: boolean }) {
   const Icon = directory ? Folder : (kind?.icon ?? File);
   return (
     <Icon
-      className={`size-3.5 shrink-0 ${directory ? "fill-current text-sky-500" : (kind?.color ?? "text-blue-500")}`}
+      className={`size-3.5 shrink-0 ${directory ? "fill-current text-muted-foreground" : (kind?.color ?? "text-muted-foreground")}`}
     />
   );
 }
