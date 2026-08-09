@@ -953,6 +953,7 @@ function App() {
   const closeRef = useRef<(session: Session) => void>(() => {});
   const openRef = useRef<(session: Session) => void>(() => {});
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
+  const selectedStarting = selected ? startingIds.has(selected.id) : false;
   // A session is found by what names it: the subject it was given and the folder it works in.
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -968,7 +969,7 @@ function App() {
   closeRef.current = closeSession;
   openRef.current = (session) => {
     setSelectedId(session.id);
-    if (!session.running) void launch(session, true);
+    if (!session.running && !startingIds.has(session.id)) void launch(session, true);
   };
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
@@ -1281,10 +1282,10 @@ function App() {
 
   // Opening the app, or coming back to a session, brings its provider process back on its own.
   useEffect(() => {
-    if (!selected || selected.mode || selected.running || resumed.current === selected.id) return;
+    if (!selected || selected.mode || selected.running || selectedStarting || resumed.current === selected.id) return;
     resumed.current = selected.id;
     void launch(selected, true);
-  }, [selected, launch]);
+  }, [selected, selectedStarting, launch]);
 
   // Which repository a folder was cloned from is a fact about the folder, so it is asked for once when
   // the selection changes and never watched.
@@ -1335,7 +1336,7 @@ function App() {
     session: Session,
     action: "Closed" | "Restarted",
     completed: Promise<boolean>,
-    undo: () => void,
+    undo: () => Promise<void> | void,
     cleanup: () => Promise<void>,
   ) {
     let undone = false;
@@ -1363,7 +1364,10 @@ function App() {
           undone = true;
           pendingCleanups.current.delete(finish);
           toast.close(toastId);
-          undo();
+          const recovery = Promise.resolve(undo());
+          const finishRecovery = () => recovery;
+          pendingCleanups.current.add(finishRecovery);
+          void recovery.finally(() => pendingCleanups.current.delete(finishRecovery));
         },
       },
     });
@@ -1372,6 +1376,7 @@ function App() {
   // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
   // session it resumed by id is retained only until the shared Undo window expires.
   function restartSession(session: Session, select = true) {
+    if (startingIds.has(session.id)) return;
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     const restarted = restartSessionNow(session, fresh, select);
     sessionUndoToast(
@@ -1380,27 +1385,43 @@ function App() {
       restarted,
       () => {
         const restored = { ...session, running: false };
+        setStartingIds((current) => {
+          const next = new Set(current);
+          next.delete(fresh.id);
+          next.add(session.id);
+          return next;
+        });
         setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
         setSelectedId((current) => (current === fresh.id ? session.id : current));
         resumed.current = session.id;
-        void restarted.then(async (successful) => {
+        return restarted.then(async (successful) => {
           if (!successful) return;
-          const runId = runs.current.get(fresh.id);
           runs.current.delete(fresh.id);
           try {
             await invoke("stop_session", { sessionId: fresh.id });
           } catch (reason) {
-            if (runId) runs.current.set(fresh.id, runId);
-            setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
+            setStartingIds((current) => {
+              const next = new Set(current);
+              next.delete(session.id);
+              next.add(fresh.id);
+              return next;
+            });
+            const relaunched = { ...fresh, running: false };
+            setSessions((current) => current.map((item) => (item.id === session.id ? relaunched : item)));
             setSelectedId((current) => (current === session.id ? fresh.id : current));
             resumed.current = fresh.id;
-            setError(`Restart could not be undone: ${String(reason)}`);
+            if (await launch(relaunched, true)) {
+              setError(`Restart could not be undone; the restarted session was restored: ${String(reason)}`);
+            }
+            await invoke("delete_session_data", { sessionId: session.id }).catch(() => {});
+            clearOutput(session.id);
+            clearUsageCache(session.id);
             return;
           }
           await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
           clearOutput(fresh.id);
           clearUsageCache(fresh.id);
-          void launch(restored, true);
+          await launch(restored, true);
         });
       },
       async () => {
@@ -1414,8 +1435,8 @@ function App() {
   }
 
   async function restartSessionNow(session: Session, fresh: Session, select: boolean): Promise<boolean> {
-    const runId = runs.current.get(session.id);
     runs.current.delete(session.id);
+    setStartingIds((current) => new Set(current).add(fresh.id));
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
     if (select) {
       setSelectedId(fresh.id);
@@ -1424,11 +1445,19 @@ function App() {
     try {
       await invoke("stop_session", { sessionId: session.id });
     } catch (reason) {
-      if (runId) runs.current.set(session.id, runId);
-      setSessions((current) => current.map((item) => (item.id === fresh.id ? session : item)));
+      const restored = { ...session, running: false };
+      setStartingIds((current) => {
+        const next = new Set(current);
+        next.delete(fresh.id);
+        next.add(session.id);
+        return next;
+      });
+      setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
       setSelectedId((current) => (current === fresh.id ? session.id : current));
       resumed.current = session.id;
-      setError(`Session could not be restarted: ${String(reason)}`);
+      if (await launch(restored, true)) {
+        setError(`Session could not be restarted; the original session was restored: ${String(reason)}`);
+      }
       return false;
     }
     if (!(await launch(fresh, false))) {
@@ -1470,10 +1499,10 @@ function App() {
   // Closing is reversible: the row leaves immediately and its PTY stops, while the provider session
   // metadata and directory grant remain until the toast closes without being undone.
   function closeSession(session: Session) {
+    if (startingIds.has(session.id)) return;
     const index = sessions.findIndex((item) => item.id === session.id);
     const wasSelected = selectedId === session.id;
     const nextSelectedId = sessions.find((item) => item.id !== session.id)?.id ?? "";
-    const runId = runs.current.get(session.id);
     runs.current.delete(session.id);
     if (resumed.current === session.id) resumed.current = "";
     const timer = workTimers.current.get(session.id);
@@ -1500,13 +1529,14 @@ function App() {
     }
     const stopped = invoke("stop_session", { sessionId: session.id }).then(
       () => true,
-      (reason) => {
-        if (runId) {
-          runs.current.set(session.id, runId);
-          resumed.current = session.id;
+      async (reason) => {
+        const restored = { ...session, running: false };
+        setStartingIds((current) => new Set(current).add(session.id));
+        resumed.current = session.id;
+        restore(false);
+        if (await launch(restored, true)) {
+          setError(`Session could not be closed; it was restored: ${String(reason)}`);
         }
-        restore(session.running);
-        setError(`Session could not be closed: ${String(reason)}`);
         return false;
       },
     );
@@ -1516,11 +1546,12 @@ function App() {
       stopped,
       () => {
         const restored = { ...session, running: false };
+        setStartingIds((current) => new Set(current).add(session.id));
         resumed.current = session.id;
         restore(false);
-        void stopped.then((successful) => {
+        return stopped.then(async (successful) => {
           if (successful) {
-            void launch(restored, true);
+            await launch(restored, true);
           }
         });
       },
@@ -2067,7 +2098,10 @@ function App() {
                   it replaced. */}
                 {updateStatus === "installing" && updateProgress !== null ? (
                   <Progress value={updateProgress}>
-                    <ProgressLabel>Downloading update</ProgressLabel>
+                    <ProgressLabel className="flex items-center gap-1.5">
+                      <Spinner aria-hidden="true" />
+                      Downloading update
+                    </ProgressLabel>
                     <ProgressValue />
                   </Progress>
                 ) : updateStatus === "checking" || updateStatus === "installing" ? (
