@@ -613,134 +613,163 @@ struct GitHubItem {
     occurred_at: Option<String>,
 }
 
-// The kind, number and repository a GitHub work-item link names, or nothing if the link is not one.
-fn github_item_parts(url: &str) -> Option<(String, String, &'static str, String)> {
+// The repository and number a GitHub work-item link names, or nothing if the link is not one. Owner
+// and name are embedded in a GraphQL query, so only the characters GitHub itself allows in them pass,
+// and the number has to fit the Int the API takes.
+fn github_item_parts(url: &str) -> Option<(String, String, String)> {
     let mut parts = url.strip_prefix("https://github.com/")?.split('/');
     let owner = parts.next().filter(|part| !part.is_empty())?;
     let repository = parts.next().filter(|part| !part.is_empty())?;
-    let kind = match parts.next()? {
-        "pull" => "pulls",
-        "issues" => "issues",
-        _ => return None,
-    };
-    let number = parts.next()?;
-    if number.is_empty() || !number.chars().all(|digit| digit.is_ascii_digit()) {
+    if [owner, repository].iter().any(|part| {
+        !part
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-._".contains(character))
+    }) {
         return None;
     }
-    Some((
-        owner.to_owned(),
-        repository.to_owned(),
-        kind,
-        number.to_owned(),
-    ))
-}
-
-// What GitHub had to say, as opposed to whether Lite managed to ask. Missing is the only answer that
-// removes a link, so everything that is merely a failure to ask has to arrive as Unknown instead.
-enum Answer {
-    Found(serde_json::Value),
-    Missing,
-    Unknown,
-}
-
-fn gh_api(gh: &Path, endpoint: &str) -> Answer {
-    let Ok(output) = Command::new(gh).args(["api", endpoint]).output() else {
-        return Answer::Unknown;
-    };
-    if output.status.success() {
-        return serde_json::from_slice(&output.stdout).map_or(Answer::Unknown, Answer::Found);
+    if !matches!(parts.next()?, "pull" | "issues") {
+        return None;
     }
-    if String::from_utf8_lossy(&output.stderr).contains("HTTP 404") {
-        Answer::Missing
-    } else {
-        Answer::Unknown
+    let number = parts.next()?;
+    if number.is_empty() || number.len() > 9 || !number.chars().all(|digit| digit.is_ascii_digit())
+    {
+        return None;
     }
+    Some((owner.to_owned(), repository.to_owned(), number.to_owned()))
 }
 
-// A session prints as many links as it prints, and each one checked is a round trip; past a point the
-// panel would be waiting on the network rather than saying what a session did. The rest are shown the
-// way they were printed.
-const CHECKED_GITHUB_ITEMS: usize = 20;
+// A reference waiting on GitHub's answer: the URL a session printed, or the URL guessed from a bare
+// "#12" it printed, which is only shown once GitHub confirms it names real work.
+struct Lookup {
+    owner: String,
+    repository: String,
+    number: String,
+    url: String,
+    guessed: bool,
+}
 
-// A pull request or issue link is read back out of what a session printed, so a number mistyped into
-// the terminal reaches the panel looking exactly like one that exists. GitHub is the only thing that
+// A session prints as many references as it prints, and all of them are asked about in one request;
+// the cap is what one request comfortably carries rather than how long the panel is allowed to wait.
+const CHECKED_GITHUB_ITEMS: usize = 100;
+
+// A pull request or issue reference is read back out of what a session printed, so a number mistyped
+// into the terminal reaches here looking exactly like one that exists. GitHub is the only thing that
 // can tell the two apart, and gh is how Lite asks: it is the tool that printed most of these links, it
 // carries whatever sign-in the person using it has, and asking it is not the same as reading that
-// sign-in. A link is only dropped on evidence that it names nothing; everything else is shown exactly
-// as it was printed, whether gh is missing, the laptop is offline, or the repository is one this
-// sign-in cannot see. That last case is why a 404 alone is not evidence: GitHub answers 404 for a
-// private repository it will not admit to as readily as for a number that was never a pull request.
-// So the repository is asked for too, and only a repository that can be read makes the number a
-// mistake — otherwise a sign-in to the wrong account would quietly delete real work from the panel.
-fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
-    let gh = resolve_executable("gh");
+// sign-in. Every reference goes into a single GraphQL request — one alias each — because a call is a
+// process and a network round trip, and a session's worth of them in a row is a panel that waits on
+// the network instead of saying what the session did. issueOrPullRequest answers for both kinds at
+// once, which is what lets a bare "#12" be asked about without knowing which it names; the canonical
+// URL in the answer replaces the guessed kind. A reference is only dropped on evidence that it names
+// nothing, and the same response carries that evidence: a repository that resolves while its item does
+// not was read and searched. A repository that does not resolve proves nothing — GitHub hides a
+// private repository this sign-in cannot see as readily as one that never existed — so its printed
+// links stay, shown the way they were printed, as they do whenever gh is missing or the laptop is
+// offline. A guessed number is different: it is as easily a line number as a pull request, so without
+// GitHub's confirmation it stays out of the panel entirely.
+fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem> {
+    let mut lookups: Vec<Lookup> = Vec::new();
+    let mut seen = HashSet::new();
+    let printed = urls.into_iter().map(|url| (url, false));
+    for (url, guessed) in printed.chain(guessed.into_iter().map(|url| (url, true))) {
+        let Some((owner, repository, number)) = github_item_parts(&url) else {
+            continue;
+        };
+        // A repository is named case-insensitively, so "#12" and a link to it are one reference; the
+        // printed links come first, which keeps a guess from ever shadowing one.
+        if seen.insert((
+            owner.to_lowercase(),
+            repository.to_lowercase(),
+            number.clone(),
+        )) {
+            lookups.push(Lookup {
+                owner,
+                repository,
+                number,
+                url,
+                guessed,
+            });
+        }
+    }
+    if lookups.is_empty() {
+        return Vec::new();
+    }
+    let answer = resolve_executable("gh").and_then(|gh| {
+        let mut query = String::from("query {\n");
+        for (index, lookup) in lookups.iter().take(CHECKED_GITHUB_ITEMS).enumerate() {
+            let Lookup {
+                owner,
+                repository,
+                number,
+                ..
+            } = lookup;
+            query.push_str(&format!(
+                "q{index}: repository(owner: \"{owner}\", name: \"{repository}\") {{ issueOrPullRequest(number: {number}) {{ ...f }} }}\n"
+            ));
+        }
+        query.push_str(
+            "}\nfragment f on IssueOrPullRequest {\n... on Issue { title url state createdAt closedAt }\n... on PullRequest { title url state isDraft createdAt closedAt mergedAt }\n}",
+        );
+        let output = Command::new(gh)
+            .args(["api", "graphql", "-f", &format!("query={query}")])
+            .output()
+            .ok()?;
+        // GraphQL answers what it could resolve and lists the rest as errors in the same body, and gh
+        // prints that body either way; only a body that never arrived is no answer at all.
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()
+    });
     let mut found = Vec::new();
-    let mut readable: HashMap<String, bool> = HashMap::new();
-    let mut checked = 0;
-    for url in urls {
-        let Some((owner, repository, kind, number)) = github_item_parts(&url) else {
-            continue;
-        };
-        let unchecked = GitHubItem {
-            url: url.clone(),
-            title: None,
-            state: None,
-            occurred_at: None,
-        };
-        let (Some(gh), true) = (gh.as_ref(), checked < CHECKED_GITHUB_ITEMS) else {
-            found.push(unchecked);
-            continue;
-        };
-        checked += 1;
-        match gh_api(gh, &format!("repos/{owner}/{repository}/{kind}/{number}")) {
-            Answer::Found(body) => {
-                // Merged and draft are pull-request states of their own; issues only answer open or closed.
-                let state = if kind == "pulls" && body["merged"].as_bool() == Some(true) {
-                    "merged"
-                } else if body["state"].as_str() == Some("closed") {
-                    "closed"
-                } else if kind == "pulls" && body["draft"].as_bool() == Some(true) {
-                    "draft"
-                } else {
-                    "open"
+    for (index, lookup) in lookups.iter().enumerate() {
+        let alias = format!("q{index}");
+        let repository = answer
+            .as_ref()
+            .filter(|_| index < CHECKED_GITHUB_ITEMS)
+            .map(|body| &body["data"][alias.as_str()]);
+        match repository {
+            Some(repository) if repository["issueOrPullRequest"].is_object() => {
+                let item = &repository["issueOrPullRequest"];
+                // Merged and draft are pull-request states of their own; issues only answer open or
+                // closed, and only a pull request carries isDraft at all.
+                let state = match item["state"].as_str() {
+                    Some("MERGED") => "merged",
+                    Some("CLOSED") => "closed",
+                    _ if item["isDraft"].as_bool() == Some(true) => "draft",
+                    _ => "open",
                 };
-                let occurred_at = body[if state == "merged" {
-                    "merged_at"
-                } else if state == "closed" {
-                    "closed_at"
-                } else {
-                    "created_at"
+                let occurred_at = item[match state {
+                    "merged" => "mergedAt",
+                    "closed" => "closedAt",
+                    _ => "createdAt",
                 }]
                 .as_str()
                 .map(str::to_owned);
                 found.push(GitHubItem {
-                    url,
-                    title: body["title"].as_str().map(str::to_owned),
+                    url: item["url"]
+                        .as_str()
+                        .map_or_else(|| lookup.url.clone(), str::to_owned),
+                    title: item["title"].as_str().map(str::to_owned),
                     state: Some(state.to_owned()),
                     occurred_at,
                 });
             }
-            Answer::Missing => {
-                // Asked once per repository rather than once per link: twenty links into one repository
-                // nobody here can read are twenty identical answers.
-                let name = format!("{owner}/{repository}");
-                let readable = *readable.entry(name.clone()).or_insert_with(|| {
-                    matches!(gh_api(gh, &format!("repos/{name}")), Answer::Found(_))
-                });
-                if !readable {
-                    found.push(unchecked);
-                }
-            }
-            Answer::Unknown => found.push(unchecked),
+            // The repository was read and searched, and the number names nothing in it.
+            Some(repository) if !repository.is_null() => {}
+            _ if !lookup.guessed => found.push(GitHubItem {
+                url: lookup.url.clone(),
+                title: None,
+                state: None,
+                occurred_at: None,
+            }),
+            _ => {}
         }
     }
     found
 }
 
-// Each check waits on a process and a network round trip, so the run is moved off the runtime the rest
+// The check waits on a process and a network round trip, so the run is moved off the runtime the rest
 // of Lite's commands share rather than holding one of its workers for the length of it.
 #[tauri::command]
-async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
+async fn github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem> {
     // A run that never finished answered nothing, and nothing is not evidence that a link names
     // nothing, so the links come back the way they were printed rather than as an empty panel.
     let unanswered: Vec<GitHubItem> = urls
@@ -753,7 +782,7 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             occurred_at: None,
         })
         .collect();
-    tauri::async_runtime::spawn_blocking(move || check_github_items(urls))
+    tauri::async_runtime::spawn_blocking(move || check_github_items(urls, guessed))
         .await
         .unwrap_or(unanswered)
 }
