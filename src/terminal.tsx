@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { subscribeOutput, writeSession } from "@/output-store";
 import type { Theme } from "@/theme";
+import type { Agent } from "@/types";
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
 const themes: Record<Theme, ITheme> = {
@@ -81,11 +82,13 @@ function storedFontSize(): number {
 
 export function TerminalView({
   sessionId,
+  agent,
   theme,
   active,
   onPrompt,
 }: {
   sessionId: string;
+  agent: Agent;
   theme: Theme;
   active: boolean;
   onPrompt: (text: string) => void;
@@ -100,6 +103,9 @@ export function TerminalView({
   // without rebuilding it every time the theme changes.
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  // Followed without a rebuild, so a shell that starts an agent is picked up.
+  const agentRef = useRef(agent);
+  agentRef.current = agent;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -173,7 +179,14 @@ export function TerminalView({
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       // Without the kitty keyboard protocol, Escape+Return is the newline the agent CLIs read.
-      if (event.key === "Enter" && event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      if (
+        agentRef.current !== "shell" &&
+        event.key === "Enter" &&
+        event.shiftKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey
+      ) {
         writeSession(sessionId, "\x1b\r");
         return false;
       }

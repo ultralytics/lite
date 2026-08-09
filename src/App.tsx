@@ -1783,6 +1783,7 @@ function App() {
                           >
                             <TerminalView
                               sessionId={session.id}
+                              agent={shellAgents.get(session.id) ?? session.agent}
                               theme={theme}
                               active={selected.running && session.id === selectedId}
                               onPrompt={(text) => {
