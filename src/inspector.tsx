@@ -134,6 +134,7 @@ interface RepositoryGroup {
   branch: string | null;
   changes: string[];
   changesTruncated: boolean;
+  lineDiffs: GitStatus["lineDiffs"];
   items: (GitHubItem & GitHubReference)[];
   name: string;
   path: string | null;
@@ -176,6 +177,7 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
       branch: status.branch,
       changes: status.changes,
       changesTruncated: status.changesTruncated,
+      lineDiffs: status.lineDiffs,
       items: [],
       name: remote ? repositoryName(remote) : status.worktree.split(/[\\/]/).filter(Boolean).pop() || status.worktree,
       path: status.worktree,
@@ -189,6 +191,7 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
       branch: null,
       changes: [],
       changesTruncated: false,
+      lineDiffs: {},
       items: [],
       name: reference.repository,
       path: null,
@@ -359,7 +362,7 @@ function SearchInput({
   onChange: (value: string) => void;
 }) {
   return (
-    <div className="shrink-0 border-b p-2">
+    <div className="shrink-0 p-2">
       <InputGroup>
         <InputGroupAddon>
           <Search />
@@ -744,14 +747,30 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
       {repository.changes.length ? (
         <div className="border-t px-2.5 py-2">
           <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
-          {repository.changes.map((change) => (
-            <div key={change} className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted">
-              <span className="w-5 shrink-0 font-mono text-xs text-muted-foreground">{change.slice(0, 2).trim()}</span>
-              <span className="min-w-0 truncate font-mono text-xs" title={change.slice(3)}>
-                {change.slice(3)}
-              </span>
-            </div>
-          ))}
+          {repository.changes.map((change) => {
+            const path = change.slice(3);
+            const diff = repository.lineDiffs[path.split(" -> ").pop() ?? path];
+            return (
+              <div key={change} className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted">
+                <span
+                  className={`${change.startsWith("??") ? "w-16" : "w-5"} shrink-0 font-mono text-xs text-muted-foreground`}
+                >
+                  {change.startsWith("??") ? "Untracked" : change.slice(0, 2).trim()}
+                </span>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={path}>
+                  {path}
+                </span>
+                {diff?.additions ? (
+                  <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
+                    +{diff.additions}
+                  </span>
+                ) : null}
+                {diff?.deletions ? (
+                  <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{diff.deletions}</span>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
       ) : null}
       <GitHubItemList label="Pull requests" items={pullRequests} />

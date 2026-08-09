@@ -521,6 +521,7 @@ function VersionBadge({
             variant={commit ? "error" : BADGE_VARIANT[release]}
             render={<button type="button" onClick={onCheck} />}
           >
+            {!commit && release === "checking" ? <Spinner aria-hidden="true" /> : null}
             {commit || version}
           </Badge>
         }
@@ -906,6 +907,12 @@ function App() {
   // The inspector panel goes away with the last session and comes back at its default width, so what
   // the sides remember about it is reset with it rather than corrected by the first measurement.
   const hasSelection = Boolean(selected);
+  // The workspace starts hidden behind the splash. A committed App is ready to replace it, while
+  // restored sessions and the update check remain deliberately non-blocking.
+  useEffect(() => {
+    void invoke("startup_ready");
+  }, []);
+
   useEffect(() => {
     if (!hasSelection) setShut((current) => (current.inspector ? { ...current, inspector: false } : current));
   }, [hasSelection]);
@@ -1647,7 +1654,7 @@ function App() {
             <ResizablePanel defaultSize="55%" minSize="38%">
               <section className="flex h-full min-w-0 flex-col">
                 {selected ? (
-                  <div className="relative min-h-0 flex-1">
+                  <div data-terminal-surface className="relative min-h-0 flex-1">
                     <Suspense fallback={<div className="absolute inset-0 bg-background" />}>
                       {sessions.map((session) =>
                         session.running ? (
@@ -1678,10 +1685,12 @@ function App() {
                       <ActionIconButton
                         variant="outline"
                         size="icon-sm"
-                        className="absolute top-2 right-2 z-10 bg-background/90 hover:text-destructive"
+                        className="absolute top-2 right-2 z-10 hidden bg-background/90 hover:text-destructive"
                         tooltip="Close session"
                         tooltipSide="left"
                         aria-label={`Close ${selected.name}`}
+                        data-terminal-action
+                        onMouseDown={(event) => event.preventDefault()}
                         onClick={() => closeSession(selected)}
                       >
                         <Trash2 />

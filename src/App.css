@@ -4,6 +4,11 @@
   height: 100%;
 }
 
+/* Session actions belong to the terminal only while xterm itself owns focus. */
+[data-terminal-surface]:has(.xterm.focus) [data-terminal-action] {
+  display: inline-flex;
+}
+
 /* The scroll areas live in narrow panels, so their bars are slimmer than the component's default. */
 [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
   width: 0.375rem;

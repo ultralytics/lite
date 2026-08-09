@@ -53,5 +53,6 @@ export interface GitStatus {
   branch: string;
   worktree: string;
   changes: string[];
+  lineDiffs: Record<string, { additions: number; deletions: number }>;
   changesTruncated: boolean;
 }

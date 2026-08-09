@@ -22,6 +22,7 @@ use tungstenite::Message;
 const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
+const MAX_GIT_DIFF_BYTES: u64 = 1_000_000;
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -127,7 +128,14 @@ struct GitStatus {
     branch: String,
     worktree: String,
     changes: Vec<String>,
+    line_diffs: BTreeMap<String, LineDiff>,
     changes_truncated: bool,
+}
+
+#[derive(Serialize)]
+struct LineDiff {
+    additions: u64,
+    deletions: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -2517,6 +2525,80 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
     if !status.success() && !changes_truncated {
         return Err("Could not read Git status".into());
     }
+    let line_diffs = Command::new(&git)
+        .arg("-C")
+        .arg(&root)
+        .args(["diff", "--numstat", "-z", "HEAD"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+        .and_then(|mut child| {
+            let stdout = child.stdout.take()?;
+            let mut output = Vec::new();
+            if stdout
+                .take(MAX_GIT_DIFF_BYTES + 1)
+                .read_to_end(&mut output)
+                .is_err()
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            if output.len() > MAX_GIT_DIFF_BYTES as usize {
+                output.truncate(MAX_GIT_DIFF_BYTES as usize);
+                let _ = child.kill();
+                let _ = child.wait();
+            } else if !child.wait().ok()?.success() {
+                return None;
+            }
+            if output.last() != Some(&0) {
+                output.truncate(
+                    output
+                        .iter()
+                        .rposition(|byte| *byte == 0)
+                        .map_or(0, |i| i + 1),
+                );
+            }
+            Some(output)
+        })
+        .map(|output| {
+            let mut diffs = BTreeMap::<String, LineDiff>::new();
+            let mut records = output.split(|byte| *byte == 0);
+            while let Some(header) = records.next().filter(|record| !record.is_empty()) {
+                let mut fields = header.splitn(3, |byte| *byte == b'\t');
+                let Some(additions) = fields
+                    .next()
+                    .and_then(|value| String::from_utf8_lossy(value).parse::<u64>().ok())
+                else {
+                    continue;
+                };
+                let Some(deletions) = fields
+                    .next()
+                    .and_then(|value| String::from_utf8_lossy(value).parse::<u64>().ok())
+                else {
+                    continue;
+                };
+                let Some(path) = fields.next() else { continue };
+                // With -z, a rename leaves the header path empty and follows it with old and new paths.
+                let path = if path.is_empty() {
+                    let _ = records.next();
+                    records.next()
+                } else {
+                    Some(path)
+                };
+                let Some(path) = path else { continue };
+                diffs.insert(
+                    String::from_utf8_lossy(path).into_owned(),
+                    LineDiff {
+                        additions,
+                        deletions,
+                    },
+                );
+            }
+            diffs
+        })
+        .unwrap_or_default();
     Ok(Some(GitStatus {
         branch: if branch.is_empty() {
             "Detached HEAD".into()
@@ -2525,6 +2607,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         },
         worktree: root,
         changes,
+        line_diffs,
         changes_truncated,
     }))
 }
@@ -2779,6 +2862,18 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart()
 }
 
+#[tauri::command]
+fn startup_ready(app: AppHandle) {
+    // Showing owns focus as well: a relaunch inherits no activation from the process an update replaced.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    if let Some(window) = app.get_webview_window("splash") {
+        let _ = window.close();
+    }
+}
+
 // Tauri fills the About panel from the bundle config, which reaches it with only a name and version,
 // so the panel read as bare. macOS only: it is the one platform Tauri gives an application menu, and
 // setting one on Windows or Linux would put a native menu bar on a window that draws its own chrome.
@@ -2822,11 +2917,6 @@ pub fn run() {
             app.manage(load_roots(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
             app.manage(load_codex_server(app.handle())?);
-            // A relaunch inherits no activation from the process it replaces, so the build installed
-            // by an update came back behind every other window with nothing to show it had finished.
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
-            }
             #[cfg(target_os = "macos")]
             describe_app(app.handle())?;
             Ok(())
@@ -2860,7 +2950,8 @@ pub fn run() {
             grant_repo,
             local_repo,
             build_date,
-            local_update
+            local_update,
+            startup_ready
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lite")
