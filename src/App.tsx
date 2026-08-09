@@ -94,7 +94,7 @@ import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
-import { type Session, sessionLabel } from "@/types";
+import { type Agent, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -593,11 +593,13 @@ class PanelBoundary extends Component<{ children: ReactNode }, { message: string
 // it collapses to show the same one, so a session is recognizable at either width.
 function SessionBadge({
   session,
+  agent = session.agent,
   active,
   starting,
   working,
 }: {
   session: Session;
+  agent?: Agent;
   active: boolean;
   starting: boolean;
   working: boolean;
@@ -606,7 +608,7 @@ function SessionBadge({
   const ring = active ? "ring-sidebar-accent" : "ring-sidebar";
   return (
     <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
-      <ProviderIcon agent={session.agent} provider={session.provider} />
+      <ProviderIcon agent={agent} provider={session.provider} />
       {starting ? (
         <Spinner
           className={`absolute -right-1 -bottom-1 size-3 rounded-full bg-background text-muted-foreground ring-2 ${ring}`}
@@ -633,6 +635,7 @@ function SessionMark({ session }: { session: Session }) {
 
 function SessionRow({
   session,
+  agent,
   active,
   starting,
   working,
@@ -644,6 +647,7 @@ function SessionRow({
   onClose,
 }: {
   session: Session;
+  agent?: Agent;
   active: boolean;
   starting: boolean;
   working: boolean;
@@ -673,7 +677,7 @@ function SessionRow({
       className={`flex-nowrap transition-[color,background-color,opacity] active:opacity-70 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
-        <SessionBadge session={session} active={active} starting={starting} working={working} />
+        <SessionBadge session={session} agent={agent} active={active} starting={starting} working={working} />
       </ItemMedia>
       {renaming ? (
         <Input
@@ -830,6 +834,17 @@ function subject(text: string) {
   return words.length > 40 ? `${words.slice(0, 40).trimEnd()}…` : words;
 }
 
+function commandAgent(command: string): Agent | undefined {
+  const executable = command
+    .trim()
+    .split(/\s+/, 1)[0]
+    ?.split(/[\\/]/)
+    .pop()
+    ?.replace(/\.exe$/i, "")
+    .toLowerCase();
+  return executable === "claude" || executable === "codex" || executable === "kimi" ? executable : undefined;
+}
+
 function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
@@ -841,6 +856,7 @@ function App() {
   // Sessions whose terminal has written something recently, which is what separates a connected
   // session that is working from one that is merely connected.
   const [working, setWorking] = useState<Set<string>>(new Set());
+  const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
   const [query, setQuery] = useState("");
   const [renamingId, setRenamingId] = useState("");
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
@@ -866,6 +882,7 @@ function App() {
   const [availableVersion, setAvailableVersion] = useState("");
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState("");
+  const updateDialog = useRef<HTMLDivElement>(null);
   const runs = useRef(new Map<string, string>());
   const sessionsRef = useRef(sessions);
   const workTimers = useRef(new Map<string, number>());
@@ -1087,6 +1104,7 @@ function App() {
     let disposed = false;
     let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
+    let unlistenAgent: (() => void) | undefined;
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
@@ -1098,24 +1116,43 @@ function App() {
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         runs.current.delete(payload.sessionId);
+        setShellAgents((current) => {
+          if (!current.has(payload.sessionId)) return current;
+          const next = new Map(current);
+          next.delete(payload.sessionId);
+          return next;
+        });
         setSessions((current) =>
           current.map((session) => (session.id === payload.sessionId ? { ...session, running: false } : session)),
         );
       }),
-    ]).then(([output, exit]) => {
+      listen<{ sessionId: string; runId: string; agent: Agent | null }>("shell-agent", ({ payload }) => {
+        if (runs.current.get(payload.sessionId) !== payload.runId) return;
+        setShellAgents((current) => {
+          if (payload.agent === current.get(payload.sessionId)) return current;
+          const next = new Map(current);
+          if (payload.agent) next.set(payload.sessionId, payload.agent);
+          else next.delete(payload.sessionId);
+          return next;
+        });
+      }),
+    ]).then(([output, exit, agent]) => {
       if (disposed) {
         output();
         exit();
+        agent();
         return;
       }
       unlistenOutput = output;
       unlistenExit = exit;
+      unlistenAgent = agent;
     });
     const timers = workTimers.current;
     return () => {
       disposed = true;
       unlistenOutput?.();
       unlistenExit?.();
+      unlistenAgent?.();
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
@@ -1444,7 +1481,7 @@ function App() {
             {selected ? (
               <>
                 <Separator orientation="vertical" className="mx-1 h-4" />
-                <ProviderIcon agent={selected.agent} provider={selected.provider} />
+                <ProviderIcon agent={shellAgents.get(selected.id) ?? selected.agent} provider={selected.provider} />
                 <span className="min-w-0 truncate text-xs font-medium">{selected.name}</span>
                 <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">{selected.cwd}</span>
                 {remote ? (
@@ -1571,6 +1608,7 @@ function App() {
                           >
                             <SessionBadge
                               session={session}
+                              agent={shellAgents.get(session.id)}
                               active={session.id === selectedId}
                               starting={startingIds.has(session.id)}
                               working={working.has(session.id)}
@@ -1627,6 +1665,7 @@ function App() {
                           <SessionRow
                             key={session.id}
                             session={session}
+                            agent={shellAgents.get(session.id)}
                             active={session.id === selectedId}
                             starting={startingIds.has(session.id)}
                             working={working.has(session.id)}
@@ -1667,15 +1706,20 @@ function App() {
                               sessionId={session.id}
                               theme={theme}
                               active={selected.running && session.id === selectedId}
-                              onPrompt={(text) =>
+                              onPrompt={(text) => {
+                                const agent = session.agent === "shell" ? commandAgent(text) : undefined;
+                                if (agent)
+                                  void invoke("watch_shell_agent", { sessionId: session.id, agent }).catch((reason) =>
+                                    console.error(`Lite could not follow the agent in session ${session.id}:`, reason),
+                                  );
                                 setSessions((current) =>
                                   current.map((item) =>
                                     item.id === session.id && !item.renamed && item.name === folderName(item.cwd)
                                       ? { ...item, name: subject(text) }
                                       : item,
                                   ),
-                                )
-                              }
+                                );
+                              }}
                             />
                           </div>
                         ) : null,
@@ -1787,6 +1831,8 @@ function App() {
           </ResizablePanelGroup>
           <Dialog open={updateOpen} onOpenChange={changeUpdateOpen}>
             <DialogContent
+              ref={updateDialog}
+              initialFocus={updateDialog}
               className="sm:max-w-lg"
               showCloseButton={updateStatus !== "checking" && updateStatus !== "installing"}
             >

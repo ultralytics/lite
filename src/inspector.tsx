@@ -336,7 +336,7 @@ function FileIcon({ name, directory }: { name: string; directory?: boolean }) {
   const Icon = directory ? Folder : (kind?.icon ?? File);
   return (
     <Icon
-      className={`size-3.5 shrink-0 ${directory ? "fill-current text-muted-foreground" : (kind?.color ?? "text-muted-foreground")}`}
+      className={`size-4 shrink-0 ${directory ? "fill-current text-muted-foreground" : (kind?.color ?? "text-muted-foreground")}`}
     />
   );
 }
@@ -538,8 +538,8 @@ function FileTree({
             <div key={entry.path}>
               <button
                 type="button"
-                className="flex h-7 w-full items-center gap-1.5 rounded-md pr-2 text-left text-xs hover:bg-muted"
-                style={{ paddingLeft: `${8 + depth * 14}px` }}
+                className="flex h-6 w-full items-center gap-1 rounded-sm pr-2 text-left text-[13px] hover:bg-muted"
+                style={{ paddingLeft: `${6 + depth * 12}px` }}
                 data-context-value={entry.path}
                 data-context-label="Copy path"
                 data-context-directory={entry.isDirectory ? "" : undefined}
@@ -549,13 +549,13 @@ function FileTree({
                 {entry.isDirectory ? (
                   <>
                     <ChevronRight
-                      className={`size-3.5 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+                      className={`size-3 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
                     />
                     <FileIcon name={entry.name} directory />
                   </>
                 ) : (
                   <>
-                    <span className="w-3.5" />
+                    <span className="w-3" />
                     <FileIcon name={entry.name} />
                   </>
                 )}
@@ -566,7 +566,7 @@ function FileTree({
           );
         })}
         {listing.after || listing.nextCursor ? (
-          <div className="flex h-7 items-center gap-3 pr-2 text-xs" style={{ paddingLeft: `${30 + depth * 14}px` }}>
+          <div className="flex h-6 items-center gap-3 pr-2 text-[13px]" style={{ paddingLeft: `${42 + depth * 12}px` }}>
             {listing.after ? (
               <button
                 type="button"
@@ -596,11 +596,11 @@ function FileTree({
   const name = parts[parts.length - 1] ?? root;
   const rootOpen = !!lowered || expanded.has(root);
   return (
-    <div className="py-2">
+    <div className="py-1">
       <div className="flex items-center pr-1">
         <button
           type="button"
-          className="flex h-7 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-left text-xs font-medium hover:bg-muted"
+          className="flex h-6 min-w-0 flex-1 items-center gap-1 rounded-sm px-1.5 text-left text-[13px] font-medium hover:bg-muted"
           data-context-value={root}
           data-context-label="Copy path"
           data-context-directory
@@ -608,7 +608,7 @@ function FileTree({
           onClick={() => void toggle(root)}
         >
           <ChevronRight
-            className={`size-3.5 text-muted-foreground transition-transform ${rootOpen ? "rotate-90" : ""}`}
+            className={`size-3 text-muted-foreground transition-transform ${rootOpen ? "rotate-90" : ""}`}
           />
           <FileIcon name={name} directory />
           <span className="truncate">{name}</span>
@@ -666,7 +666,7 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
       <div className="flex h-full min-h-0 flex-col">
         <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2">
           <FileIcon name={selected.name} />
-          <span className="min-w-0 flex-1 truncate font-mono text-xs">{selected.name}</span>
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{selected.name}</span>
           <ActionIconButton
             size="icon-sm"
             tooltip="Close file"

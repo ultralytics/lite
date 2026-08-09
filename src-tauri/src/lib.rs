@@ -13,7 +13,7 @@ use std::{
     thread,
     time::{Duration, SystemTime},
 };
-use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -35,6 +35,7 @@ struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     run_id: String,
+    agent_watch: u64,
 }
 
 fn stop_pty(session: &mut PtySession) -> Result<(), String> {
@@ -81,6 +82,14 @@ struct PtyOutput {
 struct PtyExit {
     session_id: String,
     run_id: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellAgent {
+    session_id: String,
+    run_id: String,
+    agent: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2236,6 +2245,7 @@ async fn spawn_session(
             master: pair.master,
             writer,
             run_id: run_id.clone(),
+            agent_watch: 0,
         },
     );
     drop(running);
@@ -2332,6 +2342,149 @@ async fn spawn_session(
     }
 
     Ok(provider_session_id)
+}
+
+fn is_agent_process(process: &sysinfo::Process, agent: &str) -> bool {
+    let name = process.name().to_string_lossy().to_ascii_lowercase();
+    if name.strip_suffix(".exe").unwrap_or(&name) == agent {
+        return true;
+    }
+    process.cmd().iter().any(|argument| {
+        let argument = argument.to_string_lossy().to_ascii_lowercase();
+        let executable = Path::new(&argument)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        executable.strip_suffix(".exe").unwrap_or(executable) == agent
+            || (agent == "codex" && executable == "codex.js")
+            || (agent == "kimi" && argument.contains("kimi-code"))
+    })
+}
+
+fn agent_descendants(system: &System, root: sysinfo::Pid, agent: &str) -> Vec<sysinfo::Pid> {
+    system
+        .processes()
+        .iter()
+        .filter_map(|(pid, process)| {
+            if !is_agent_process(process, agent) {
+                return None;
+            }
+            let mut parent = process.parent();
+            while let Some(ancestor) = parent {
+                if ancestor == root {
+                    return Some(*pid);
+                }
+                parent = system
+                    .process(ancestor)
+                    .and_then(|process| process.parent());
+            }
+            None
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn watch_shell_agent(
+    app: AppHandle,
+    sessions: State<Sessions>,
+    session_id: String,
+    agent: String,
+) -> Result<(), String> {
+    if !matches!(agent.as_str(), "claude" | "codex" | "kimi") {
+        return Err("Unknown agent".into());
+    }
+    let (root, run_id) = {
+        let sessions = sessions.0.lock().map_err(|error| error.to_string())?;
+        let session = sessions.get(&session_id).ok_or("Session is not running")?;
+        let root = session
+            .child
+            .process_id()
+            .ok_or("Session has no process id")?;
+        (sysinfo::Pid::from_u32(root), session.run_id.clone())
+    };
+    thread::spawn(move || {
+        let discover = ProcessRefreshKind::nothing()
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .without_tasks();
+        let mut system = System::new();
+        let mut processes = Vec::new();
+        for _ in 0..10 {
+            system.refresh_processes_specifics(ProcessesToUpdate::All, true, discover);
+            let running = app.state::<Sessions>().0.lock().is_ok_and(|sessions| {
+                sessions
+                    .get(&session_id)
+                    .is_some_and(|session| session.run_id == run_id)
+            });
+            if !running {
+                return;
+            }
+            processes = agent_descendants(&system, root, &agent);
+            if !processes.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+        if processes.is_empty() {
+            return;
+        }
+        let watch = {
+            let sessions_state = app.state::<Sessions>();
+            let Ok(mut sessions) = sessions_state.0.lock() else {
+                return;
+            };
+            let Some(session) = sessions.get_mut(&session_id) else {
+                return;
+            };
+            if session.run_id != run_id {
+                return;
+            }
+            session.agent_watch += 1;
+            session.agent_watch
+        };
+        let _ = app.emit(
+            "shell-agent",
+            ShellAgent {
+                session_id: session_id.clone(),
+                run_id: run_id.clone(),
+                agent: Some(agent),
+            },
+        );
+        // Discovery is brief; a long-running agent retains and refreshes only its matching child PIDs.
+        system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&processes),
+            true,
+            ProcessRefreshKind::nothing().without_tasks(),
+        );
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&processes),
+                true,
+                ProcessRefreshKind::nothing().without_tasks(),
+            );
+            processes.retain(|pid| system.process(*pid).is_some());
+            if processes.is_empty() {
+                let current = app.state::<Sessions>().0.lock().is_ok_and(|sessions| {
+                    sessions.get(&session_id).is_some_and(|session| {
+                        session.run_id == run_id && session.agent_watch == watch
+                    })
+                });
+                if current {
+                    let _ = app.emit(
+                        "shell-agent",
+                        ShellAgent {
+                            session_id,
+                            run_id,
+                            agent: None,
+                        },
+                    );
+                }
+                return;
+            }
+        }
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -2930,6 +3083,7 @@ pub fn run() {
             revoke_directory,
             spawn_session,
             write_session,
+            watch_shell_agent,
             resize_session,
             stop_session,
             delete_session_data,
