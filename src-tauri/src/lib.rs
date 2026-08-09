@@ -426,15 +426,11 @@ fn grant_directory(
 }
 
 fn default_directory_path(app: &AppHandle) -> Option<PathBuf> {
-    if let Ok(path) = last_directory_path(app)
+    let path = last_directory_path(app)
         .and_then(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
-    {
-        let path = PathBuf::from(path);
-        if path.is_dir() {
-            return Some(path);
-        }
-    }
-    None
+        .ok()
+        .map(PathBuf::from)?;
+    path.is_dir().then_some(path)
 }
 
 #[cfg(unix)]
