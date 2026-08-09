@@ -2280,6 +2280,7 @@ async fn list_directory(
         if name == ".git"
             || name == "node_modules"
             || name == "target"
+            || name == ".venv"
             || is_sensitive_path(&root, &entry.path())
         {
             continue;

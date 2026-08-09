@@ -458,12 +458,20 @@ function FileTree({
         const path = pending.shift();
         if (!path || directories.has(path)) continue;
         directories.add(path);
-        const cached = nextChildren[path];
-        const listing =
-          cached && !cached.after
-            ? cached
-            : { ...(await invoke<DirectoryListing>("list_directory", { rootId, path, after: null })), after: null };
-        nextChildren[path] = listing;
+        // A directory is walked through every page it has: a walk that silently stopped at the first
+        // 250 entries would answer "No matches" about a file that exists.
+        let listing = nextChildren[path];
+        if (!listing || listing.after || listing.nextCursor) {
+          let entries: FileEntry[] = [];
+          let cursor: DirectoryCursor | null = null;
+          do {
+            const page: DirectoryListing = await invoke("list_directory", { rootId, path, after: cursor });
+            entries = entries.concat(page.entries);
+            cursor = page.nextCursor;
+          } while (cursor);
+          listing = { entries, nextCursor: null, after: null };
+          nextChildren[path] = listing;
+        }
         pending.push(
           ...listing.entries.filter((entry) => entry.isDirectory && !entry.isSymlink).map((entry) => entry.path),
         );
@@ -616,7 +624,12 @@ function FileTree({
         </ActionIconButton>
       </div>
       {lowered && !expandingAll && children[root] && !subtreeMatches(root) ? (
-        <p className="px-3 py-2 text-xs text-muted-foreground">No matches</p>
+        // A walk that failed did not prove absence, so its error takes the place of "No matches".
+        error ? (
+          <p className="p-3 text-xs text-destructive">{error}</p>
+        ) : (
+          <p className="px-3 py-2 text-xs text-muted-foreground">No matches</p>
+        )
       ) : null}
       {rootOpen ? rows(root, 1) : null}
     </div>
