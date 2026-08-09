@@ -1317,18 +1317,11 @@ function App() {
   }
 
   // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
-  // session it resumed by id is forgotten first and the tab takes a new one.
+  // tab takes a new id. The old provider metadata stays until Undo expires so the original can resume.
   async function restartSession(session: Session, select = true) {
     runs.current.delete(session.id);
     setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
     await invoke("stop_session", { sessionId: session.id });
-    try {
-      await invoke("delete_session_data", { sessionId: session.id });
-    } catch (reason) {
-      setError(String(reason));
-    }
-    clearOutput(session.id);
-    clearUsageCache(session.id);
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
     if (select) {
@@ -1337,6 +1330,49 @@ function App() {
     }
     await launch(fresh, false);
     if (fresh.agent === "kimi") startKimiConversation(fresh.id);
+
+    let undone = false;
+    async function cleanupRestarted() {
+      try {
+        await invoke("delete_session_data", { sessionId: session.id });
+      } catch (reason) {
+        setError(`Session restarted, but local cleanup failed: ${String(reason)}`);
+      }
+      clearOutput(session.id);
+      clearUsageCache(session.id);
+    }
+    toast.add({
+      title: `Restarted “${session.name}”`,
+      type: "success",
+      timeout: 8000,
+      onClose: async () => {
+        if (!undone) await cleanupRestarted();
+      },
+      actionProps: {
+        children: "Undo",
+        onClick: async () => {
+          undone = true;
+          const runId = runs.current.get(fresh.id);
+          runs.current.delete(fresh.id);
+          try {
+            await invoke("stop_session", { sessionId: fresh.id });
+          } catch (reason) {
+            if (runId) runs.current.set(fresh.id, runId);
+            await cleanupRestarted();
+            setError(`Restart could not be undone: ${String(reason)}`);
+            return;
+          }
+          await invoke("delete_session_data", { sessionId: fresh.id }).catch((reason) => setError(String(reason)));
+          clearOutput(fresh.id);
+          clearUsageCache(fresh.id);
+          const restored = { ...session, running: false };
+          setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
+          setSelectedId((current) => (current === fresh.id ? session.id : current));
+          resumed.current = session.id;
+          await launch(restored, true);
+        },
+      },
+    });
   }
 
   async function restartAllSessions() {
