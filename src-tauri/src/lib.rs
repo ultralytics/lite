@@ -1349,7 +1349,7 @@ fn key_hint(key: &str) -> String {
 
 fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
     let config = fs::read_to_string(kimi_home(app).ok()?.join("config.toml")).ok()?;
-    let config = config.parse::<toml::Table>().ok()?;
+    let config = config.parse::<toml_edit::DocumentMut>().ok()?;
     let model = config.get("default_model")?.as_str()?;
     let provider = config
         .get("models")?
@@ -1366,12 +1366,12 @@ fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
 
     let api_key = provider
         .get("api_key")
-        .and_then(toml::Value::as_str)
+        .and_then(toml_edit::Item::as_str)
         .filter(|key| !key.trim().is_empty())
         .or_else(|| {
             provider
                 .get("env")
-                .and_then(toml::Value::as_table)
+                .and_then(toml_edit::Item::as_table)
                 .and_then(|env| {
                     env.iter().find_map(|(name, value)| {
                         if !name.ends_with("_API_KEY") {
@@ -1386,7 +1386,11 @@ fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
             method: CliAuthMethod::ApiKey,
             key_hint: Some(key_hint(api_key)),
         })
-    } else if provider.get("oauth").is_some_and(toml::Value::is_table) {
+    } else if provider
+        .get("oauth")
+        .and_then(toml_edit::Item::as_table)
+        .is_some()
+    {
         Some(CliAuth {
             method: CliAuthMethod::Provider,
             key_hint: None,
@@ -1394,6 +1398,52 @@ fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
     } else {
         None
     }
+}
+
+fn delete_kimi_api_key(app: &AppHandle) -> Result<(), String> {
+    let path = kimi_home(app)?.join("config.toml");
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let mut config = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    let model = config
+        .get("default_model")
+        .and_then(toml_edit::Item::as_str)
+        .ok_or("Kimi has no default model")?
+        .to_owned();
+    let provider = config
+        .get("models")
+        .and_then(|models| models.get(&model))
+        .and_then(|model| model.get("provider"))
+        .and_then(toml_edit::Item::as_str)
+        .ok_or("Kimi's default model has no provider")?
+        .to_owned();
+    let provider = config
+        .get_mut("providers")
+        .and_then(toml_edit::Item::as_table_mut)
+        .and_then(|providers| providers.get_mut(&provider))
+        .and_then(toml_edit::Item::as_table_mut)
+        .ok_or("Kimi's default provider is missing")?;
+
+    let mut removed = provider.remove("api_key").is_some();
+    if let Some(env) = provider
+        .get_mut("env")
+        .and_then(toml_edit::Item::as_table_mut)
+    {
+        let api_keys: Vec<String> = env
+            .iter()
+            .filter(|(name, _)| name.ends_with("_API_KEY"))
+            .map(|(name, _)| name.to_owned())
+            .collect();
+        removed |= !api_keys.is_empty();
+        for name in api_keys {
+            env.remove(&name);
+        }
+    }
+    if removed {
+        write_atomic(&path, config.to_string().as_bytes())?;
+    }
+    Ok(())
 }
 
 fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuth> {
@@ -1463,10 +1513,13 @@ async fn save_api_key(app: AppHandle, name: String, key: String) -> Result<(), S
 #[tauri::command]
 async fn delete_api_key(app: AppHandle, name: String) -> Result<(), String> {
     let mut keys = load_api_keys(&app);
-    if keys.remove(&name).is_none() {
-        return Ok(());
+    if keys.remove(&name).is_some() {
+        return write_api_keys(&app, &keys);
     }
-    write_api_keys(&app, &keys)
+    if name == "kimi" {
+        return delete_kimi_api_key(&app);
+    }
+    Ok(())
 }
 
 // A launched app inherits a bare PATH, and the PATH given to a child is not used to find the program
