@@ -67,7 +67,7 @@ const CODEX_PROVIDERS: [CodexProvider; 2] = [
         base_url: "https://openrouter.ai/api/v1",
         env_key: "OPENROUTER_API_KEY",
         model: "~openai/gpt-latest",
-        setup_url: "https://openrouter.ai/docs/guides/guides/codex",
+        setup_url: "https://openrouter.ai/docs/cookbook/coding-agents/codex-cli",
     },
 ];
 
@@ -1704,12 +1704,6 @@ fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuth> {
                 key_hint: None,
             }),
         "kimi" => kimi_auth(app),
-        "qwen" => qwen_home(app)
-            .is_ok_and(|home| home.join("settings.json").is_file())
-            .then_some(CliAuth {
-                method: CliAuthMethod::Provider,
-                key_hint: None,
-            }),
         _ => None,
     }
 }
@@ -1851,10 +1845,6 @@ fn gemini_home(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "KIMI_CODE_HOME", ".kimi-code")
-}
-
-fn qwen_home(app: &AppHandle) -> Result<PathBuf, String> {
-    provider_home(app, "QWEN_HOME", ".qwen")
 }
 
 // Kimi groups sessions under an opaque per-directory key that its workspace index maps back to a path.
@@ -2036,9 +2026,11 @@ fn agent_command(
     if let Some((_, variable)) = api_key_env(agent, provider)
         && let Some(key) = saved_api_key(app, agent, provider)
     {
-        command.env(variable, key);
+        command.env(variable, &key);
         if agent == "gemini" {
             command.env("GEMINI_DEFAULT_AUTH_TYPE", "gemini-api-key");
+        } else if agent == "qwen" {
+            command.env("OPENAI_API_KEY", key);
         }
     }
     Ok(command)
