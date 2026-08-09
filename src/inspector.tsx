@@ -623,13 +623,10 @@ function FileTree({
           <ChevronsDownUp />
         </ActionIconButton>
       </div>
-      {lowered && !expandingAll && children[root] && !subtreeMatches(root) ? (
-        // A walk that failed did not prove absence, so its error takes the place of "No matches".
-        error ? (
-          <p className="p-3 text-xs text-destructive">{error}</p>
-        ) : (
-          <p className="px-3 py-2 text-xs text-muted-foreground">No matches</p>
-        )
+      {/* A walk that failed searched a partial tree, so its error shows over whatever it did find. */}
+      {lowered && error ? <p className="p-3 text-xs text-destructive">{error}</p> : null}
+      {lowered && !error && !expandingAll && children[root] && !subtreeMatches(root) ? (
+        <p className="px-3 py-2 text-xs text-muted-foreground">No matches</p>
       ) : null}
       {rootOpen ? rows(root, 1) : null}
     </div>
