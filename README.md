@@ -115,9 +115,12 @@ Useful checks:
 
 ```bash
 bun run check       # Biome and native TypeScript checks
-bun run local       # Lite Dev bundle with a red icon that you can double-click
+bun run local       # Separate Lite Dev app with a red icon and its own app data
 bun run tauri build # Native installer for the current operating system
 ```
+
+Lite Dev follows `origin/main` directly instead of release assets. Its update button fetches main and,
+when a newer commit exists, opens a visible shell session that fast-forwards and rebuilds the app.
 
 The frontend uses React, shadcn/ui Nova with Base UI, Tailwind CSS, Biome, and `tsgo`. Tauri and Rust own local persistence, terminals, Git, files, and provider processes.
 

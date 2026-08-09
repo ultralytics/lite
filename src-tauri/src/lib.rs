@@ -2915,18 +2915,25 @@ fn stop_runtime(app: &AppHandle) {
     stop_codex_server(&app.state::<CodexServer>());
 }
 
-// A local build shares its name, version, and data folder with an install, so it names the commit it
-// came from instead of the version it would otherwise be mistaken for. A release returns nothing and
-// the window shows its version.
-// A release cannot update a local build, and installing one would replace the very build being tried
-// out, so a local build asks the working tree it came from whether that tree has moved on instead.
+// A local build names the commit it came from instead of the release version it would otherwise be
+// mistaken for. It follows main directly so fixes can be used before release assets exist.
 #[tauri::command]
 fn local_update() -> Result<Option<String>, String> {
     let built = option_env!("LITE_COMMIT").ok_or("This is not a local build")?;
     let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let head = command_output(&git, Path::new(repo), &["rev-parse", "--short", "HEAD"])
-        .map_err(|_| format!("Could not read {repo}"))?;
+    command_output(
+        &git,
+        Path::new(repo),
+        &["fetch", "--quiet", "origin", "main"],
+    )
+    .map_err(|_| "Could not fetch origin/main".to_string())?;
+    let head = command_output(
+        &git,
+        Path::new(repo),
+        &["rev-parse", "--short", "origin/main"],
+    )
+    .map_err(|_| format!("Could not read {repo}"))?;
     Ok((head != built).then_some(head))
 }
 

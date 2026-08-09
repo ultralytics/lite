@@ -1455,7 +1455,7 @@ function App() {
       };
       setUpdateOpen(false);
       createSession(session);
-      runOnStart(session.id, "bun run local");
+      runOnStart(session.id, "git pull --ff-only origin main && bun run local");
     } catch (reason) {
       setRebuilding(false);
       setUpdateError(String(reason));
@@ -1935,7 +1935,7 @@ function App() {
                     ? `Lite ${availableVersion} is ready. Updating stops running sessions; their tabs resume after restart.`
                     : null}
                   {updateStatus === "rebuild"
-                    ? `This build is ${commit} and the tree is now ${availableVersion}. Rebuilding runs bun run local in a shell tab, and replaces this build when it finishes.`
+                    ? `This build is ${commit} and main is now ${availableVersion}. Rebuilding fast-forwards from origin/main in a shell tab, then replaces this build.`
                     : null}
                   {updateStatus === "current" ? (
                     <span className="flex items-center gap-1.5">

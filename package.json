@@ -12,7 +12,7 @@
     "build": "tsgo --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "local": "tauri build --bundles app --config '{\"productName\":\"Lite Dev\",\"bundle\":{\"createUpdaterArtifacts\":false,\"icon\":[\"icons/dev/32x32.png\",\"icons/dev/128x128.png\",\"icons/dev/128x128@2x.png\",\"icons/dev/icon.icns\",\"icons/dev/icon.ico\"]}}'",
+    "local": "tauri build --bundles app --config '{\"productName\":\"Lite Dev\",\"identifier\":\"com.ultralytics.lite.dev\",\"bundle\":{\"createUpdaterArtifacts\":false,\"icon\":[\"icons/dev/32x32.png\",\"icons/dev/128x128.png\",\"icons/dev/128x128@2x.png\",\"icons/dev/icon.icns\",\"icons/dev/icon.ico\"]}}'",
     "check": "bun run lint && bun run typecheck && bun run deadcode",
     "deadcode": "knip",
     "format": "biome check --write .",
