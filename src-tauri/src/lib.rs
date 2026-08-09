@@ -444,6 +444,10 @@ fn shell_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\\\""))
 }
 
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn provider_home(app: &AppHandle, variable: &str, fallback: &str) -> Result<PathBuf, String> {
     std::env::var_os(variable)
         .filter(|home| !home.is_empty())
@@ -497,16 +501,12 @@ fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String>
         shell_quote(&path_text(&executable)),
         shell_quote(&path_text(&activity_path))
     );
-    let tool_hook = || serde_json::json!([{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }]);
     write_atomic(
         &settings_path,
         serde_json::json!({
             "statusLine": { "type": "command", "command": status, "refreshInterval": 1 },
             "hooks": {
-                "PreToolUse": tool_hook(),
-                "PostToolUse": tool_hook(),
-                "PostToolUseFailure": tool_hook(),
-                "PermissionDenied": tool_hook(),
+                "PreToolUse": [{ "matcher": "Bash|PowerShell", "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }]
             }
@@ -537,22 +537,55 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
         .get("hook_event_name")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    let key = activity_key(
-        &input,
-        if event.starts_with("Subagent") {
-            "agent_id"
-        } else {
-            "tool_use_id"
-        },
-    );
     match event {
-        "PreToolUse" | "SubagentStart" => {
-            if let Some(key) = key {
+        "PreToolUse" => {
+            // The hook runs before permission and returns before a background command exits, so the
+            // command itself owns the marker from its actual start through shell cleanup.
+            let Some(key) = activity_key(&input, "tool_use_id") else {
+                return Ok(());
+            };
+            let Some(mut tool_input) = input.get("tool_input").cloned() else {
+                return Ok(());
+            };
+            let Some(command) = tool_input
+                .get("command")
+                .and_then(serde_json::Value::as_str)
+            else {
+                return Ok(());
+            };
+            let marker = path_text(&directory.join(key));
+            let command = if input.get("tool_name").and_then(serde_json::Value::as_str)
+                == Some("PowerShell")
+            {
+                let marker = powershell_quote(&marker);
+                format!(
+                    "New-Item -ItemType File -Force -Path {marker} | Out-Null; try {{\n{command}\n}} finally {{ Remove-Item -Force -LiteralPath {marker} }}"
+                )
+            } else {
+                let marker = shell_quote(&marker);
+                format!(
+                    "touch {marker}; trap {} EXIT\n{command}",
+                    shell_quote(&format!("rm -f {marker}"))
+                )
+            };
+            tool_input["command"] = command.into();
+            println!(
+                "{}",
+                serde_json::json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "updatedInput": tool_input
+                    }
+                })
+            );
+        }
+        "SubagentStart" => {
+            if let Some(key) = activity_key(&input, "agent_id") {
                 fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
             }
         }
-        "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" | "SubagentStop" => {
-            if let Some(key) = key
+        "SubagentStop" => {
+            if let Some(key) = activity_key(&input, "agent_id")
                 && let Err(error) = fs::remove_file(directory.join(key))
                 && error.kind() != std::io::ErrorKind::NotFound
             {
