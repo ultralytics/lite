@@ -230,7 +230,7 @@ export function NewSessionDialog({
                 {choices.map((option) => {
                   const state = availability[option.id];
                   const active = option.id === choiceId;
-                  const authProvider = "variable" in option ? option : undefined;
+                  const authProvider = "configured" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   const row = (
                     <Item

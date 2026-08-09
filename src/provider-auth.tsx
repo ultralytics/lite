@@ -67,7 +67,6 @@ export const AUTH_PROVIDERS = {
     agent: "qwen",
     provider: undefined,
     label: "Alibaba ModelStudio",
-    variable: "DASHSCOPE_API_KEY",
     configured: "Set up through Qwen Code",
     signIn: true,
   },
@@ -78,7 +77,7 @@ export const AUTH_PROVIDERS = {
     agent: Agent;
     provider?: ModelProvider;
     label: string;
-    variable: string;
+    variable?: string;
     configured: string;
     signIn: boolean;
     note?: string;

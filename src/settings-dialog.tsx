@@ -23,7 +23,7 @@ import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/pr
 import type { Agent } from "@/types";
 
 // Each CLI signs in on its own; a key here is the alternative for anyone who would rather not.
-const providers = Object.values(AUTH_PROVIDERS);
+const providers = Object.values(AUTH_PROVIDERS).filter((provider) => "variable" in provider);
 
 export function SettingsDialog({
   open: isOpen,

@@ -30,16 +30,13 @@ const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
-const QWEN_BASE_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
-const QWEN_MODEL: &str = "qwen3.7-plus";
-const SUPPORTED_KEYS: [&str; 7] = [
+const SUPPORTED_KEYS: [&str; 6] = [
     "claude",
     "codex",
     "deepseek",
     "openrouter",
     "gemini",
     "kimi",
-    "qwen",
 ];
 
 #[derive(Clone, Copy)]
@@ -1565,7 +1562,6 @@ fn api_key_env(agent: &str, provider: Option<&str>) -> Option<(&'static str, &'s
         ("codex", _) => Some(("codex", "OPENAI_API_KEY")),
         ("gemini", _) => Some(("gemini", "GEMINI_API_KEY")),
         ("kimi", _) => Some(("kimi", "MOONSHOT_API_KEY")),
-        ("qwen", _) => Some(("qwen", "DASHSCOPE_API_KEY")),
         _ => None,
     }
 }
@@ -2062,11 +2058,6 @@ fn agent_command(
             } else {
                 ["--session-id", session_id]
             });
-            if saved_api_key(app, agent, provider).is_some() {
-                command.args(["--auth-type", "openai"]);
-                command.args(["--openai-base-url", QWEN_BASE_URL]);
-                command.args(["--model", QWEN_MODEL]);
-            }
             command
         }
         "shell" => {
@@ -2087,8 +2078,6 @@ fn agent_command(
         command.env(variable, &key);
         if agent == "gemini" {
             command.env("GEMINI_DEFAULT_AUTH_TYPE", "gemini-api-key");
-        } else if agent == "qwen" {
-            command.env("OPENAI_API_KEY", key);
         }
     }
     Ok(command)
@@ -2259,7 +2248,27 @@ async fn install_agent(agent: String) -> Result<(), String> {
             .map_err(|error| format!("Could not finish the installer: {error}"))?;
         if status.success() {
             refresh_user_path();
-            return Ok(());
+            let executable = agent_executable(&agent).ok_or("Unknown session type")?;
+            let path = resolve_executable(executable)
+                .ok_or_else(|| format!("Installed {agent}, but could not find it in your PATH"))?;
+            let mut probe = Command::new(path);
+            probe
+                .arg("--version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            if let Some(path) = user_path() {
+                probe.env("PATH", path);
+            }
+            return probe
+                .status()
+                .map_err(|error| format!("Installed {agent}, but could not run it: {error}"))?
+                .success()
+                .then_some(())
+                .ok_or_else(|| {
+                    format!(
+                        "Installed {agent}, but it cannot run with the current system requirements"
+                    )
+                });
         }
         let detail = String::from_utf8_lossy(&detail);
         let detail = detail.trim();
