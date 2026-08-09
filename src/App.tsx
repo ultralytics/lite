@@ -945,6 +945,7 @@ function App() {
   const runs = useRef(new Map<string, string>());
   const sessionsRef = useRef(sessions);
   const workTimers = useRef(new Map<string, number>());
+  const pendingCleanups = useRef(new Set<() => Promise<void>>());
   const resumed = useRef("");
   const themeRef = useRef<Theme>("dark");
   const visibleRef = useRef<Session[]>([]);
@@ -1030,6 +1031,18 @@ function App() {
     void sync();
     const resized = window.onResized(() => void sync());
     return () => void resized.then((unlisten) => unlisten());
+  }, []);
+
+  useEffect(() => {
+    const window = getCurrentWindow();
+    const closing = window.onCloseRequested(async (event) => {
+      const cleanups = [...pendingCleanups.current];
+      if (!cleanups.length) return;
+      event.preventDefault();
+      await Promise.all(cleanups.map((cleanup) => cleanup()));
+      await window.destroy();
+    });
+    return () => void closing.then((unlisten) => unlisten());
   }, []);
 
   // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
@@ -1327,20 +1340,28 @@ function App() {
   ) {
     let undone = false;
     let toastId = "";
+    let finishing: Promise<void> | undefined;
+    const finish = () => (finishing ??= completed.then((successful) => (successful ? cleanup() : undefined)));
+    pendingCleanups.current.add(finish);
     void completed.then((successful) => {
-      if (!successful) toast.close(toastId);
+      if (!successful) {
+        pendingCleanups.current.delete(finish);
+        toast.close(toastId);
+      }
     });
     toastId = toast.add({
       title: `${action} “${session.name}”`,
       type: "success",
       timeout: 8000,
       onClose: async () => {
-        if ((await completed) && !undone) await cleanup();
+        if (!undone) await finish();
+        pendingCleanups.current.delete(finish);
       },
       actionProps: {
         children: "Undo",
         onClick: () => {
           undone = true;
+          pendingCleanups.current.delete(finish);
           toast.close(toastId);
           undo();
         },
@@ -1468,7 +1489,9 @@ function App() {
 
     function restore(running: boolean) {
       setSessions((current) => {
-        if (current.some((item) => item.id === session.id)) return current;
+        if (current.some((item) => item.id === session.id)) {
+          return current.map((item) => (item.id === session.id ? { ...item, running } : item));
+        }
         const restored = [...current];
         restored.splice(Math.min(index, restored.length), 0, { ...session, running });
         return restored;
@@ -1493,10 +1516,10 @@ function App() {
       stopped,
       () => {
         const restored = { ...session, running: false };
+        resumed.current = session.id;
         restore(false);
         void stopped.then((successful) => {
           if (successful) {
-            resumed.current = session.id;
             void launch(restored, true);
           }
         });
