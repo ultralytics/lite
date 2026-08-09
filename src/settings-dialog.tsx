@@ -37,7 +37,7 @@ const providers: {
   provider?: ModelProvider;
   label: string;
   variable: string;
-  signedIn: string;
+  configured: string;
   signIn: boolean;
 }[] = [
   {
@@ -45,7 +45,7 @@ const providers: {
     agent: "claude",
     label: "Anthropic",
     variable: "ANTHROPIC_API_KEY",
-    signedIn: "Using Claude Code sign-in",
+    configured: "Using Claude Code sign-in",
     signIn: true,
   },
   {
@@ -54,7 +54,7 @@ const providers: {
     provider: "openai",
     label: "OpenAI",
     variable: "OPENAI_API_KEY",
-    signedIn: "Using Codex sign-in",
+    configured: "Using Codex sign-in",
     signIn: true,
   },
   {
@@ -63,7 +63,7 @@ const providers: {
     provider: "deepseek",
     label: "DeepSeek",
     variable: "DEEPSEEK_API_KEY",
-    signedIn: "Configured in your Codex settings",
+    configured: "Configured in your Codex settings",
     signIn: false,
   },
   {
@@ -71,7 +71,7 @@ const providers: {
     agent: "kimi",
     label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
-    signedIn: "Using Kimi Code sign-in",
+    configured: "Kimi Code authentication detected (OAuth or provider key)",
     signIn: true,
   },
 ];
@@ -79,7 +79,7 @@ const providers: {
 interface ProviderAuth {
   name: string;
   keyHint: string | null;
-  cliSignedIn: boolean;
+  cliAuthConfigured: boolean;
 }
 
 export function SettingsDialog({
@@ -195,8 +195,8 @@ export function SettingsDialog({
                           <span className="font-mono">••••{status.keyHint}</span>
                         </span>
                       ) : status ? (
-                        status.cliSignedIn ? (
-                          option.signedIn
+                        status.cliAuthConfigured ? (
+                          option.configured
                         ) : (
                           "Not set up"
                         )
@@ -207,7 +207,7 @@ export function SettingsDialog({
                   </ItemContent>
                   {open ? null : (
                     <ItemActions>
-                      {!status?.keyHint && !status?.cliSignedIn && option.signIn ? (
+                      {!status?.keyHint && !status?.cliAuthConfigured && option.signIn ? (
                         <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
                           Sign in
                         </Button>

@@ -1328,7 +1328,7 @@ fn claude_signed_in(app: &AppHandle) -> bool {
     }
 }
 
-fn cli_signed_in(app: &AppHandle, name: &str) -> bool {
+fn cli_auth_configured(app: &AppHandle, name: &str) -> bool {
     match name {
         "claude" => claude_signed_in(app),
         "codex" => codex_home(app).is_ok_and(|home| home.join("auth.json").is_file()),
@@ -1343,7 +1343,7 @@ fn cli_signed_in(app: &AppHandle, name: &str) -> bool {
 struct ProviderAuth {
     name: String,
     key_hint: Option<String>,
-    cli_signed_in: bool,
+    cli_auth_configured: bool,
 }
 
 #[tauri::command]
@@ -1359,7 +1359,7 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
                     .skip(key.chars().count().saturating_sub(4))
                     .collect()
             }),
-            cli_signed_in: cli_signed_in(&app, name),
+            cli_auth_configured: cli_auth_configured(&app, name),
         })
         .collect())
 }
