@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Check, Eye, EyeOff, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -17,71 +17,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemFooter,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item";
+import { Item, ItemActions, ItemContent, ItemFooter, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
-import type { Agent, ModelProvider } from "@/types";
+import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import type { Agent } from "@/types";
 
 // Each CLI signs in on its own; a key here is the alternative for anyone who would rather not.
-const providers: {
-  id: string;
-  agent: Agent;
-  provider?: ModelProvider;
-  label: string;
-  variable: string;
-  configured: string;
-  signIn: boolean;
-}[] = [
-  {
-    id: "claude",
-    agent: "claude",
-    label: "Anthropic",
-    variable: "ANTHROPIC_API_KEY",
-    configured: "Signed in through Claude Code",
-    signIn: true,
-  },
-  {
-    id: "codex",
-    agent: "codex",
-    provider: "openai",
-    label: "OpenAI",
-    variable: "OPENAI_API_KEY",
-    configured: "Signed in through Codex",
-    signIn: true,
-  },
-  {
-    id: "deepseek",
-    agent: "codex",
-    provider: "deepseek",
-    label: "DeepSeek",
-    variable: "DEEPSEEK_API_KEY",
-    configured: "Using API key",
-    signIn: false,
-  },
-  {
-    id: "kimi",
-    agent: "kimi",
-    label: "Kimi Code",
-    variable: "MOONSHOT_API_KEY",
-    configured: "Signed in through Kimi Code",
-    signIn: true,
-  },
-];
-
-interface ProviderAuth {
-  name: string;
-  keyHint: string | null;
-  cliAuthMethod: "provider" | "apiKey" | null;
-  cliKeyHint: string | null;
-}
+const providers = Object.values(AUTH_PROVIDERS);
 
 export function SettingsDialog({
   open: isOpen,
@@ -176,12 +118,6 @@ export function SettingsDialog({
               const open = editing.has(option.id);
               const draft = drafts[option.id] ?? "";
               const shown = revealed.has(option.id);
-              const hint = status?.keyHint ?? status?.cliKeyHint;
-              const configured = status?.keyHint
-                ? "Using API key"
-                : status?.cliKeyHint
-                  ? "Using API key"
-                  : option.configured;
               return (
                 <Item key={option.id} variant="outline">
                   <ItemMedia variant="icon">
@@ -194,19 +130,7 @@ export function SettingsDialog({
                         {option.variable}
                       </Badge>
                     </ItemTitle>
-                    <ItemDescription>
-                      {status && (hint || status.cliAuthMethod) ? (
-                        <span className="flex items-center gap-1.5">
-                          <Check className="size-3.5 shrink-0" />
-                          {configured}
-                          {hint ? <span className="font-mono">••••{hint}</span> : null}
-                        </span>
-                      ) : status ? (
-                        "Not set up"
-                      ) : (
-                        "Checking…"
-                      )}
-                    </ItemDescription>
+                    <ProviderAuthDescription provider={option} status={status} />
                   </ItemContent>
                   {open ? null : (
                     <ItemActions>

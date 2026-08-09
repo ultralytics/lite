@@ -21,27 +21,29 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle }
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AUTH_PROVIDERS, type AuthProviderId, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { type Agent, type ModelProvider, type Session, sessionLabel } from "@/types";
 
 interface Choice {
   id: string;
   agent: Agent;
   provider?: ModelProvider;
-  description: string;
+  auth?: AuthProviderId;
+  description?: string;
   note?: string;
 }
 
 const choices: Choice[] = [
-  { id: "claude", agent: "claude", description: "Use your Anthropic account" },
-  { id: "codex", agent: "codex", provider: "openai", description: "Use your OpenAI account" },
+  { id: "claude", agent: "claude", auth: "claude" },
+  { id: "codex", agent: "codex", provider: "openai", auth: "codex" },
   {
     id: "codex-deepseek",
     agent: "codex",
     provider: "deepseek",
-    description: "Codex, billed to DeepSeek",
+    auth: "deepseek",
     note: "Runs the Codex harness against the DeepSeek provider in your Codex configuration. Usage bills DeepSeek, not OpenAI.",
   },
-  { id: "kimi", agent: "kimi", description: "Use your Kimi Code account" },
+  { id: "kimi", agent: "kimi", auth: "kimi" },
   { id: "shell", agent: "shell", description: "Open your default shell" },
 ];
 
@@ -71,6 +73,7 @@ export function NewSessionDialog({
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
+  const [auth, setAuth] = useState<ProviderAuth[]>();
   const [error, setError] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
@@ -82,6 +85,7 @@ export function NewSessionDialog({
     let disposed = false;
     setError("");
     setAvailability({});
+    setAuth(undefined);
     void invoke<DirectoryGrant>("default_directory")
       .then((selected) => {
         if (disposed) void invoke("revoke_directory", { rootId: selected.id });
@@ -89,6 +93,13 @@ export function NewSessionDialog({
           setDirectory(selected);
           setPath(selected.path);
         }
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    void invoke<ProviderAuth[]>("provider_auth")
+      .then((result) => {
+        if (!disposed) setAuth(result);
       })
       .catch((reason) => {
         if (!disposed) setError(String(reason));
@@ -215,6 +226,8 @@ export function NewSessionDialog({
                 {choices.map((option) => {
                   const state = availability[option.id];
                   const active = option.id === choiceId;
+                  const authProvider = option.auth ? AUTH_PROVIDERS[option.auth] : undefined;
+                  const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   const row = (
                     <Item
                       key={option.id}
@@ -235,10 +248,14 @@ export function NewSessionDialog({
                       </ItemMedia>
                       <ItemContent>
                         <ItemTitle>{sessionLabel(option)}</ItemTitle>
-                        <ItemDescription className="truncate">{option.description}</ItemDescription>
+                        {authProvider ? (
+                          <ProviderAuthDescription provider={authProvider} status={authStatus} />
+                        ) : (
+                          <ItemDescription>{option.description}</ItemDescription>
+                        )}
                       </ItemContent>
                       <ItemActions>
-                        {state && !state.available ? <Badge variant="outline">Not set up</Badge> : null}
+                        {state && !state.available ? <Badge variant="outline">Not installed</Badge> : null}
                         <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
                       </ItemActions>
                     </Item>

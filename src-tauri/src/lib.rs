@@ -1347,22 +1347,21 @@ fn key_hint(key: &str) -> String {
         .collect()
 }
 
+fn kimi_provider_name(config: &toml_edit::DocumentMut) -> Option<String> {
+    let model = config.get("default_model")?.as_str()?;
+    config
+        .get("models")?
+        .get(model)?
+        .get("provider")?
+        .as_str()
+        .map(str::to_owned)
+}
+
 fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
     let config = fs::read_to_string(kimi_home(app).ok()?.join("config.toml")).ok()?;
     let config = config.parse::<toml_edit::DocumentMut>().ok()?;
-    let model = config.get("default_model")?.as_str()?;
-    let provider = config
-        .get("models")?
-        .as_table()?
-        .get(model)?
-        .as_table()?
-        .get("provider")?
-        .as_str()?;
-    let provider = config
-        .get("providers")?
-        .as_table()?
-        .get(provider)?
-        .as_table()?;
+    let provider = kimi_provider_name(&config)?;
+    let provider = config.get("providers")?.get(&provider)?.as_table()?;
 
     let api_key = provider
         .get("api_key")
@@ -1406,18 +1405,7 @@ fn delete_kimi_api_key(app: &AppHandle) -> Result<(), String> {
     let mut config = text
         .parse::<toml_edit::DocumentMut>()
         .map_err(|error| error.to_string())?;
-    let model = config
-        .get("default_model")
-        .and_then(toml_edit::Item::as_str)
-        .ok_or("Kimi has no default model")?
-        .to_owned();
-    let provider = config
-        .get("models")
-        .and_then(|models| models.get(&model))
-        .and_then(|model| model.get("provider"))
-        .and_then(toml_edit::Item::as_str)
-        .ok_or("Kimi's default model has no provider")?
-        .to_owned();
+    let provider = kimi_provider_name(&config).ok_or("Kimi's default provider is missing")?;
     let provider = config
         .get_mut("providers")
         .and_then(toml_edit::Item::as_table_mut)
