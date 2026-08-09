@@ -46,7 +46,7 @@ import {
   useState,
 } from "react";
 
-import { ProviderIcon } from "@/brand-icons";
+import { ProviderIcon, UltralyticsLogomark } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
@@ -1512,29 +1512,15 @@ function App() {
             >
               {shut.sidebar ? null : (
                 <>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          className="w-[22px] justify-start"
-                          aria-label="Lite on GitHub"
-                          data-context-url="https://github.com/ultralytics/lite"
-                          onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
-                        />
-                      }
-                    >
-                      <span className="h-4 w-[22px] overflow-hidden">
-                        <img
-                          src="/ultralytics-logotype.svg"
-                          alt=""
-                          className="h-4 w-auto max-w-none dark:brightness-0 dark:invert"
-                        />
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>View Lite on GitHub</TooltipContent>
-                  </Tooltip>
+                  <ActionIconButton
+                    size="icon-sm"
+                    tooltip="View Lite on GitHub"
+                    aria-label="Lite on GitHub"
+                    data-context-url="https://github.com/ultralytics/lite"
+                    onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+                  >
+                    <UltralyticsLogomark />
+                  </ActionIconButton>
                   <VersionBadge
                     version={version}
                     commit={commit}

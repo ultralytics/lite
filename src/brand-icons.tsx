@@ -24,6 +24,33 @@ export const ProviderIcon = ({
   return <SquareTerminal className={className} />;
 };
 
+export const UltralyticsLogomark = ({ className = "size-4" }: { className?: string }) => (
+  <svg className={className} viewBox="0 0 107 92" role="img" aria-label="Ultralytics">
+    <title>Ultralytics</title>
+    <path
+      d="M56.7478 25.1939L56.7365 38.0286C56.7824 55.5439 42.5251 69.8368 25.1086 69.8148C18.1905 69.8036 11.8932 67.6925 6.78925 63.9998C15.9461 80.5019 33.5065 91.6475 53.471 91.6608C82.4752 91.6378 106.447 67.9677 106.902 38.8701L106.895 38.7488C106.922 38.0783 106.894 25.6714 106.927 25.1223C106.889 11.317 95.6288 -0.0290768 81.8562 0.00597989C68.0198 -0.0165355 56.7033 11.2672 56.7478 25.1939Z"
+      fill="url(#ultralytics-logomark-gradient)"
+    />
+    <path
+      d="M25.0789 12.9165C11.2511 12.9165 0.000768562 24.1938 0.000768562 38.0553C0.000768562 51.9154 11.2511 63.1926 25.0789 63.1926C38.9075 63.1926 50.157 51.9154 50.157 38.0553C50.157 24.1938 38.9075 12.9165 25.0789 12.9165Z"
+      fill="var(--ultralytics-logo-mark)"
+    />
+    <defs>
+      <linearGradient
+        id="ultralytics-logomark-gradient"
+        x1="30.262"
+        y1="90.7946"
+        x2="87.8343"
+        y2="27.1709"
+        gradientUnits="userSpaceOnUse"
+      >
+        <stop stopColor="var(--ultralytics-logo-gradient-start)" />
+        <stop offset="1" stopColor="var(--ultralytics-logo-gradient-end)" />
+      </linearGradient>
+    </defs>
+  </svg>
+);
+
 export const GitHubLogomark = ({ className = "size-4" }: { className?: string }) => (
   <svg className={className} viewBox="0 0 24 24" role="img" aria-label="GitHub">
     <title>GitHub</title>
