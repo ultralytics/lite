@@ -536,12 +536,14 @@ function VersionBadge({
   built,
   release,
   onCheck,
+  className,
 }: {
   version: string;
   commit: string | undefined;
   built: string;
   release: keyof typeof BADGE_VARIANT;
   onCheck: () => void;
+  className?: string;
 }) {
   if (!commit && !version) return null;
   return (
@@ -549,6 +551,7 @@ function VersionBadge({
       <TooltipTrigger
         render={
           <Badge
+            className={className}
             variant={commit ? "error" : BADGE_VARIANT[release]}
             render={<button type="button" onClick={onCheck} />}
           >
@@ -1507,7 +1510,7 @@ function App() {
             className="relative flex h-9 shrink-0 items-center border-b bg-sidebar text-sidebar-foreground"
           >
             <div
-              className={`flex h-full shrink-0 items-center gap-2 overflow-hidden ${shut.sidebar ? "p-0" : "px-[13px] in-data-[titlebar=overlay]:pl-[86px]"}`}
+              className={`flex h-full shrink-0 items-center gap-[3px] overflow-hidden ${shut.sidebar ? "p-0" : "px-[13px] in-data-[titlebar=overlay]:pl-[86px]"}`}
               style={{ width: shut.sidebar ? 0 : "var(--sidebar-width, 20%)" }}
             >
               {shut.sidebar ? null : (
@@ -1519,9 +1522,10 @@ function App() {
                     data-context-url="https://github.com/ultralytics/lite"
                     onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
                   >
-                    <UltralyticsLogomark />
+                    <UltralyticsLogomark className="size-[18px]" />
                   </ActionIconButton>
                   <VersionBadge
+                    className="h-[18px] px-1.5 text-[11px]"
                     version={version}
                     commit={commit}
                     built={built}
