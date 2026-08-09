@@ -77,7 +77,7 @@ Install the provider CLIs you want to use:
 - [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) — Windows also needs Git for Windows
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/)
 
-Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog tells you when a CLI is missing and links to its setup guide.
+Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
 
 If you would rather use API keys, open **API keys** in the Lite menu and paste one per provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `MOONSHOT_API_KEY`, or `DASHSCOPE_API_KEY`). Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 

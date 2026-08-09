@@ -1373,21 +1373,69 @@ fn shell_path(shell: &str) -> Option<String> {
 
 // An account shell that does not speak this command leaves nothing usable, so the search falls back to
 // the POSIX shell rather than losing every provider CLI.
-// Asking costs a login shell, and the answer holds for as long as Lite is open, so it is asked once
-// and every command Lite resolves afterwards is free.
+// Asking costs a login shell, so the answer is cached until Lite itself installs a CLI that changes it.
 #[cfg(unix)]
 fn user_path() -> Option<String> {
-    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    path_cache().lock().ok().and_then(|path| path.clone())
+}
+
+#[cfg(unix)]
+fn path_cache() -> &'static Mutex<Option<String>> {
+    static PATH: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
-        shell_path(&CommandBuilder::new_default_prog().get_shell())
-            .or_else(|| shell_path("/bin/sh"))
+        Mutex::new(
+            shell_path(&CommandBuilder::new_default_prog().get_shell())
+                .or_else(|| shell_path("/bin/sh")),
+        )
     })
-    .clone()
+}
+
+#[cfg(unix)]
+fn refresh_user_path() {
+    let refreshed = shell_path(&CommandBuilder::new_default_prog().get_shell())
+        .or_else(|| shell_path("/bin/sh"));
+    if let Ok(mut path) = path_cache().lock() {
+        *path = refreshed;
+    }
 }
 
 #[cfg(windows)]
 fn user_path() -> Option<String> {
-    std::env::var("PATH").ok()
+    path_cache()
+        .lock()
+        .ok()
+        .and_then(|path| path.clone())
+        .or_else(|| std::env::var("PATH").ok())
+}
+
+#[cfg(windows)]
+fn path_cache() -> &'static Mutex<Option<String>> {
+    static PATH: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(windows)]
+fn refresh_user_path() {
+    let refreshed = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            "[Environment]::GetEnvironmentVariable('Path','User')",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|path| path.trim().to_owned())
+        .filter(|path| !path.is_empty());
+    if let Some(refreshed) = refreshed
+        && let Ok(mut path) = path_cache().lock()
+    {
+        *path = Some(format!(
+            "{refreshed};{}",
+            std::env::var("PATH").unwrap_or_default()
+        ));
+    }
 }
 
 // Keys live in one owner-only file beside Lite's other local state, which is what the Codex and Kimi
@@ -1704,6 +1752,12 @@ fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuth> {
                 key_hint: None,
             }),
         "kimi" => kimi_auth(app),
+        "qwen" => qwen_home(app)
+            .is_ok_and(|home| home.join("oauth_creds.json").is_file())
+            .then_some(CliAuth {
+                method: CliAuthMethod::Provider,
+                key_hint: None,
+            }),
         _ => None,
     }
 }
@@ -1841,6 +1895,10 @@ fn codex_profile_exists(app: &AppHandle, provider: &str) -> bool {
 
 fn gemini_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "GEMINI_CLI_HOME", ".gemini")
+}
+
+fn qwen_home(app: &AppHandle) -> Result<PathBuf, String> {
+    provider_home(app, "QWEN_HOME", ".qwen")
 }
 
 fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
@@ -2177,16 +2235,36 @@ async fn install_agent(agent: String) -> Result<(), String> {
         if let Some(path) = user_path() {
             command.env("PATH", path);
         }
-        let output = command
-            .output()
+        command.stdout(Stdio::null()).stderr(Stdio::piped());
+        let mut child = command
+            .spawn()
             .map_err(|error| format!("Could not run the installer: {error}"))?;
-        if output.status.success() {
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or("Could not read installer errors")?;
+        let mut detail = Vec::with_capacity(16_384);
+        let mut buffer = [0_u8; 4096];
+        while let Ok(count) = stderr.read(&mut buffer) {
+            if count == 0 {
+                break;
+            }
+            detail.extend_from_slice(&buffer[..count]);
+            if detail.len() > 16_384 {
+                detail.drain(..detail.len() - 16_384);
+            }
+        }
+        let status = child
+            .wait()
+            .map_err(|error| format!("Could not finish the installer: {error}"))?;
+        if status.success() {
+            refresh_user_path();
             return Ok(());
         }
-        let detail = String::from_utf8_lossy(&output.stderr);
+        let detail = String::from_utf8_lossy(&detail);
         let detail = detail.trim();
         Err(if detail.is_empty() {
-            format!("The {agent} installer exited with {}", output.status)
+            format!("The {agent} installer exited with {status}")
         } else {
             detail.to_owned()
         })
