@@ -83,7 +83,7 @@ const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\
 // Not preceded by a path character, so the fragment of a documentation link is not read as a reference.
 const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
 const BARE_ITEM =
-  /(?:^|[^\w#])(?:prs?|pulls?|issues?|close[sd]?|fix(?:e[sd])?|resolve[sd]?|see|at|in|on|and|to)\s+#([1-9]\d{0,8})(?!\w)/gi;
+  /(?:^|[^\w#])(?:prs?|pull(?:s|\s+requests?)?|issues?|close[sd]?|fix(?:e[sd])?|resolve[sd]?|see|at|in|on|and|to)\s+#([1-9]\d{0,8})(?!\w)/gi;
 const SCANNED_OUTPUT = 50_000;
 
 function namedInSession(sessionId: string, remote: string) {
