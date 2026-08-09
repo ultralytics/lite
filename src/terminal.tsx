@@ -162,7 +162,24 @@ export function TerminalView({
     observer.observe(container);
     // Command and the zoom keys resize the type, as they do in a terminal app.
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown" || !(event.metaKey || event.ctrlKey)) return true;
+      if (event.type !== "keydown") return true;
+      // xterm defers ASCII capitals to keypress for macOS IMEs. WKWebView also emits text input for
+      // Shift and Caps Lock capitals, so that path can forward one physical key more than once.
+      if (
+        !event.isComposing &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        event.key.length === 1 &&
+        event.key >= "A" &&
+        event.key <= "Z"
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        terminal.input(event.key);
+        return false;
+      }
+      if (!(event.metaKey || event.ctrlKey)) return true;
       const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
       if (!step && event.key !== "0") return true;
       const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminal.options.fontSize ?? 13) + step) : 13;
