@@ -95,7 +95,7 @@ import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
-import { type Agent, type Session, sessionLabel } from "@/types";
+import { type Agent, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -228,6 +228,8 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const session = target.closest<HTMLElement>("[data-context-session]");
   const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
   const files = target.closest<HTMLElement>("[data-context-files]");
+  // The terminal and the file viewer each zoom their own type, so the menu offers whichever owns the click.
+  const zoom = target.closest<HTMLElement>("[data-context-zoom]");
   const selectedText =
     editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement
       ? inputSelection(editable)
@@ -248,9 +250,9 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     url: link instanceof HTMLAnchorElement ? link.href : (link?.dataset.contextUrl ?? ""),
     value: value?.dataset.contextValue ?? "",
     valueLabel: value?.dataset.contextLabel ?? "Copy",
-    zoomIn: session?.querySelector<HTMLButtonElement>("[data-context-zoom-in]") ?? null,
-    zoomOut: session?.querySelector<HTMLButtonElement>("[data-context-zoom-out]") ?? null,
-    zoomReset: session?.querySelector<HTMLButtonElement>("[data-context-zoom-reset]") ?? null,
+    zoomIn: zoom?.querySelector<HTMLButtonElement>("[data-context-zoom-in]") ?? null,
+    zoomOut: zoom?.querySelector<HTMLButtonElement>("[data-context-zoom-out]") ?? null,
+    zoomReset: zoom?.querySelector<HTMLButtonElement>("[data-context-zoom-reset]") ?? null,
   };
 }
 
@@ -369,26 +371,27 @@ function AppContextMenu({
               <Trash2 />
               Close session
             </ContextMenuItem>
-            {context.zoomIn ? (
-              <>
-                <ContextMenuSeparator />
-                <ContextMenuItem onClick={() => context.zoomIn?.click()}>
-                  <ZoomIn />
-                  Zoom in
-                  <ContextMenuShortcut>{shortcut}+</ContextMenuShortcut>
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => context.zoomOut?.click()}>
-                  <ZoomOut />
-                  Zoom out
-                  <ContextMenuShortcut>{shortcut}-</ContextMenuShortcut>
-                </ContextMenuItem>
-                <ContextMenuItem onClick={() => context.zoomReset?.click()}>
-                  <RotateCcw />
-                  Actual size
-                  <ContextMenuShortcut>{shortcut}0</ContextMenuShortcut>
-                </ContextMenuItem>
-              </>
-            ) : null}
+          </>
+        ) : null}
+        {context.zoomIn ? (
+          <>
+            {session ? <ContextMenuSeparator /> : null}
+            <ContextMenuItem onClick={() => context.zoomIn?.click()}>
+              <ZoomIn />
+              Zoom in
+              <ContextMenuShortcut>{shortcut}+</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => context.zoomOut?.click()}>
+              <ZoomOut />
+              Zoom out
+              <ContextMenuShortcut>{shortcut}-</ContextMenuShortcut>
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => context.zoomReset?.click()}>
+              <RotateCcw />
+              Actual size
+              <ContextMenuShortcut>{shortcut}0</ContextMenuShortcut>
+            </ContextMenuItem>
+            {!session && (linkGroup || surfaceGroup) ? <ContextMenuSeparator /> : null}
           </>
         ) : null}
         {context.url ? (
@@ -477,7 +480,7 @@ function AppContextMenu({
             </ContextMenuItem>
           </>
         ) : null}
-        {(linkGroup || surfaceGroup || sessionsGroup) && editGroup ? <ContextMenuSeparator /> : null}
+        {(linkGroup || surfaceGroup || sessionsGroup || context.zoomIn) && editGroup ? <ContextMenuSeparator /> : null}
         {context.editable ? (
           <>
             <ContextMenuItem disabled={!context.selectedText || readonly} onClick={() => edit(context, "cut")}>
@@ -856,15 +859,6 @@ function runOnStart(sessionId: string, command: string) {
     settle = window.setTimeout(send, SETTLE_MS);
   });
   const patience = window.setTimeout(send, GIVE_UP_MS);
-}
-
-function folderName(cwd: string) {
-  return cwd.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
-}
-
-// A remote names a repository; the scheme and host that reach it are the tooltip's job.
-function repoName(url: string) {
-  return url.replace(/^https:\/\/[^/]+\//, "");
 }
 
 // Paths truncate from the right, which hides the part that identifies the folder, so only its tail shows.

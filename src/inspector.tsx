@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import {
+  ArrowLeft,
   ChartNoAxesColumn,
   ChevronLeft,
   ChevronRight,
@@ -58,8 +59,10 @@ import {
   type DirectoryCursor,
   type DirectoryListing,
   type FileEntry,
+  folderName,
   type GitStatus,
   providerLabel,
+  repoName,
   type Session,
   sessionLabel,
 } from "@/types";
@@ -143,10 +146,6 @@ interface RepositoryGroup {
   url: string | null;
 }
 
-function repositoryName(url: string) {
-  return url.replace(/^https:\/\/[^/]+\//, "");
-}
-
 function relativeAge(timestamp: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(timestamp)) / 1000));
   if (seconds < 60) return seconds < 10 ? "just now" : `${seconds} sec ago`;
@@ -181,7 +180,7 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
       changesTruncated: status.changesTruncated,
       lineDiffs: status.lineDiffs,
       items: [],
-      name: remote ? repositoryName(remote) : status.worktree.split(/[\\/]/).filter(Boolean).pop() || status.worktree,
+      name: remote ? repoName(remote) : folderName(status.worktree) || status.worktree,
       path: status.worktree,
       url: remote || null,
     });
@@ -592,8 +591,7 @@ function FileTree({
     );
   }
 
-  const parts = root.split(/[\\/]/).filter(Boolean);
-  const name = parts[parts.length - 1] ?? root;
+  const name = folderName(root) || root;
   const rootOpen = !!lowered || expanded.has(root);
   return (
     <div className="py-1">
@@ -644,6 +642,113 @@ function FileTree({
   );
 }
 
+// The same size and limits as the terminal's type, stored on its own key: prose and code read at
+// different sizes than a terminal for different people, so each surface remembers its own.
+const PREVIEW_FONT_KEY = "lite.preview.fontSize";
+const MIN_PREVIEW_FONT = 9;
+const MAX_PREVIEW_FONT = 24;
+const DEFAULT_PREVIEW_FONT = 13;
+
+function storedPreviewFontSize(): number {
+  const saved = Number(localStorage.getItem(PREVIEW_FONT_KEY));
+  return saved >= MIN_PREVIEW_FONT && saved <= MAX_PREVIEW_FONT ? saved : DEFAULT_PREVIEW_FONT;
+}
+
+// The preview inherits its type from here, so one zoom scales code, prose, and the line-number gutter
+// together while the header chrome keeps its own size. Zooming lives in this component so a step
+// re-renders the view alone, never the tree hidden behind it.
+function FileViewer({
+  entry,
+  source,
+  error,
+  onBack,
+}: {
+  entry: FileEntry;
+  source: string;
+  error: string;
+  onBack: () => void;
+}) {
+  const [fontSize, setFontSize] = useState(storedPreviewFontSize);
+  const viewer = useRef<HTMLElement>(null);
+
+  // Reading is keyboard work, so the viewer takes focus as it opens and the zoom keys land here
+  // rather than wherever the pointer last was.
+  useEffect(() => {
+    viewer.current?.focus();
+  }, []);
+
+  // Escape and ArrowLeft step back to the tree from anywhere focus has wandered — after a menu closes,
+  // after a click on nothing — but never out from under typing: a terminal, a field, or an open layer
+  // reads its own keys, and a key one of them has already answered is not answered again.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, textarea, [contenteditable=true], [role=dialog], [role=menu], [data-context-session]")
+      )
+        return;
+      event.preventDefault();
+      onBack();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onBack]);
+
+  function zoom(step: -1 | 0 | 1) {
+    const size = step ? Math.min(MAX_PREVIEW_FONT, Math.max(MIN_PREVIEW_FONT, fontSize + step)) : DEFAULT_PREVIEW_FONT;
+    setFontSize(size);
+    localStorage.setItem(PREVIEW_FONT_KEY, String(size));
+  }
+
+  return (
+    <section
+      ref={viewer}
+      aria-label={entry.name}
+      tabIndex={-1}
+      data-context-zoom
+      className="flex min-h-0 flex-1 flex-col outline-none"
+      style={{ fontSize, lineHeight: 1.6 }}
+      onKeyDown={(event) => {
+        if (!(event.metaKey || event.ctrlKey)) return;
+        const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
+        if (!step && event.key !== "0") return;
+        event.preventDefault();
+        zoom(step);
+      }}
+    >
+      <div
+        className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]"
+        data-context-value={entry.path}
+        data-context-label="Copy path"
+      >
+        <ActionIconButton size="icon-sm" tooltip="Back to files" aria-label="Back to files" onClick={onBack}>
+          <ArrowLeft />
+        </ActionIconButton>
+        <FileIcon name={entry.name} />
+        <span className="min-w-0 flex-1 truncate font-medium">{entry.name}</span>
+        <ActionIconButton size="icon-sm" tooltip="Close file" aria-label="Close file" onClick={onBack}>
+          <X />
+        </ActionIconButton>
+      </div>
+      <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
+      <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
+      <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
+      <ScrollArea className="min-h-0 flex-1">
+        {error ? (
+          <div className="p-3 text-xs text-muted-foreground">{error}</div>
+        ) : (
+          <Suspense fallback={<Loading label="Opening file…" />}>
+            <CodePreview path={entry.path} source={source} />
+          </Suspense>
+        )}
+      </ScrollArea>
+    </section>
+  );
+}
+
 function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   const [selected, setSelected] = useState<FileEntry | null>(null);
   const [source, setSource] = useState("");
@@ -661,39 +766,17 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
     }
   }
 
-  if (selected) {
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2">
-          <FileIcon name={selected.name} />
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{selected.name}</span>
-          <ActionIconButton
-            size="icon-sm"
-            tooltip="Close file"
-            aria-label="Close file"
-            onClick={() => setSelected(null)}
-          >
-            <X />
-          </ActionIconButton>
-        </div>
+  // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
+  // folders exactly as they were left — expanded, loaded, and scrolled — without rereading the disk.
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      {selected ? <FileViewer entry={selected} source={source} error={error} onBack={() => setSelected(null)} /> : null}
+      <div data-context-files className={`min-h-0 flex-1 flex-col ${selected ? "hidden" : "flex"}`}>
+        <SearchInput value={query} placeholder="Search files" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
-          {error ? (
-            <div className="p-3 text-xs text-muted-foreground">{error}</div>
-          ) : (
-            <Suspense fallback={<Loading label="Opening file…" />}>
-              <CodePreview path={selected.path} source={source} />
-            </Suspense>
-          )}
+          <FileTree root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
         </ScrollArea>
       </div>
-    );
-  }
-  return (
-    <div data-context-files className="flex h-full min-h-0 flex-col">
-      <SearchInput value={query} placeholder="Search files" onChange={setQuery} />
-      <ScrollArea className="min-h-0 flex-1">
-        <FileTree root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
-      </ScrollArea>
     </div>
   );
 }

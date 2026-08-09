@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
-import { type Session, sessionLabel } from "@/types";
+import { folderName, type Session, sessionLabel } from "@/types";
 
 const choices = [
   ...Object.values(AUTH_PROVIDERS),
@@ -142,7 +142,7 @@ export function NewSessionDialog({
   async function create() {
     const folder = await grant();
     if (!folder) return;
-    const project = folder.path.split(/[\\/]/).filter(Boolean).pop() ?? "Session";
+    const project = folderName(folder.path) || "Session";
     onCreate({
       id: crypto.randomUUID(),
       agent: choice.agent,

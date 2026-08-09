@@ -43,6 +43,16 @@ export function sessionLabel({ agent, provider }: Pick<Session, "agent" | "provi
   return agentLabels[agent];
 }
 
+// The last real segment of a path, on either separator; empty when the path has none.
+export function folderName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? "";
+}
+
+// A remote names a repository; the scheme and host that reach it are the tooltip's job.
+export function repoName(url: string): string {
+  return url.replace(/^https:\/\/[^/]+\//, "");
+}
+
 export interface FileEntry {
   name: string;
   path: string;

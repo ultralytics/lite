@@ -115,13 +115,13 @@
 }
 
 .markdown-viewer h1 {
-  font-size: 1.5rem;
+  font-size: 1.5em;
 }
 .markdown-viewer h2 {
-  font-size: 1.25rem;
+  font-size: 1.25em;
 }
 .markdown-viewer h3 {
-  font-size: 1.05rem;
+  font-size: 1.05em;
 }
 .markdown-viewer p,
 .markdown-viewer ul,

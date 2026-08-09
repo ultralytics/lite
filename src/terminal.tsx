@@ -243,7 +243,7 @@ export function TerminalView({
   // them past the edge, which also left the last row below the viewport where the scrollbar could
   // neither show nor reach it.
   return (
-    <div data-context-session={sessionId} className="h-full w-full bg-background p-3">
+    <div data-context-session={sessionId} data-context-zoom className="h-full w-full bg-background p-3">
       <button type="button" hidden data-context-zoom-in onClick={() => zoomRef.current(1)} />
       <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
