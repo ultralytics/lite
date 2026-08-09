@@ -474,17 +474,18 @@ fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
     })
 }
 
-fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String> {
+fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<PathBuf, String> {
     let directory = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     let settings_path = directory.join(format!("claude-{session_id}.json"));
     let usage_path = directory.join(format!("usage-{session_id}.json"));
-    let activity_path = directory.join(format!("activity-{session_id}"));
-    if activity_path.exists() {
-        fs::remove_dir_all(&activity_path).map_err(|error| error.to_string())?;
+    let activity_directory = directory.join(format!("activity-{session_id}"));
+    if activity_directory.exists() {
+        fs::remove_dir_all(&activity_directory).map_err(|error| error.to_string())?;
     }
+    let activity_path = activity_directory.join(run_id);
     fs::create_dir_all(&activity_path).map_err(|error| error.to_string())?;
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
     let status = format!(
@@ -2109,7 +2110,7 @@ async fn spawn_session(
         )?
     };
     if !signing_in && agent == "claude" {
-        let settings = claude_settings(&app, &session_id)?;
+        let settings = claude_settings(&app, &session_id, &run_id)?;
         command.args(["--settings", &path_text(&settings)]);
     }
     command.cwd(path_text(&cwd));
