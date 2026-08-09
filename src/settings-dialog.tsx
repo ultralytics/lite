@@ -213,7 +213,11 @@ export function SettingsDialog({
                         </Button>
                       ) : null}
                       <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
-                        {status?.keyHint ? "Replace" : "Use a key"}
+                        {status?.keyHint
+                          ? "Replace Lite key"
+                          : status?.cliAuthConfigured
+                            ? "Override in Lite"
+                            : "Use a Lite key"}
                       </Button>
                       {status?.keyHint ? (
                         <ActionIconButton
