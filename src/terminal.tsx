@@ -114,6 +114,8 @@ export function TerminalView({
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
     let typed = "";
+    const send = (data: string) =>
+      void invoke("write_session", { sessionId, data: Array.from(new TextEncoder().encode(data)) });
     const input = terminal.onData((data) => {
       for (const character of data) {
         if (character === "\r" || character === "\n") {
@@ -123,10 +125,7 @@ export function TerminalView({
         } else if (character === "\u007f") typed = typed.slice(0, -1);
         else if (character >= " ") typed += character;
       }
-      void invoke("write_session", {
-        sessionId,
-        data: Array.from(new TextEncoder().encode(data)),
-      });
+      send(data);
     });
     const resize = () => {
       fit.fit();
@@ -138,9 +137,16 @@ export function TerminalView({
     };
     const observer = new ResizeObserver(() => requestAnimationFrame(resize));
     observer.observe(container);
-    // Command and the zoom keys resize the type, as they do in a terminal app.
     terminal.attachCustomKeyEventHandler((event) => {
-      if (event.type !== "keydown" || !(event.metaKey || event.ctrlKey)) return true;
+      if (event.type !== "keydown") return true;
+      const cmdOrCtrl = event.metaKey || event.ctrlKey;
+      // Without the kitty keyboard protocol, Escape+Return is the newline the agent CLIs read.
+      if (event.key === "Enter" && event.shiftKey && !cmdOrCtrl && !event.altKey) {
+        send("\x1b\r");
+        return false;
+      }
+      // Command and the zoom keys resize the type, as they do in a terminal app.
+      if (!cmdOrCtrl) return true;
       const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
       if (!step && event.key !== "0") return true;
       const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminal.options.fontSize ?? 13) + step) : 13;
