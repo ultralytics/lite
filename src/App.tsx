@@ -89,7 +89,7 @@ import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearInspectorCache, Inspector } from "@/inspector";
+import { clearUsageCache, Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
@@ -866,6 +866,7 @@ function App() {
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState("");
   const runs = useRef(new Map<string, string>());
+  const sessionsRef = useRef(sessions);
   const workTimers = useRef(new Map<string, number>());
   const resumed = useRef("");
   const themeRef = useRef<Theme>("dark");
@@ -883,6 +884,7 @@ function App() {
     );
   }, [sessions, query]);
   visibleRef.current = visible;
+  sessionsRef.current = sessions;
   themeRef.current = theme;
   selectedRef.current = selected;
   closeRef.current = closeSession;
@@ -1062,6 +1064,18 @@ function App() {
     });
   }, []);
 
+  const markDirectory = useCallback((sessionId: string, path: string) => {
+    const session = sessionsRef.current.find((item) => item.id === sessionId);
+    if (session?.agent !== "shell" || session.cwd === path) return;
+    void invoke<{ id: string; path: string }>("follow_directory", { rootId: session.rootId, path })
+      .then((grant) => {
+        setSessions((current) =>
+          current.map((item) => (item.id === sessionId ? { ...item, cwd: grant.path, rootId: grant.id } : item)),
+        );
+      })
+      .catch((reason) => setError(String(reason)));
+  }, []);
+
   useEffect(() => {
     let disposed = false;
     let unlistenOutput: (() => void) | undefined;
@@ -1069,8 +1083,9 @@ function App() {
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const title = appendOutput(payload.sessionId, payload.data);
+        const { title, path } = appendOutput(payload.sessionId, payload.data);
         if (title) markTitle(payload.sessionId, title);
+        if (path) markDirectory(payload.sessionId, path);
         markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
@@ -1097,7 +1112,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [markWorking, markTitle]);
+  }, [markDirectory, markWorking, markTitle]);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
     if (runs.current.has(session.id)) return;
@@ -1172,7 +1187,10 @@ function App() {
   async function signIn(agent: Session["agent"]) {
     setSettingsOpen(false);
     try {
-      const grant = await invoke<{ id: string; path: string }>("default_directory");
+      const grant =
+        (await invoke<{ id: string; path: string } | null>("default_directory")) ??
+        (await invoke<{ id: string; path: string } | null>("choose_directory"));
+      if (!grant) return;
       createSession({
         id: crypto.randomUUID(),
         agent,
@@ -1206,7 +1224,7 @@ function App() {
       setError(String(reason));
     }
     clearOutput(session.id);
-    clearInspectorCache(session.id, session.rootId);
+    clearUsageCache(session.id);
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
     if (select) {
@@ -1234,7 +1252,7 @@ function App() {
       cleanupError ||= String(reason);
     }
     clearOutput(session.id);
-    clearInspectorCache(session.id, session.rootId);
+    clearUsageCache(session.id);
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
@@ -1630,6 +1648,32 @@ function App() {
               <section className="flex h-full min-w-0 flex-col">
                 {selected ? (
                   <div className="relative min-h-0 flex-1">
+                    <Suspense fallback={<div className="absolute inset-0 bg-background" />}>
+                      {sessions.map((session) =>
+                        session.running ? (
+                          <div
+                            key={session.id}
+                            aria-hidden={!selected.running || session.id !== selectedId}
+                            className={`absolute inset-0 ${selected.running && session.id === selectedId ? "visible" : "invisible"}`}
+                          >
+                            <TerminalView
+                              sessionId={session.id}
+                              theme={theme}
+                              active={selected.running && session.id === selectedId}
+                              onPrompt={(text) =>
+                                setSessions((current) =>
+                                  current.map((item) =>
+                                    item.id === session.id && !item.renamed && item.name === folderName(item.cwd)
+                                      ? { ...item, name: subject(text) }
+                                      : item,
+                                  ),
+                                )
+                              }
+                            />
+                          </div>
+                        ) : null,
+                      )}
+                    </Suspense>
                     {selected.running ? (
                       <ActionIconButton
                         variant="outline"
@@ -1643,23 +1687,7 @@ function App() {
                         <Trash2 />
                       </ActionIconButton>
                     ) : null}
-                    {selected.running ? (
-                      <Suspense fallback={<div className="h-full bg-background" />}>
-                        <TerminalView
-                          sessionId={selected.id}
-                          theme={theme}
-                          onPrompt={(text) =>
-                            setSessions((current) =>
-                              current.map((item) =>
-                                item.id === selected.id && !item.renamed && item.name === folderName(item.cwd)
-                                  ? { ...item, name: subject(text) }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Suspense>
-                    ) : startingIds.has(selected.id) ? (
+                    {selected.running ? null : startingIds.has(selected.id) ? (
                       <Empty className="h-full">
                         <EmptyHeader>
                           <SessionMark session={selected} />

@@ -327,11 +327,15 @@ const FILE_NAMES = new Map<string, FileKind>([
   ["license", { icon: Scale, color: "text-muted-foreground" }],
 ]);
 
-function FileIcon({ name }: { name: string }) {
+function FileIcon({ name, directory }: { name: string; directory?: boolean }) {
   const lower = name.toLowerCase();
   const kind = FILE_NAMES.get(lower) ?? FILE_TYPES.get(lower.split(".").pop() ?? "");
-  const Icon = kind?.icon ?? File;
-  return <Icon className={`size-3.5 shrink-0 ${kind?.color ?? "text-muted-foreground"}`} />;
+  const Icon = directory ? Folder : (kind?.icon ?? File);
+  return (
+    <Icon
+      className={`size-3.5 shrink-0 ${directory ? "fill-current text-muted-foreground" : (kind?.color ?? "text-muted-foreground")}`}
+    />
+  );
 }
 
 function Loading({ label }: { label: string }) {
@@ -544,7 +548,7 @@ function FileTree({
                     <ChevronRight
                       className={`size-3.5 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
                     />
-                    <Folder className="size-3.5 fill-current text-muted-foreground" />
+                    <FileIcon name={entry.name} directory />
                   </>
                 ) : (
                   <>
@@ -603,7 +607,7 @@ function FileTree({
           <ChevronRight
             className={`size-3.5 text-muted-foreground transition-transform ${rootOpen ? "rotate-90" : ""}`}
           />
-          <Folder className="size-3.5 fill-current text-muted-foreground" />
+          <FileIcon name={name} directory />
           <span className="truncate">{name}</span>
         </button>
         <ActionIconButton
@@ -756,72 +760,55 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
   );
 }
 
-// Revisiting a session paints its last small metadata snapshot immediately, then the mounted panel
-// rereads the owner in the background. File contents stay out of these caches.
-const gitStatusCache = new Map<string, GitStatus | null>();
-const githubItemsCache = new Map<string, GitHubItem[]>();
 const usageCache = new Map<string, UsageSnapshot | null>();
 
-export function clearInspectorCache(sessionId: string, rootId: string) {
-  gitStatusCache.delete(rootId);
-  githubItemsCache.delete(sessionId);
+export function clearUsageCache(sessionId: string) {
   usageCache.delete(sessionId);
 }
 
 function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
-  // A mount revalidates the cached snapshot, and the refresh button mounts the panel again. Nothing
-  // watches Git or GitHub between those explicit reads.
+  // Read once when the panel is built, like every other thing this panel shows: the refresh button
+  // rebuilds it, and nothing here watches the session between those two moments.
   const named = useMemo(() => namedInSession(sessionId, remote), [sessionId, remote]);
-  const [status, setStatus] = useState<GitStatus | null | undefined>(() => gitStatusCache.get(rootId));
-  const [items, setItems] = useState<GitHubItem[] | undefined>(() => githubItemsCache.get(sessionId));
+  const [status, setStatus] = useState<GitStatus | null>();
+  const [items, setItems] = useState<GitHubItem[]>();
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
 
-  // Asking GitHub on mount updates the stale snapshot already painted above.
+  // The panel is only built when the tab is opened and again whenever it is refreshed, so asking
+  // GitHub here asks it exactly on those two occasions and never between them.
   useEffect(() => {
     if (!named.urls.length && !named.guessed.length) return setItems([]);
     let disposed = false;
     // A remote that arrives after an empty first pass starts a real check, so the panel goes back to
-    // its last checked snapshot — or to checking — rather than staying empty without a word.
-    setItems(githubItemsCache.get(sessionId));
+    // checking rather than staying empty without a word.
+    setItems(undefined);
     void invoke<GitHubItem[]>("github_items", { urls: named.urls, guessed: named.guessed })
       .then((checked) => {
-        if (!disposed) {
-          githubItemsCache.set(sessionId, checked);
-          setItems(checked);
-        }
+        if (!disposed) setItems(checked);
       })
       // A link that could not be checked is still a link, so it is shown the way it was printed; a
       // guessed number without GitHub's confirmation is not.
       .catch(() => {
-        if (!disposed) {
-          const unchecked = named.urls.map((url) => ({ url, title: null, state: null, occurredAt: null }));
-          githubItemsCache.set(sessionId, unchecked);
-          setItems(unchecked);
-        }
+        if (!disposed) setItems(named.urls.map((url) => ({ url, title: null, state: null, occurredAt: null })));
       });
     return () => {
       disposed = true;
     };
-  }, [named, sessionId]);
+  }, [named]);
+
+  const refresh = useCallback(async () => {
+    setError("");
+    try {
+      setStatus(await invoke<GitStatus | null>("git_status", { rootId }));
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }, [rootId]);
 
   useEffect(() => {
-    let disposed = false;
-    setError("");
-    void invoke<GitStatus | null>("git_status", { rootId })
-      .then((next) => {
-        if (!disposed) {
-          gitStatusCache.set(rootId, next);
-          setStatus(next);
-        }
-      })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [rootId]);
+    void refresh();
+  }, [refresh]);
 
   const repositories = repositoryGroups(remote, status ?? null, items ?? []);
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the

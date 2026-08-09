@@ -410,12 +410,13 @@ fn grant_directory(
     app: &AppHandle,
     roots: &Roots,
     path: PathBuf,
+    root_id: Option<String>,
 ) -> Result<DirectoryGrant, String> {
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     if is_sensitive_root(&path) {
         return Err("Credential and configuration folders cannot be opened".into());
     }
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = root_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     update_roots(app, roots, |roots| {
         roots.insert(id.clone(), path.clone());
     })?;
@@ -425,16 +426,12 @@ fn grant_directory(
     })
 }
 
-fn default_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Ok(path) = last_directory_path(app)
+fn default_directory_path(app: &AppHandle) -> Option<PathBuf> {
+    let path = last_directory_path(app)
         .and_then(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
-    {
-        let path = PathBuf::from(path);
-        if path.is_dir() {
-            return Ok(path);
-        }
-    }
-    app.path().home_dir().map_err(|error| error.to_string())
+        .ok()
+        .map(PathBuf::from)?;
+    path.is_dir().then_some(path)
 }
 
 #[cfg(unix)]
@@ -558,8 +555,13 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn default_directory(app: AppHandle, roots: State<Roots>) -> Result<DirectoryGrant, String> {
-    grant_directory(&app, &roots, default_directory_path(&app)?)
+fn default_directory(
+    app: AppHandle,
+    roots: State<Roots>,
+) -> Result<Option<DirectoryGrant>, String> {
+    default_directory_path(&app)
+        .map(|path| grant_directory(&app, &roots, path, None))
+        .transpose()
 }
 
 #[tauri::command]
@@ -568,7 +570,7 @@ async fn choose_directory(
     roots: State<'_, Roots>,
 ) -> Result<Option<DirectoryGrant>, String> {
     let mut dialog = app.dialog().file().set_title("Choose a project");
-    if let Ok(path) = default_directory_path(&app) {
+    if let Some(path) = default_directory_path(&app) {
         dialog = dialog.set_directory(path);
     }
     let Some(path) = dialog.blocking_pick_folder() else {
@@ -577,7 +579,7 @@ async fn choose_directory(
     let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
-    grant_directory(&app, &roots, path).map(Some)
+    grant_directory(&app, &roots, path, None).map(Some)
 }
 
 // A typed path is a folder like any other: it has to exist and it goes through the same grant.
@@ -601,7 +603,18 @@ async fn use_directory(
     }
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
-    grant_directory(&app, &roots, path)
+    grant_directory(&app, &roots, path, None)
+}
+
+#[tauri::command]
+async fn follow_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+) -> Result<DirectoryGrant, String> {
+    root_path(&roots, &root_id)?;
+    grant_directory(&app, &roots, PathBuf::from(path), Some(root_id))
 }
 
 #[derive(Serialize)]
@@ -1758,7 +1771,12 @@ fn agent_command(
             }
             command
         }
-        "shell" => CommandBuilder::new_default_prog(),
+        "shell" => {
+            let mut command = CommandBuilder::new_default_prog();
+            #[cfg(target_os = "macos")]
+            command.env("TERM_PROGRAM", "Apple_Terminal");
+            command
+        }
         _ => return Err("Unknown session type".into()),
     };
     if let Some(path) = user_path() {
@@ -2590,7 +2608,7 @@ fn local_repo() -> Option<&'static str> {
 #[tauri::command]
 async fn grant_repo(app: AppHandle, roots: State<'_, Roots>) -> Result<DirectoryGrant, String> {
     let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
-    grant_directory(&app, &roots, PathBuf::from(repo))
+    grant_directory(&app, &roots, PathBuf::from(repo), None)
 }
 
 #[tauri::command]
@@ -2702,6 +2720,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             choose_directory,
+            follow_directory,
             github_items,
             use_directory,
             default_directory,

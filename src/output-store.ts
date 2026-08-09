@@ -20,12 +20,10 @@ interface Buffer {
 const buffers = new Map<string, Buffer>();
 const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
 
-// A program names the window it runs in with OSC 0 or 2, and an agent names it with a short summary of
-// what the session is doing. The title arrives in the output whether or not the session is the one on
-// screen, so it is read here, where every session's bytes land, rather than from the single terminal
-// that happens to be mounted.
+// Titles and working directories arrive whether or not the session is visible, so their shared OSC
+// owner lives here where every session's output arrives rather than in the mounted terminal.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
-const TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const METADATA = /\x1b\]([027]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 
 // The same sequence begun but not yet terminated, which the chunk that ends it completes. A title may
 // hold an escape of its own, so the payload ends only at a terminator, and a lone escape is kept
@@ -54,8 +52,8 @@ export function syncTerminalTheme(theme: Theme) {
   }
 }
 
-// Returns the last window title the chunk set, empty when it set none.
-export function appendOutput(sessionId: string, data: number[]): string {
+// Returns the last title and directory the chunk set, empty when it set neither.
+export function appendOutput(sessionId: string, data: number[]) {
   const bytes = new Uint8Array(data);
   const buffer = buffers.get(sessionId) ?? {
     chunks: [],
@@ -86,15 +84,17 @@ export function appendOutput(sessionId: string, data: number[]): string {
 
   const text = buffer.tail + decoded;
   let title = "";
-  let read = 0;
-  TITLE.lastIndex = 0;
-  for (let match = TITLE.exec(text); match; match = TITLE.exec(text)) {
-    title = match[1];
-    read = TITLE.lastIndex;
+  let path = "";
+  METADATA.lastIndex = 0;
+  for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
+    if (match[1] === "7") {
+      if (match[2].startsWith("file://"))
+        path = decodeURIComponent(new URL(match[2]).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+    } else title = match[2];
   }
-  const tail = text.slice(read).match(UNTERMINATED)?.[0] ?? "";
+  const tail = text.match(UNTERMINATED)?.[0] ?? "";
   buffer.tail = tail.length > MAX_TAIL ? "" : tail;
-  return title;
+  return { title, path };
 }
 
 export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) => void) {
