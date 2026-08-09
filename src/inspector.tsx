@@ -770,13 +770,15 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
 
   // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
   // folders exactly as they were left — expanded, loaded, and scrolled — without rereading the disk.
+  // A new root grant is a different tree, so it starts over the way a first open does; the open file
+  // stays, since its content was already read.
   return (
     <div className="flex h-full min-h-0 flex-col">
       {selected ? <FileViewer entry={selected} source={source} error={error} onBack={() => setSelected(null)} /> : null}
       <div data-context-files className={`min-h-0 flex-1 flex-col ${selected ? "hidden" : "flex"}`}>
         <SearchInput value={query} placeholder="Search files" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
-          <FileTree root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
+          <FileTree key={rootId} root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
         </ScrollArea>
       </div>
     </div>
