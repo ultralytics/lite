@@ -1335,7 +1335,19 @@ enum CliAuthMethod {
     ApiKey,
 }
 
-fn kimi_auth_method(app: &AppHandle) -> Option<CliAuthMethod> {
+struct CliAuth {
+    method: CliAuthMethod,
+    key_hint: Option<String>,
+}
+
+fn key_hint(key: &str) -> String {
+    let key = key.trim();
+    key.chars()
+        .skip(key.chars().count().saturating_sub(4))
+        .collect()
+}
+
+fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
     let config = fs::read_to_string(kimi_home(app).ok()?.join("config.toml")).ok()?;
     let config = config.parse::<toml::Table>().ok()?;
     let model = config.get("default_model")?.as_str()?;
@@ -1352,37 +1364,57 @@ fn kimi_auth_method(app: &AppHandle) -> Option<CliAuthMethod> {
         .get(provider)?
         .as_table()?;
 
-    let has_api_key = provider
+    let api_key = provider
         .get("api_key")
         .and_then(toml::Value::as_str)
-        .is_some_and(|key| !key.trim().is_empty())
-        || provider
-            .get("env")
-            .and_then(toml::Value::as_table)
-            .is_some_and(|env| {
-                env.iter().any(|(name, value)| {
-                    name.ends_with("_API_KEY")
-                        && value.as_str().is_some_and(|key| !key.trim().is_empty())
+        .filter(|key| !key.trim().is_empty())
+        .or_else(|| {
+            provider
+                .get("env")
+                .and_then(toml::Value::as_table)
+                .and_then(|env| {
+                    env.iter().find_map(|(name, value)| {
+                        if !name.ends_with("_API_KEY") {
+                            return None;
+                        }
+                        value.as_str().filter(|key| !key.trim().is_empty())
+                    })
                 })
-            });
-    if has_api_key {
-        Some(CliAuthMethod::ApiKey)
+        });
+    if let Some(api_key) = api_key {
+        Some(CliAuth {
+            method: CliAuthMethod::ApiKey,
+            key_hint: Some(key_hint(api_key)),
+        })
     } else if provider.get("oauth").is_some_and(toml::Value::is_table) {
-        Some(CliAuthMethod::Provider)
+        Some(CliAuth {
+            method: CliAuthMethod::Provider,
+            key_hint: None,
+        })
     } else {
         None
     }
 }
 
-fn cli_auth_method(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
+fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuth> {
     match name {
-        "claude" => claude_signed_in(app).then_some(CliAuthMethod::Provider),
+        "claude" => claude_signed_in(app).then_some(CliAuth {
+            method: CliAuthMethod::Provider,
+            key_hint: None,
+        }),
         "codex" => codex_home(app)
             .is_ok_and(|home| home.join("auth.json").is_file())
-            .then_some(CliAuthMethod::Provider),
-        "deepseek" => (deepseek_profile_exists(app) || codex_declares_deepseek(app))
-            .then_some(CliAuthMethod::ApiKey),
-        "kimi" => kimi_auth_method(app),
+            .then_some(CliAuth {
+                method: CliAuthMethod::Provider,
+                key_hint: None,
+            }),
+        "deepseek" => {
+            (deepseek_profile_exists(app) || codex_declares_deepseek(app)).then_some(CliAuth {
+                method: CliAuthMethod::ApiKey,
+                key_hint: None,
+            })
+        }
+        "kimi" => kimi_auth(app),
         _ => None,
     }
 }
@@ -1393,6 +1425,7 @@ struct ProviderAuth {
     name: String,
     key_hint: Option<String>,
     cli_auth_method: Option<CliAuthMethod>,
+    cli_key_hint: Option<String>,
 }
 
 #[tauri::command]
@@ -1400,15 +1433,15 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
     let keys = load_api_keys(&app);
     Ok(SUPPORTED_KEYS
         .iter()
-        .map(|name| ProviderAuth {
-            name: (*name).to_owned(),
-            // Only the last characters travel to the interface, enough to tell two keys apart.
-            key_hint: keys.get(*name).map(|key| {
-                key.chars()
-                    .skip(key.chars().count().saturating_sub(4))
-                    .collect()
-            }),
-            cli_auth_method: cli_auth_method(&app, name),
+        .map(|name| {
+            let cli_auth = cli_auth(&app, name);
+            ProviderAuth {
+                name: (*name).to_owned(),
+                // Only the last characters travel to the interface, enough to tell two keys apart.
+                key_hint: keys.get(*name).map(|key| key_hint(key)),
+                cli_auth_method: cli_auth.as_ref().map(|auth| auth.method),
+                cli_key_hint: cli_auth.and_then(|auth| auth.key_hint),
+            }
         })
         .collect())
 }

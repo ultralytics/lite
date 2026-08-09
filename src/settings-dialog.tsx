@@ -63,7 +63,7 @@ const providers: {
     provider: "deepseek",
     label: "DeepSeek",
     variable: "DEEPSEEK_API_KEY",
-    configured: "Configured in your Codex settings",
+    configured: "Using Codex configuration",
     signIn: false,
   },
   {
@@ -80,6 +80,7 @@ interface ProviderAuth {
   name: string;
   keyHint: string | null;
   cliAuthMethod: "provider" | "apiKey" | null;
+  cliKeyHint: string | null;
 }
 
 export function SettingsDialog({
@@ -175,6 +176,12 @@ export function SettingsDialog({
               const open = editing.has(option.id);
               const draft = drafts[option.id] ?? "";
               const shown = revealed.has(option.id);
+              const hint = status?.keyHint ?? status?.cliKeyHint;
+              const configured = status?.keyHint
+                ? "Using Lite key"
+                : status?.cliKeyHint
+                  ? `Using ${option.label} key`
+                  : option.configured;
               return (
                 <Item key={option.id} variant="outline">
                   <ItemMedia variant="icon">
@@ -188,22 +195,14 @@ export function SettingsDialog({
                       </Badge>
                     </ItemTitle>
                     <ItemDescription>
-                      {status?.keyHint ? (
+                      {status && (hint || status.cliAuthMethod) ? (
                         <span className="flex items-center gap-1.5">
                           <Check className="size-3.5 shrink-0" />
-                          Using Lite key
-                          <span className="font-mono">••••{status.keyHint}</span>
+                          {configured}
+                          {hint ? <span className="font-mono">••••{hint}</span> : null}
                         </span>
                       ) : status ? (
-                        status.cliAuthMethod ? (
-                          status.cliAuthMethod === "apiKey" && option.id === "kimi" ? (
-                            "Using API key configured in Kimi Code"
-                          ) : (
-                            option.configured
-                          )
-                        ) : (
-                          "Not set up"
-                        )
+                        "Not set up"
                       ) : (
                         "Checking…"
                       )}
