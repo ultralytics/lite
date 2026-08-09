@@ -44,7 +44,7 @@ const providers: {
     agent: "claude",
     label: "Anthropic",
     variable: "ANTHROPIC_API_KEY",
-    configured: "Using Claude Code sign-in",
+    configured: "Signed in through Claude Code",
   },
   {
     id: "codex",
@@ -52,7 +52,7 @@ const providers: {
     provider: "openai",
     label: "OpenAI",
     variable: "OPENAI_API_KEY",
-    configured: "Using Codex sign-in",
+    configured: "Signed in through Codex",
   },
   {
     id: "deepseek",
@@ -67,7 +67,7 @@ const providers: {
     agent: "kimi",
     label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
-    configured: "Using Kimi Code sign-in",
+    configured: "Signed in through Kimi Code",
   },
 ];
 
