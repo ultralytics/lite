@@ -508,8 +508,7 @@ fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String>
                 "PostToolUseFailure": tool_hook(),
                 "PermissionDenied": tool_hook(),
                 "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
-                "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }],
-                "Stop": [{ "hooks": [{ "type": "command", "command": activity }] }]
+                "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }]
             }
         })
         .to_string()
@@ -558,24 +557,6 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
                 && error.kind() != std::io::ErrorKind::NotFound
             {
                 return Err(error.to_string());
-            }
-        }
-        "Stop" => {
-            for entry in fs::read_dir(directory)
-                .map_err(|error| error.to_string())?
-                .flatten()
-            {
-                fs::remove_file(entry.path()).map_err(|error| error.to_string())?;
-            }
-            for task in input
-                .get("background_tasks")
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(key) = activity_key(task, "id") {
-                    fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
-                }
             }
         }
         _ => {}
@@ -2331,6 +2312,11 @@ fn delete_session_data(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.to_string()),
         }
+    }
+    if let Err(error) = fs::remove_dir_all(directory.join(format!("activity-{session_id}")))
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(error.to_string());
     }
     update_provider_session(&app, &provider_sessions, &session_id, None).map(|_| ())
 }
