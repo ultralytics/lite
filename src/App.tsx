@@ -30,6 +30,8 @@ import {
   TextSelect,
   Trash2,
   X,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import {
   Component,
@@ -185,6 +187,9 @@ type AppMenuContext = {
   url: string;
   value: string;
   valueLabel: string;
+  zoomIn: HTMLButtonElement | null;
+  zoomOut: HTMLButtonElement | null;
+  zoomReset: HTMLButtonElement | null;
 };
 
 const EMPTY_MENU_CONTEXT: AppMenuContext = {
@@ -203,6 +208,9 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   url: "",
   value: "",
   valueLabel: "",
+  zoomIn: null,
+  zoomOut: null,
+  zoomReset: null,
 };
 
 function inputSelection(element: HTMLInputElement | HTMLTextAreaElement): string {
@@ -240,6 +248,9 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     url: link instanceof HTMLAnchorElement ? link.href : (link?.dataset.contextUrl ?? ""),
     value: value?.dataset.contextValue ?? "",
     valueLabel: value?.dataset.contextLabel ?? "Copy",
+    zoomIn: session?.querySelector<HTMLButtonElement>("[data-context-zoom-in]") ?? null,
+    zoomOut: session?.querySelector<HTMLButtonElement>("[data-context-zoom-out]") ?? null,
+    zoomReset: session?.querySelector<HTMLButtonElement>("[data-context-zoom-reset]") ?? null,
   };
 }
 
@@ -252,6 +263,7 @@ function hasMenuItems(context: AppMenuContext): boolean {
     context.selectedText,
     context.sessionId,
     context.url || context.value,
+    context.zoomIn,
   ].some(Boolean);
 }
 
@@ -357,6 +369,26 @@ function AppContextMenu({
               <Trash2 />
               Close session
             </ContextMenuItem>
+            {context.zoomIn ? (
+              <>
+                <ContextMenuSeparator />
+                <ContextMenuItem onClick={() => context.zoomIn?.click()}>
+                  <ZoomIn />
+                  Zoom in
+                  <ContextMenuShortcut>{shortcut}+</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => context.zoomOut?.click()}>
+                  <ZoomOut />
+                  Zoom out
+                  <ContextMenuShortcut>{shortcut}-</ContextMenuShortcut>
+                </ContextMenuItem>
+                <ContextMenuItem onClick={() => context.zoomReset?.click()}>
+                  <RotateCcw />
+                  Actual size
+                  <ContextMenuShortcut>{shortcut}0</ContextMenuShortcut>
+                </ContextMenuItem>
+              </>
+            ) : null}
           </>
         ) : null}
         {context.url ? (

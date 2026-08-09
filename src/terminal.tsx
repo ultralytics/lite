@@ -95,6 +95,7 @@ export function TerminalView({
   const promptRef = useRef(onPrompt);
   promptRef.current = onPrompt;
   const terminalRef = useRef<Terminal | null>(null);
+  const zoomRef = useRef<(step: -1 | 0 | 1) => void>(() => undefined);
   // Read when a terminal is built, so switching sessions paints the new one in the current theme
   // without rebuilding it every time the theme changes.
   const themeRef = useRef(theme);
@@ -153,6 +154,12 @@ export function TerminalView({
         rows: terminal.rows,
       });
     };
+    zoomRef.current = (step) => {
+      const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminal.options.fontSize ?? 13) + step) : 13;
+      terminal.options.fontSize = size;
+      localStorage.setItem(FONT_SIZE_KEY, String(size));
+      requestAnimationFrame(resize);
+    };
     // A width change arrives as a stream of frames: a drag, or the ease a collapsing panel runs
     // through. Fitting on each one rewraps the scrollback and hands the child a window size it is
     // never shown at, so the terminal is fitted once the size has settled.
@@ -185,10 +192,7 @@ export function TerminalView({
       if (!(event.metaKey || event.ctrlKey)) return true;
       const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
       if (!step && event.key !== "0") return true;
-      const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminal.options.fontSize ?? 13) + step) : 13;
-      terminal.options.fontSize = size;
-      localStorage.setItem(FONT_SIZE_KEY, String(size));
-      requestAnimationFrame(resize);
+      zoomRef.current(step);
       return false;
     });
     resize();
@@ -200,6 +204,7 @@ export function TerminalView({
       unsubscribe();
       terminal.dispose();
       terminalRef.current = null;
+      zoomRef.current = () => undefined;
     };
   }, [sessionId]);
 
@@ -219,6 +224,9 @@ export function TerminalView({
   // neither show nor reach it.
   return (
     <div data-context-session={sessionId} className="h-full w-full bg-background p-3">
+      <button type="button" hidden data-context-zoom-in onClick={() => zoomRef.current(1)} />
+      <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
+      <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
       <div ref={containerRef} className="h-full w-full" />
     </div>
   );
