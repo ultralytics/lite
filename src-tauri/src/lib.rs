@@ -663,7 +663,8 @@ const CHECKED_GITHUB_ITEMS: usize = 100;
 // process and a network round trip, and a session's worth of them in a row is a panel that waits on
 // the network instead of saying what the session did. issueOrPullRequest answers for both kinds at
 // once, which is what lets a bare "#12" be asked about without knowing which it names; the canonical
-// URL in the answer replaces the guessed kind. A reference is only dropped on evidence that it names
+// URL in the answer replaces the guessed kind, and a printed link naming the wrong kind follows the
+// same redirect GitHub itself answers that link with. A reference is only dropped on evidence that it names
 // nothing, and the same response carries that evidence: a repository that resolves while its item does
 // not was read and searched. A repository that does not resolve proves nothing — GitHub hides a
 // private repository this sign-in cannot see as readily as one that never existed — so its printed
