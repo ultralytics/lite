@@ -1420,13 +1420,13 @@ fn delete_kimi_api_key(app: &AppHandle) -> Result<(), String> {
         .ok_or("Kimi's default provider is missing")?;
 
     let env_api_key = kimi_env_api_key(provider);
-    let removed = provider.remove("api_key").is_some()
-        || env_api_key.is_some_and(|name| {
-            provider
-                .get_mut("env")
-                .and_then(toml_edit::Item::as_table_like_mut)
-                .is_some_and(|env| env.remove(name).is_some())
-        });
+    let removed_env = env_api_key.is_some_and(|name| {
+        provider
+            .get_mut("env")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .is_some_and(|env| env.remove(name).is_some())
+    });
+    let removed = provider.remove("api_key").is_some() || removed_env;
     if removed {
         write_atomic(&path, config.to_string().as_bytes())?;
         fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
