@@ -1507,7 +1507,7 @@ function App() {
             className="relative flex h-9 shrink-0 items-center border-b bg-sidebar text-sidebar-foreground"
           >
             <div
-              className={`flex h-full shrink-0 items-center gap-2 overflow-hidden ${shut.sidebar ? "p-0" : "px-3 in-data-[titlebar=overlay]:pl-[86px]"}`}
+              className={`flex h-full shrink-0 items-center gap-2 overflow-hidden ${shut.sidebar ? "p-0" : "px-[13px] in-data-[titlebar=overlay]:pl-[86px]"}`}
               style={{ width: shut.sidebar ? 0 : "var(--sidebar-width, 20%)" }}
             >
               {shut.sidebar ? null : (
@@ -1518,7 +1518,7 @@ function App() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="min-w-0 flex-1 px-1.5"
+                          className="min-w-0 flex-1 justify-start px-0"
                           aria-label="Lite on GitHub"
                           data-context-url="https://github.com/ultralytics/lite"
                           onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
@@ -1528,7 +1528,7 @@ function App() {
                       <img
                         src="/ultralytics-logotype.svg"
                         alt=""
-                        className="h-4 w-full max-w-[104px] object-contain dark:brightness-0 dark:invert"
+                        className="h-6 w-full max-w-[134px] object-contain dark:brightness-0 dark:invert"
                       />
                     </TooltipTrigger>
                     <TooltipContent>View Lite on GitHub</TooltipContent>
