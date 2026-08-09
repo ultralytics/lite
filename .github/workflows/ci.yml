@@ -1,13 +1,16 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
 name: CI
+
+permissions:
+  contents: read
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-
-permissions:
-  contents: read
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,21 +19,42 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.3.14
-      - uses: dtolnay/rust-toolchain@stable
+          bun-version: latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: swatinem/rust-cache@v2
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+
       - name: Install Linux packages
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-      - run: bun ci
-      - run: bun run check
-      - run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
-      - run: bun run tauri build --debug --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      - name: Install dependencies
+        run: bun ci
+
+      - name: Lint and typecheck
+        run: bun run check
+
+      - name: Check Rust formatting
+        run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
+
+      # CI answers whether the app compiles and links, which installers it can be packed into is
+      # publish.yml's question. Packing them here cost more than everything else combined: on Linux
+      # one run spent 9 seconds compiling and 9 minutes 17 bundling, most of it rpm compressing an
+      # unoptimised binary carrying its debug info.
+      - name: Build app
+        run: bun run tauri build --debug --no-bundle

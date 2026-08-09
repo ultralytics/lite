@@ -1,6 +1,8 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { Loader2Icon } from "lucide-react";
+import type * as React from "react";
+
 import { cn } from "@/lib/utils";
 
 function Spinner({ className, ...props }: React.ComponentProps<"svg">) {

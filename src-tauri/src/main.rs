@@ -5,11 +5,20 @@
 
 fn main() {
     let mut arguments = std::env::args().skip(1);
-    if arguments.next().as_deref() == Some("--claude-statusline") {
-        if let Some(path) = arguments.next() {
-            let _ = lite_lib::capture_claude_status(&path);
+    match arguments.next().as_deref() {
+        Some("--claude-statusline") => {
+            if let (Some(usage), Some(activity)) = (arguments.next(), arguments.next()) {
+                let _ = lite_lib::capture_claude_status(&usage, &activity);
+            }
+            return;
         }
-        return;
+        Some("--claude-activity") => {
+            if let Some(path) = arguments.next() {
+                let _ = lite_lib::capture_claude_activity(&path);
+            }
+            return;
+        }
+        _ => {}
     }
     lite_lib::run()
 }

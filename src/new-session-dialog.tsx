@@ -1,13 +1,15 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { FolderOpen } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, FolderOpen } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
-import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
+  DialogBody,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -15,31 +17,38 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { AUTH_PROVIDERS, type AuthProviderId, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { type Agent, type ModelProvider, type Session, sessionLabel } from "@/types";
 
 interface Choice {
   id: string;
   agent: Agent;
   provider?: ModelProvider;
-  description: string;
+  auth?: AuthProviderId;
+  description?: string;
   note?: string;
 }
 
 const choices: Choice[] = [
-  { id: "claude", agent: "claude", description: "Use your Anthropic account" },
-  { id: "codex", agent: "codex", provider: "openai", description: "Use your OpenAI account" },
+  { id: "claude", agent: "claude", auth: "claude" },
+  { id: "codex", agent: "codex", provider: "openai", auth: "codex" },
   {
     id: "codex-deepseek",
     agent: "codex",
     provider: "deepseek",
-    description: "Codex, billed to DeepSeek",
+    auth: "deepseek",
     note: "Runs the Codex harness against the DeepSeek provider in your Codex configuration. Usage bills DeepSeek, not OpenAI.",
   },
-  { id: "kimi", agent: "kimi", description: "Use your Kimi Code account" },
+  { id: "kimi", agent: "kimi", auth: "kimi" },
   { id: "shell", agent: "shell", description: "Open your default shell" },
 ];
+
+// The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
+const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
 interface DirectoryGrant {
   id: string;
@@ -64,22 +73,33 @@ export function NewSessionDialog({
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
+  const [auth, setAuth] = useState<ProviderAuth[]>();
   const [error, setError] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
+  // An agent that is not installed cannot take a session yet, so the dialog offers its setup guide instead.
+  const missing = status && !status.available ? status : undefined;
 
   useEffect(() => {
     if (!isOpen) return;
     let disposed = false;
     setError("");
     setAvailability({});
-    void invoke<DirectoryGrant>("default_directory")
+    setAuth(undefined);
+    void invoke<DirectoryGrant | null>("default_directory")
       .then((selected) => {
-        if (disposed) void invoke("revoke_directory", { rootId: selected.id });
-        else {
+        if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
+        else if (selected) {
           setDirectory(selected);
           setPath(selected.path);
         }
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    void invoke<ProviderAuth[]>("provider_auth")
+      .then((result) => {
+        if (!disposed) setAuth(result);
       })
       .catch((reason) => {
         if (!disposed) setError(String(reason));
@@ -151,91 +171,120 @@ export function NewSessionDialog({
     onOpenChange(false);
   }
 
+  // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
+  // and a second click on the agent already chosen. An agent that is not installed reads them all as a
+  // request for its setup guide, which is the only one of the two it can answer.
+  const ready = Boolean(missing || (path.trim() && status));
+  function start() {
+    if (missing)
+      void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
+        setError(String(reason)),
+      );
+    else void create();
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    start();
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
       <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New session</DialogTitle>
-          <DialogDescription>Choose an agent and the folder it should work in.</DialogDescription>
-        </DialogHeader>
-        <div className="-mx-1 space-y-1">
-          {choices.map((option) => {
-            const state = availability[option.id];
-            const row = (
-              <button
-                type="button"
-                aria-pressed={option.id === choiceId}
-                onClick={() => setChoiceId(option.id)}
-                className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${option.id === choiceId ? "border-foreground bg-muted" : "border-transparent hover:bg-muted/60"}`}
-              >
-                <ProviderIcon agent={option.agent} provider={option.provider} className="size-5 shrink-0" />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{option.description}</span>
-                </span>
-                {state && !state.available ? (
-                  <span className="shrink-0 text-[11px] text-muted-foreground">Not set up</span>
-                ) : null}
-              </button>
-            );
-            return (
-              <div key={option.id}>
-                {option.note ? (
-                  <Tooltip>
-                    <TooltipTrigger render={row} />
-                    <TooltipContent className="max-w-64">{option.note}</TooltipContent>
-                  </Tooltip>
-                ) : (
-                  row
-                )}
+        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+          <DialogHeader>
+            <DialogTitle>New session</DialogTitle>
+            <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
+          </DialogHeader>
+          <DialogBody className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="project-folder" className={SECTION}>
+                Project folder
+              </Label>
+              <div className="flex gap-2">
+                <Input
+                  id="project-folder"
+                  value={path}
+                  className="min-w-0 flex-1 font-mono"
+                  placeholder="Type or choose a project folder"
+                  onChange={(event) => setPath(event.target.value)}
+                />
+                <ActionIconButton
+                  variant="outline"
+                  size="icon"
+                  tooltip="Browse"
+                  aria-label="Browse for a folder"
+                  onClick={() => void chooseFolder()}
+                >
+                  <FolderOpen />
+                </ActionIconButton>
               </div>
-            );
-          })}
-        </div>
-        <div className="flex gap-2">
-          <Input
-            value={path}
-            className="min-w-0 flex-1 font-mono text-xs"
-            placeholder="Type or choose a project folder"
-            aria-label="Project folder"
-            onChange={(event) => setPath(event.target.value)}
-            onBlur={() => void grant()}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void grant();
-            }}
-          />
-          <Tooltip>
-            <TooltipTrigger
-              render={<Button variant="outline" size="icon" onClick={chooseFolder} aria-label="Browse for a folder" />}
-            >
-              <FolderOpen />
-            </TooltipTrigger>
-            <TooltipContent>Browse</TooltipContent>
-          </Tooltip>
-        </div>
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        {status && !status.available ? <p className="text-xs text-muted-foreground">{status.detail}</p> : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => changeOpen(false)}>
-            Cancel
-          </Button>
-          {status && !status.available ? (
-            <Button
-              onClick={() =>
-                void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
-                  setError(String(reason)),
-                )
-              }
-            >
-              Open setup guide
+            </div>
+            <fieldset className="space-y-1.5">
+              <legend className={SECTION}>Agent</legend>
+              <div className="space-y-1">
+                {choices.map((option) => {
+                  const state = availability[option.id];
+                  const active = option.id === choiceId;
+                  const authProvider = option.auth ? AUTH_PROVIDERS[option.auth] : undefined;
+                  const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
+                  const row = (
+                    <Item
+                      key={option.id}
+                      size="xs"
+                      variant={active ? "outline" : "default"}
+                      className={active ? "border-ring bg-accent" : "hover:bg-muted/60"}
+                      render={
+                        <button
+                          type="button"
+                          aria-pressed={active}
+                          onClick={() => (active && ready ? start() : setChoiceId(option.id))}
+                        />
+                      }
+                    >
+                      {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
+                      <ItemMedia variant="icon" className="size-7 rounded-md border bg-background">
+                        <ProviderIcon agent={option.agent} provider={option.provider} />
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle>{sessionLabel(option)}</ItemTitle>
+                        {authProvider ? (
+                          <ProviderAuthDescription provider={authProvider} status={authStatus} />
+                        ) : (
+                          <ItemDescription>{option.description}</ItemDescription>
+                        )}
+                      </ItemContent>
+                      <ItemActions>
+                        {state && !state.available ? <Badge variant="outline">Not installed</Badge> : null}
+                        <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
+                      </ItemActions>
+                    </Item>
+                  );
+                  return option.note ? (
+                    <Tooltip key={option.id}>
+                      <TooltipTrigger render={row} />
+                      <TooltipContent className="max-w-64">{option.note}</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    row
+                  );
+                })}
+              </div>
+              {missing ? <p className="text-xs text-muted-foreground">{missing.detail}</p> : null}
+            </fieldset>
+            {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
+            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+          </DialogBody>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => changeOpen(false)}>
+              Cancel
             </Button>
-          ) : (
-            <Button disabled={!path.trim() || !status} onClick={() => void create()}>
+            <Button type="submit" disabled={!ready}>
               {status ? null : <Spinner />}
-              Start session
+              {missing ? "Open setup guide" : "Start session"}
             </Button>
-          )}
-        </DialogFooter>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );

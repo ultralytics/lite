@@ -41,9 +41,9 @@ Lite 刻意保持安静：空闲就是空闲。它不索引你的仓库、不监
 
 ### macOS
 
-1. 在 Apple 芯片 Mac 上下载 `Lite_0.0.4_darwin_aarch64.dmg`。
+1. 在 Apple 芯片 Mac 上下载文件名以 `_darwin_aarch64.dmg` 结尾的资源。
 2. 打开磁盘映像，把 **Lite** 拖入 **Applications**。
-3. 从 **Applications** 打开 Lite。如果 macOS 拦截了这个尚未签名的早期版本，打开 **系统设置 → 隐私与安全性**，把 **允许以下来源的应用程序** 设为 **App Store 与已知开发者**，为 Lite 选择 **仍要打开**，然后确认。
+3. 从 **Applications** 打开 Lite。如果 macOS 拦截了这个未签名的应用，打开 **系统设置 → 隐私与安全性**，把 **允许以下来源的应用程序** 设为 **App Store 与已知开发者**，为 Lite 选择 **仍要打开**，然后确认。
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/a7d3a991-91f2-4d9b-ba57-a8d80bbc37f5" width="70%" alt="在 macOS 系统设置中允许打开 Lite">
@@ -51,21 +51,21 @@ Lite 刻意保持安静：空闲就是空闲。它不索引你的仓库、不监
 
 ### Windows
 
-1. 下载 `Lite_0.0.4_windows_x64-setup.exe`。
+1. 下载文件名以 `_windows_x64-setup.exe` 结尾的资源。
 2. 运行安装程序，然后从开始菜单打开 **Lite**。
-3. 如果 Microsoft Defender SmartScreen 对这个尚未签名的早期版本弹出提示，选择 **更多信息 → 仍要运行**。
+3. 如果 Microsoft Defender SmartScreen 对这个未签名的应用弹出提示，选择 **更多信息 → 仍要运行**。
 
 ### Linux
 
-下载便携版 `Lite_0.0.4_linux_amd64.AppImage`。
+下载文件名以 `_linux_amd64.AppImage` 结尾的便携版资源。
 
 ```bash
 # AppImage
-chmod +x Lite_0.0.4_linux_amd64.AppImage
-./Lite_0.0.4_linux_amd64.AppImage
+chmod +x Lite_*_linux_amd64.AppImage
+./Lite_*_linux_amd64.AppImage
 ```
 
-安装 0.0.4 之后，在顶栏的 Lite 菜单中选择 **Check for updates**，即可安装带签名的更新并重启 Lite。Lite 从不在后台检查更新。
+安装 Lite 之后，在顶栏的 Lite 菜单中选择 **Check for updates**，即可安装带签名的更新并重启 Lite。Lite 从不在后台检查更新。
 
 ## 🚀 首次运行
 
@@ -115,6 +115,7 @@ bun run tauri dev
 
 ```bash
 bun run check       # Biome 与原生 TypeScript 检查
+bun run local       # 可直接双击运行、带红色图标的 Lite Dev 应用包
 bun run tauri build # 为当前操作系统构建原生安装包
 ```
 
@@ -132,13 +133,17 @@ Lite 基于 [AGPL-3.0 许可证](LICENSE) 提供。如需商业许可，请联�
 
 <br>
 <div align="center">
-  <a href="https://github.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-github.png" width="3%" alt="Ultralytics GitHub"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://www.linkedin.com/company/ultralytics/"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-linkedin.png" width="3%" alt="Ultralytics LinkedIn"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://twitter.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-twitter.png" width="3%" alt="Ultralytics Twitter"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://www.youtube.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-youtube.png" width="3%" alt="Ultralytics YouTube"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://discord.com/invite/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-discord.png" width="3%" alt="Ultralytics Discord"></a>
+  <a href="https://github.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-github.png" width="3%" alt="Ultralytics GitHub"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.linkedin.com/company/ultralytics/"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-linkedin.png" width="3%" alt="Ultralytics LinkedIn"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://twitter.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-twitter.png" width="3%" alt="Ultralytics Twitter"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://youtube.com/ultralytics?sub_confirmation=1"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-youtube.png" width="3%" alt="Ultralytics YouTube"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.tiktok.com/@ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-tiktok.png" width="3%" alt="Ultralytics TikTok"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://ultralytics.com/bilibili"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-bilibili.png" width="3%" alt="Ultralytics BiliBili"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://discord.com/invite/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-discord.png" width="3%" alt="Ultralytics Discord"></a>
 </div>

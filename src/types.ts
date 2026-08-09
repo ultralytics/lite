@@ -11,6 +11,8 @@ export interface Session {
   // A sign-in session runs the provider's own login command; it is never stored or resumed.
   mode?: "login";
   name: string;
+  // A name the user typed is theirs, so nothing the session says about itself overwrites it again.
+  renamed?: boolean;
   cwd: string;
   rootId: string;
   running: boolean;
@@ -51,5 +53,6 @@ export interface GitStatus {
   branch: string;
   worktree: string;
   changes: string[];
+  lineDiffs: Record<string, { additions: number; deletions: number }>;
   changesTruncated: boolean;
 }

@@ -1,8 +1,12 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+"use client";
+
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { cva, type VariantProps } from "class-variance-authority";
+import type { ReactNode } from "react";
 
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
@@ -40,13 +44,27 @@ const buttonVariants = cva(
   },
 );
 
-function Button({
-  className,
-  variant = "default",
-  size = "default",
-  ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+type ButtonProps = ButtonPrimitive.Props & VariantProps<typeof buttonVariants>;
+
+function Button({ className, variant = "default", size = "default", ...props }: ButtonProps) {
   return <ButtonPrimitive data-slot="button" className={cn(buttonVariants({ variant, size, className }))} {...props} />;
 }
 
-export { Button, buttonVariants };
+// An icon button names itself in a tooltip rather than in the row, which is how every piece of Lite's
+// chrome is labeled. It composes the two components above; it does not restyle either.
+function ActionIconButton({
+  tooltip,
+  tooltipSide,
+  variant = "ghost",
+  size = "icon",
+  ...props
+}: ButtonProps & { tooltip: ReactNode; tooltipSide?: "top" | "right" | "bottom" | "left" }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<Button variant={variant} size={size} {...props} />} />
+      <TooltipContent side={tooltipSide}>{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+export { ActionIconButton, Button };

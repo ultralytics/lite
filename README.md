@@ -41,9 +41,9 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 ### macOS
 
-1. Download `Lite_0.0.4_darwin_aarch64.dmg` for an Apple silicon Mac.
+1. Download the asset ending in `_darwin_aarch64.dmg` for an Apple silicon Mac.
 2. Open the disk image and drag **Lite** into **Applications**.
-3. Open Lite from **Applications**. If macOS blocks this first unsigned release, open **System Settings → Privacy & Security**, set **Allow applications from** to **App Store & Known Developers**, select **Open Anyway** for Lite, then confirm.
+3. Open Lite from **Applications**. If macOS blocks the unsigned app, open **System Settings → Privacy & Security**, set **Allow applications from** to **App Store & Known Developers**, select **Open Anyway** for Lite, then confirm.
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/a7d3a991-91f2-4d9b-ba57-a8d80bbc37f5" width="70%" alt="Approving Lite in macOS System Settings">
@@ -51,21 +51,21 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 
 ### Windows
 
-1. Download `Lite_0.0.4_windows_x64-setup.exe`.
+1. Download the asset ending in `_windows_x64-setup.exe`.
 2. Run the installer, then open **Lite** from the Start menu.
-3. If Microsoft Defender SmartScreen appears for this early unsigned release, select **More info → Run anyway**.
+3. If Microsoft Defender SmartScreen appears for the unsigned app, select **More info → Run anyway**.
 
 ### Linux
 
-Download the portable `Lite_0.0.4_linux_amd64.AppImage`.
+Download the portable asset ending in `_linux_amd64.AppImage`.
 
 ```bash
 # AppImage
-chmod +x Lite_0.0.4_linux_amd64.AppImage
-./Lite_0.0.4_linux_amd64.AppImage
+chmod +x Lite_*_linux_amd64.AppImage
+./Lite_*_linux_amd64.AppImage
 ```
 
-After installing 0.0.4, open the Lite menu in the top bar and choose **Check for updates** to install signed updates and restart Lite. Lite never checks for updates in the background.
+After installing Lite, open the Lite menu in the top bar and choose **Check for updates** to install signed updates and restart Lite. Lite never checks for updates in the background.
 
 ## 🚀 First Run
 
@@ -115,8 +115,12 @@ Useful checks:
 
 ```bash
 bun run check       # Biome and native TypeScript checks
+bun run local       # Separate Lite Dev app with a red icon and its own app data
 bun run tauri build # Native installer for the current operating system
 ```
+
+Lite Dev follows `origin/main` directly instead of release assets. Its update button fetches main and,
+when a newer commit exists, opens a visible shell session that fast-forwards and rebuilds the app.
 
 The frontend uses React, shadcn/ui Nova with Base UI, Tailwind CSS, Biome, and `tsgo`. Tauri and Rust own local persistence, terminals, Git, files, and provider processes.
 
@@ -132,13 +136,17 @@ Lite is available under the [AGPL-3.0 License](LICENSE). For commercial licensin
 
 <br>
 <div align="center">
-  <a href="https://github.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-github.png" width="3%" alt="Ultralytics GitHub"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://www.linkedin.com/company/ultralytics/"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-linkedin.png" width="3%" alt="Ultralytics LinkedIn"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://twitter.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-twitter.png" width="3%" alt="Ultralytics Twitter"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://www.youtube.com/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-youtube.png" width="3%" alt="Ultralytics YouTube"></a>
-  <img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-transparent.png" width="3%" alt="space">
-  <a href="https://discord.com/invite/ultralytics"><img src="https://raw.githubusercontent.com/ultralytics/assets/main/social/logo-social-discord.png" width="3%" alt="Ultralytics Discord"></a>
+  <a href="https://github.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-github.png" width="3%" alt="Ultralytics GitHub"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.linkedin.com/company/ultralytics/"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-linkedin.png" width="3%" alt="Ultralytics LinkedIn"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://twitter.com/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-twitter.png" width="3%" alt="Ultralytics Twitter"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://youtube.com/ultralytics?sub_confirmation=1"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-youtube.png" width="3%" alt="Ultralytics YouTube"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://www.tiktok.com/@ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-tiktok.png" width="3%" alt="Ultralytics TikTok"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://ultralytics.com/bilibili"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-bilibili.png" width="3%" alt="Ultralytics BiliBili"></a>
+  <img src="https://github.com/ultralytics/assets/raw/main/social/logo-transparent.png" width="3%" alt="space">
+  <a href="https://discord.com/invite/ultralytics"><img src="https://github.com/ultralytics/assets/raw/main/social/logo-social-discord.png" width="3%" alt="Ultralytics Discord"></a>
 </div>

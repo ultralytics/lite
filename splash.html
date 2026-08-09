@@ -1,0 +1,124 @@
+<!doctype html>
+<!-- Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license -->
+
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Starting Lite</title>
+    <style>
+      @font-face {
+        font-family: "Geist Variable";
+        font-style: normal;
+        font-display: swap;
+        font-weight: 100 900;
+        src: url("./node_modules/@fontsource-variable/geist/files/geist-latin-wght-normal.woff2")
+          format("woff2-variations");
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: grid;
+        overflow: hidden;
+        background:
+          radial-gradient(circle at 20% 50%, rgb(255 255 255 / 22%), transparent 32%),
+          linear-gradient(90deg, transparent, rgb(255 255 255 / 14%), transparent),
+          linear-gradient(105deg, #111f68 0%, #042aff 45%, #76ffd6 100%);
+        color: white;
+        font-family: "Geist Variable", sans-serif;
+        user-select: none;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding: 32px 36px 28px;
+      }
+      .logotype {
+        width: 174px;
+        height: auto;
+        filter: brightness(0) invert(1);
+      }
+      .content {
+        display: flex;
+        flex: 1;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 38px;
+        line-height: 1;
+        letter-spacing: -0.035em;
+      }
+      .description {
+        margin: 0;
+        color: rgb(255 255 255 / 78%);
+        font-size: 14px;
+        line-height: 1.4;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 10px 12px;
+        border: 1px solid rgb(255 255 255 / 20%);
+        border-radius: 10px;
+        background: rgb(255 255 255 / 10%);
+        color: rgb(255 255 255 / 82%);
+        font-size: 11px;
+        box-shadow: 0 8px 30px rgb(17 31 104 / 18%);
+        white-space: nowrap;
+      }
+      .track {
+        flex: 1;
+        height: 3px;
+        overflow: hidden;
+        border-radius: 999px;
+        background: rgb(255 255 255 / 18%);
+      }
+      .bar {
+        width: 38%;
+        height: 100%;
+        border-radius: inherit;
+        background: white;
+        animation: load 1.2s ease-in-out infinite;
+      }
+      @keyframes load {
+        from {
+          transform: translateX(-110%);
+        }
+        to {
+          transform: translateX(260%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bar {
+          width: 100%;
+          animation: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main role="status" aria-label="Lite is starting">
+      <img class="logotype" src="./src/assets/ultralytics-logotype.svg" alt="Ultralytics" />
+      <div class="content">
+        <h1>Lite</h1>
+        <p class="description">A fast, local workspace for AI coding agents.</p>
+      </div>
+      <div class="status">
+        <span>Starting workspace…</span>
+        <div class="track" aria-hidden="true"><div class="bar"></div></div>
+      </div>
+    </main>
+  </body>
+</html>

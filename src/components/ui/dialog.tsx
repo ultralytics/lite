@@ -5,6 +5,7 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type * as React from "react";
+
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -12,16 +13,8 @@ function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />;
 }
 
-function DialogTrigger({ ...props }: DialogPrimitive.Trigger.Props) {
-  return <DialogPrimitive.Trigger data-slot="dialog-trigger" {...props} />;
-}
-
 function DialogPortal({ ...props }: DialogPrimitive.Portal.Props) {
   return <DialogPrimitive.Portal data-slot="dialog-portal" {...props} />;
-}
-
-function DialogClose({ ...props }: DialogPrimitive.Close.Props) {
-  return <DialogPrimitive.Close data-slot="dialog-close" {...props} />;
 }
 
 function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) {
@@ -51,7 +44,9 @@ function DialogContent({
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          // Stock apart from the height: a window short enough to cut a dialog off keeps its header and
+          // footer reachable and scrolls whichever DialogBody it holds.
+          "fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100dvh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-xl bg-popover p-4 text-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className,
         )}
         {...props}
@@ -62,7 +57,7 @@ function DialogContent({
             data-slot="dialog-close"
             render={<Button variant="ghost" className="absolute top-2 right-2" size="icon-sm" />}
           >
-            <XIcon />
+            <XIcon aria-hidden="true" />
             <span className="sr-only">Close</span>
           </DialogPrimitive.Close>
         )}
@@ -72,7 +67,15 @@ function DialogContent({
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dialog-header" className={cn("flex flex-col gap-2", className)} {...props} />;
+  return <div data-slot="dialog-header" className={cn("flex shrink-0 flex-col gap-2", className)} {...props} />;
+}
+
+// The one region that scrolls when the window is too short for the dialog. Its horizontal gutter sits
+// outside the content width so focus rings are not clipped by the scroll container.
+function DialogBody({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <div data-slot="dialog-body" className={cn("-mx-1 min-h-0 flex-1 overflow-y-auto px-1", className)} {...props} />
+  );
 }
 
 function DialogFooter({
@@ -87,7 +90,7 @@ function DialogFooter({
     <div
       data-slot="dialog-footer"
       className={cn(
-        "-mx-4 -mb-4 flex flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
+        "-mx-4 -mb-4 flex shrink-0 flex-col-reverse gap-2 rounded-b-xl border-t bg-muted/50 p-4 sm:flex-row sm:justify-end",
         className,
       )}
       {...props}
@@ -121,15 +124,4 @@ function DialogDescription({ className, ...props }: DialogPrimitive.Description.
   );
 }
 
-export {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-};
+export { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle };

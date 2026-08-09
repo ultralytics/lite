@@ -9,10 +9,14 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    sync::Mutex,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
     thread,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -21,6 +25,7 @@ use tungstenite::Message;
 const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
+const MAX_GIT_DIFF_BYTES: u64 = 1_000_000;
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -33,9 +38,12 @@ struct PtySession {
     master: Box<dyn MasterPty + Send>,
     writer: Box<dyn Write + Send>,
     run_id: String,
+    alive: Arc<AtomicBool>,
+    agent_watch: Arc<AtomicU64>,
 }
 
 fn stop_pty(session: &mut PtySession) -> Result<(), String> {
+    session.alive.store(false, Ordering::Relaxed);
     let running = session
         .child
         .try_wait()
@@ -79,6 +87,14 @@ struct PtyOutput {
 struct PtyExit {
     session_id: String,
     run_id: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShellAgent {
+    session_id: String,
+    run_id: String,
+    agent: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -126,7 +142,14 @@ struct GitStatus {
     branch: String,
     worktree: String,
     changes: Vec<String>,
+    line_diffs: BTreeMap<String, LineDiff>,
     changes_truncated: bool,
+}
+
+#[derive(Serialize)]
+struct LineDiff {
+    additions: u64,
+    deletions: u64,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -223,8 +246,8 @@ fn is_sensitive_path(root: &Path, path: &Path) -> bool {
     })
 }
 
-fn command_output(directory: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
+fn command_output(git: &Path, directory: &Path, args: &[&str]) -> Result<String, String> {
+    let output = Command::new(git)
         .arg("-C")
         .arg(path_text(directory))
         .args(args)
@@ -261,13 +284,20 @@ fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("last-directory"))
 }
 
-fn load_roots(app: &AppHandle) -> Roots {
-    let roots = roots_path(app)
+fn read_roots(path: &Path) -> HashMap<String, PathBuf> {
+    fs::read(path)
         .ok()
-        .and_then(|path| fs::read(path).ok())
-        .and_then(|bytes| serde_json::from_slice::<HashMap<String, PathBuf>>(&bytes).ok())
-        .unwrap_or_default();
-    Roots(Mutex::new(roots))
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+fn load_roots(app: &AppHandle) -> Roots {
+    Roots(Mutex::new(
+        roots_path(app)
+            .as_deref()
+            .map(read_roots)
+            .unwrap_or_default(),
+    ))
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -344,7 +374,13 @@ fn update_roots(
 ) -> Result<(), String> {
     let path = roots_path(app)?;
     let mut roots = roots.0.lock().map_err(|error| error.to_string())?;
-    let mut next = roots.clone();
+    // A second copy of Lite writes this same file — a shell session inside Lite that launches the app
+    // is enough to make two. Writing this process's map alone would drop every grant the other one has
+    // made since startup, and the sessions holding them would be told their folder is no longer theirs.
+    // So the change is made against the file rather than against the map this copy loaded at startup,
+    // and only the one grant it is adding or removing goes with it: re-asserting the rest would hand
+    // back the grants another copy has since revoked, which is the opposite of closing a session.
+    let mut next = read_roots(&path);
     update(&mut next);
     write_atomic(
         &path,
@@ -397,12 +433,13 @@ fn grant_directory(
     app: &AppHandle,
     roots: &Roots,
     path: PathBuf,
+    root_id: Option<String>,
 ) -> Result<DirectoryGrant, String> {
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     if is_sensitive_root(&path) {
         return Err("Credential and configuration folders cannot be opened".into());
     }
-    let id = uuid::Uuid::new_v4().to_string();
+    let id = root_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     update_roots(app, roots, |roots| {
         roots.insert(id.clone(), path.clone());
     })?;
@@ -412,16 +449,12 @@ fn grant_directory(
     })
 }
 
-fn default_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Ok(path) = last_directory_path(app)
+fn default_directory_path(app: &AppHandle) -> Option<PathBuf> {
+    let path = last_directory_path(app)
         .and_then(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
-    {
-        let path = PathBuf::from(path);
-        if path.is_dir() {
-            return Ok(path);
-        }
-    }
-    app.path().home_dir().map_err(|error| error.to_string())
+        .ok()
+        .map(PathBuf::from)?;
+    path.is_dir().then_some(path)
 }
 
 #[cfg(unix)]
@@ -434,17 +467,25 @@ fn shell_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\\\""))
 }
 
-// Claude files a session under a key derived from its working directory. Searching for the transcript
-// by name avoids depending on how that key is spelled, and a session it never wrote cannot be resumed.
-fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
-    let Ok(home) = std::env::var_os("CLAUDE_CONFIG_DIR")
+fn provider_home(app: &AppHandle, variable: &str, fallback: &str) -> Result<PathBuf, String> {
+    std::env::var_os(variable)
         .filter(|home| !home.is_empty())
         .map(PathBuf::from)
         .map_or_else(
-            || app.path().home_dir().map(|home| home.join(".claude")),
+            || {
+                app.path()
+                    .home_dir()
+                    .map(|home| home.join(fallback))
+                    .map_err(|error| error.to_string())
+            },
             Ok,
         )
-    else {
+}
+
+// Claude files a session under a key derived from its working directory. Searching for the transcript
+// by name avoids depending on how that key is spelled, and a session it never wrote cannot be resumed.
+fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
+    let Ok(home) = provider_home(app, "CLAUDE_CONFIG_DIR", ".claude") else {
         return false;
     };
     let transcript = format!("{session_id}.jsonl");
@@ -455,29 +496,133 @@ fn claude_session_exists(app: &AppHandle, session_id: &str) -> bool {
     })
 }
 
-fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String> {
+fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<PathBuf, String> {
     let directory = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     let settings_path = directory.join(format!("claude-{session_id}.json"));
     let usage_path = directory.join(format!("usage-{session_id}.json"));
+    let activity_directory = directory.join(format!("activity-{session_id}"));
+    if activity_directory.exists() {
+        fs::remove_dir_all(&activity_directory).map_err(|error| error.to_string())?;
+    }
+    let activity_path = activity_directory.join(run_id);
+    fs::create_dir_all(&activity_path).map_err(|error| error.to_string())?;
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-    let command = format!(
-        "{} --claude-statusline {}",
+    let status = format!(
+        "{} --claude-statusline {} {}",
         shell_quote(&path_text(&executable)),
-        shell_quote(&path_text(&usage_path))
+        shell_quote(&path_text(&usage_path)),
+        shell_quote(&path_text(&activity_path))
+    );
+    let activity = format!(
+        "{} --claude-activity {}",
+        shell_quote(&path_text(&executable)),
+        shell_quote(&path_text(&activity_path))
     );
     write_atomic(
         &settings_path,
-        serde_json::json!({ "statusLine": { "type": "command", "command": command } })
-            .to_string()
-            .as_bytes(),
+        serde_json::json!({
+            "statusLine": { "type": "command", "command": status, "refreshInterval": 1 },
+            "hooks": {
+                "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
+                "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }]
+            }
+        })
+        .to_string()
+        .as_bytes(),
     )?;
     Ok(settings_path)
 }
 
-pub fn capture_claude_status(path: &str) -> Result<(), String> {
+fn activity_key(input: &serde_json::Value) -> Option<&str> {
+    input
+        .get("agent_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| {
+            value.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+        })
+}
+
+pub fn capture_claude_activity(path: &str) -> Result<(), String> {
+    let input: serde_json::Value =
+        serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
+    let directory = Path::new(path);
+    if !directory.is_dir() {
+        return Ok(());
+    }
+    let event = input
+        .get("hook_event_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    match event {
+        "SubagentStart" => {
+            if let Some(key) = activity_key(&input) {
+                fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
+            }
+        }
+        "SubagentStop" => {
+            if let Some(key) = activity_key(&input)
+                && let Err(error) = fs::remove_file(directory.join(key))
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error.to_string());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn claude_shell_running() -> bool {
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().without_tasks(),
+    );
+    let Ok(current) = sysinfo::get_current_pid() else {
+        return false;
+    };
+    let mut ancestors = HashSet::from([current]);
+    let mut parent = system.process(current).and_then(|process| process.parent());
+    let claude = loop {
+        let Some(pid) = parent else { return false };
+        ancestors.insert(pid);
+        let Some(process) = system.process(pid) else {
+            return false;
+        };
+        let name = process.name().to_string_lossy().to_ascii_lowercase();
+        if name.strip_suffix(".exe").unwrap_or(&name) == "claude" {
+            break pid;
+        }
+        parent = process.parent();
+    };
+    system.processes().iter().any(|(pid, process)| {
+        let name = process.name().to_string_lossy().to_ascii_lowercase();
+        if ancestors.contains(pid)
+            || !matches!(
+                name.strip_suffix(".exe").unwrap_or(&name),
+                "bash" | "cmd" | "dash" | "fish" | "nu" | "powershell" | "pwsh" | "sh" | "zsh"
+            )
+        {
+            return false;
+        }
+        let mut parent = process.parent();
+        while let Some(pid) = parent {
+            if pid == claude {
+                return true;
+            }
+            parent = system.process(pid).and_then(|process| process.parent());
+        }
+        false
+    })
+}
+
+pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), String> {
     let input: serde_json::Value =
         serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
     let context = input
@@ -492,7 +637,10 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     let mut windows = Vec::new();
-    for (key, label) in [("five_hour", "5 hour"), ("seven_day", "7 day")] {
+    for (key, label) in [
+        ("five_hour", "Current session"),
+        ("seven_day", "Current week"),
+    ] {
         if let Some(window) = input.get("rate_limits").and_then(|limits| limits.get(key)) {
             if let Some(used_percent) = window
                 .get("used_percentage")
@@ -521,21 +669,29 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
         lifetime_tokens: None,
         windows,
     };
-    write_atomic(
-        Path::new(path),
-        &serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?,
-    )?;
+    let usage = serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?;
+    if !fs::read(path).is_ok_and(|current| current == usage) {
+        write_atomic(Path::new(path), &usage)?;
+    }
+    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some())
+        || claude_shell_running();
+    let activity = if working { "working" } else { "idle" };
     if let Some(percent) = snapshot.context_used_percent {
-        println!("Lite · {percent:.0}% context");
+        println!("\x1b]6973;lite-{activity}\x07Lite · {percent:.0}% context");
     } else {
-        println!("Lite");
+        println!("\x1b]6973;lite-{activity}\x07Lite");
     }
     Ok(())
 }
 
 #[tauri::command]
-fn default_directory(app: AppHandle, roots: State<Roots>) -> Result<DirectoryGrant, String> {
-    grant_directory(&app, &roots, default_directory_path(&app)?)
+fn default_directory(
+    app: AppHandle,
+    roots: State<Roots>,
+) -> Result<Option<DirectoryGrant>, String> {
+    default_directory_path(&app)
+        .map(|path| grant_directory(&app, &roots, path, None))
+        .transpose()
 }
 
 #[tauri::command]
@@ -544,7 +700,7 @@ async fn choose_directory(
     roots: State<'_, Roots>,
 ) -> Result<Option<DirectoryGrant>, String> {
     let mut dialog = app.dialog().file().set_title("Choose a project");
-    if let Ok(path) = default_directory_path(&app) {
+    if let Some(path) = default_directory_path(&app) {
         dialog = dialog.set_directory(path);
     }
     let Some(path) = dialog.blocking_pick_folder() else {
@@ -553,7 +709,7 @@ async fn choose_directory(
     let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
         .map_err(|error| error.to_string())?;
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
-    grant_directory(&app, &roots, path).map(Some)
+    grant_directory(&app, &roots, path, None).map(Some)
 }
 
 // A typed path is a folder like any other: it has to exist and it goes through the same grant.
@@ -577,7 +733,219 @@ async fn use_directory(
     }
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
-    grant_directory(&app, &roots, path)
+    grant_directory(&app, &roots, path, None)
+}
+
+#[tauri::command]
+async fn follow_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+) -> Result<DirectoryGrant, String> {
+    root_path(&roots, &root_id)?;
+    grant_directory(&app, &roots, PathBuf::from(path), Some(root_id))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubItem {
+    url: String,
+    title: Option<String>,
+    state: Option<String>,
+    occurred_at: Option<String>,
+}
+
+// The repository and number a GitHub work-item link names, or nothing if the link is not one. Owner
+// and name are embedded in a GraphQL query, so only the characters GitHub itself allows in them pass,
+// and the number has to fit the Int the API takes.
+fn github_item_parts(url: &str) -> Option<(String, String, String)> {
+    let mut parts = url.strip_prefix("https://github.com/")?.split('/');
+    let owner = parts.next().filter(|part| !part.is_empty())?;
+    let repository = parts.next().filter(|part| !part.is_empty())?;
+    if [owner, repository].iter().any(|part| {
+        !part
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-._".contains(character))
+    }) {
+        return None;
+    }
+    if !matches!(parts.next()?, "pull" | "issues") {
+        return None;
+    }
+    // A leading zero would also make the number an invalid GraphQL Int literal, poisoning the batch.
+    let number = parts.next()?;
+    if !matches!(number.chars().next(), Some('1'..='9'))
+        || number.len() > 9
+        || !number.chars().all(|digit| digit.is_ascii_digit())
+    {
+        return None;
+    }
+    Some((owner.to_owned(), repository.to_owned(), number.to_owned()))
+}
+
+// A reference waiting on GitHub's answer: the URL a session printed, or the URL guessed from a bare
+// "#12" it printed, which is only shown once GitHub confirms it names real work.
+struct Lookup {
+    owner: String,
+    repository: String,
+    number: String,
+    url: String,
+    guessed: bool,
+}
+
+// A session prints as many references as it prints, and all of them are asked about in one request;
+// the cap is what one request comfortably carries rather than how long the panel is allowed to wait.
+const CHECKED_GITHUB_ITEMS: usize = 100;
+
+// A pull request or issue reference is read back out of what a session printed, so a number mistyped
+// into the terminal reaches here looking exactly like one that exists. GitHub is the only thing that
+// can tell the two apart, and gh is how Lite asks: it is the tool that printed most of these links, it
+// carries whatever sign-in the person using it has, and asking it is not the same as reading that
+// sign-in. Every reference goes into a single GraphQL request — one alias each — because a call is a
+// process and a network round trip, and a session's worth of them in a row is a panel that waits on
+// the network instead of saying what the session did. issueOrPullRequest answers for both kinds at
+// once, which is what lets a bare "#12" be asked about without knowing which it names; the canonical
+// URL in the answer replaces the guessed kind, and a printed link naming the wrong kind follows the
+// same redirect GitHub itself answers that link with. A reference is only dropped on evidence that it names
+// nothing, and the same response carries that evidence: a repository that resolves while its item does
+// not was read and searched. A repository that does not resolve proves nothing — GitHub hides a
+// private repository this sign-in cannot see as readily as one that never existed — so its printed
+// links stay, shown the way they were printed, as they do whenever gh is missing or the laptop is
+// offline. A guessed number is different: it is as easily a line number as a pull request, so without
+// GitHub's confirmation it stays out of the panel entirely.
+fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem> {
+    let mut lookups: Vec<Lookup> = Vec::new();
+    let mut seen = HashSet::new();
+    let printed = urls.into_iter().map(|url| (url, false));
+    for (url, guessed) in printed.chain(guessed.into_iter().map(|url| (url, true))) {
+        let Some((owner, repository, number)) = github_item_parts(&url) else {
+            continue;
+        };
+        // A repository is named case-insensitively, so "#12" and a link to it are one reference; the
+        // printed links come first, which keeps a guess from ever shadowing one.
+        if seen.insert((
+            owner.to_lowercase(),
+            repository.to_lowercase(),
+            number.clone(),
+        )) {
+            lookups.push(Lookup {
+                owner,
+                repository,
+                number,
+                url,
+                guessed,
+            });
+        }
+    }
+    if lookups.is_empty() {
+        return Vec::new();
+    }
+    let answer = resolve_executable("gh").and_then(|gh| {
+        let mut query = String::from("query {\n");
+        for (index, lookup) in lookups.iter().take(CHECKED_GITHUB_ITEMS).enumerate() {
+            let Lookup {
+                owner,
+                repository,
+                number,
+                ..
+            } = lookup;
+            query.push_str(&format!(
+                "q{index}: repository(owner: \"{owner}\", name: \"{repository}\") {{ issueOrPullRequest(number: {number}) {{ ...f }} }}\n"
+            ));
+        }
+        query.push_str(
+            "}\nfragment f on IssueOrPullRequest {\n... on Issue { title url state createdAt closedAt }\n... on PullRequest { title url state isDraft createdAt closedAt mergedAt }\n}",
+        );
+        let output = Command::new(gh)
+            .args(["api", "graphql", "-f", &format!("query={query}")])
+            .output()
+            .ok()?;
+        // GraphQL answers what it could resolve and lists the rest as errors in the same body, and gh
+        // prints that body either way; only a body that never arrived is no answer at all.
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).ok()
+    });
+    // Dropping a reference takes GitHub's word for it: a NOT_FOUND filed against the alias. An item
+    // that is merely null — a resolver that failed some other way in an otherwise partial answer —
+    // proved nothing.
+    let not_found: HashSet<&str> = answer
+        .as_ref()
+        .and_then(|body| body["errors"].as_array())
+        .map(|errors| {
+            errors
+                .iter()
+                .filter(|error| error["type"].as_str() == Some("NOT_FOUND"))
+                .filter_map(|error| error["path"][0].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut found = Vec::new();
+    for (index, lookup) in lookups.iter().enumerate() {
+        let alias = format!("q{index}");
+        let repository = answer
+            .as_ref()
+            .filter(|_| index < CHECKED_GITHUB_ITEMS)
+            .map(|body| &body["data"][alias.as_str()]);
+        match repository {
+            Some(repository) if repository["issueOrPullRequest"].is_object() => {
+                let item = &repository["issueOrPullRequest"];
+                // Merged and draft are pull-request states of their own; issues only answer open or
+                // closed, and only a pull request carries isDraft at all.
+                let state = match item["state"].as_str() {
+                    Some("MERGED") => "merged",
+                    Some("CLOSED") => "closed",
+                    _ if item["isDraft"].as_bool() == Some(true) => "draft",
+                    _ => "open",
+                };
+                let occurred_at = item[match state {
+                    "merged" => "mergedAt",
+                    "closed" => "closedAt",
+                    _ => "createdAt",
+                }]
+                .as_str()
+                .map(str::to_owned);
+                found.push(GitHubItem {
+                    url: item["url"]
+                        .as_str()
+                        .map_or_else(|| lookup.url.clone(), str::to_owned),
+                    title: item["title"].as_str().map(str::to_owned),
+                    state: Some(state.to_owned()),
+                    occurred_at,
+                });
+            }
+            // The repository was read and searched, and the number names nothing in it.
+            Some(repository) if !repository.is_null() && not_found.contains(alias.as_str()) => {}
+            _ if !lookup.guessed => found.push(GitHubItem {
+                url: lookup.url.clone(),
+                title: None,
+                state: None,
+                occurred_at: None,
+            }),
+            _ => {}
+        }
+    }
+    found
+}
+
+// The check waits on a process and a network round trip, so the run is moved off the runtime the rest
+// of Lite's commands share rather than holding one of its workers for the length of it.
+#[tauri::command]
+async fn github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem> {
+    // A run that never finished answered nothing, and nothing is not evidence that a link names
+    // nothing, so the links come back the way they were printed rather than as an empty panel.
+    let unanswered: Vec<GitHubItem> = urls
+        .iter()
+        .filter(|url| github_item_parts(url).is_some())
+        .map(|url| GitHubItem {
+            url: url.clone(),
+            title: None,
+            state: None,
+            occurred_at: None,
+        })
+        .collect();
+    tauri::async_runtime::spawn_blocking(move || check_github_items(urls, guessed))
+        .await
+        .unwrap_or(unanswered)
 }
 
 #[tauri::command]
@@ -673,29 +1041,38 @@ fn codex_requests_once(
     endpoint: &str,
     requests: &[(u64, &str, serde_json::Value)],
 ) -> Result<HashMap<u64, serde_json::Value>, String> {
+    // Each platform opens the stream itself so there is something for the read timeouts to apply to.
+    // Handing the address straight to the websocket leaves the stream out of reach, and a server that
+    // stops answering then holds the session tab open with nothing left to time it out.
     #[cfg(unix)]
-    {
-        let path = endpoint
-            .strip_prefix("unix://")
-            .ok_or("Invalid Codex endpoint")?;
-        let stream =
-            std::os::unix::net::UnixStream::connect(path).map_err(|error| error.to_string())?;
-        stream
-            .set_read_timeout(Some(CODEX_CONNECT_TIMEOUT))
-            .map_err(|error| error.to_string())?;
-        let (socket, _) =
-            tungstenite::client("ws://localhost/", stream).map_err(|error| error.to_string())?;
-        codex_exchange(socket, requests, |stream| {
-            stream
-                .set_read_timeout(Some(CODEX_REQUEST_TIMEOUT))
-                .map_err(|error| error.to_string())
-        })
-    }
+    let (address, stream) = (
+        "ws://localhost/",
+        std::os::unix::net::UnixStream::connect(
+            endpoint
+                .strip_prefix("unix://")
+                .ok_or("Invalid Codex endpoint")?,
+        )
+        .map_err(|error| error.to_string())?,
+    );
     #[cfg(windows)]
-    {
-        let (socket, _) = tungstenite::connect(endpoint).map_err(|error| error.to_string())?;
-        codex_exchange(socket, requests, |_| Ok(()))
-    }
+    let (address, stream) = (
+        endpoint,
+        std::net::TcpStream::connect(
+            endpoint
+                .strip_prefix("ws://")
+                .ok_or("Invalid Codex endpoint")?,
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    stream
+        .set_read_timeout(Some(CODEX_CONNECT_TIMEOUT))
+        .map_err(|error| error.to_string())?;
+    let (socket, _) = tungstenite::client(address, stream).map_err(|error| error.to_string())?;
+    codex_exchange(socket, requests, |stream| {
+        stream
+            .set_read_timeout(Some(CODEX_REQUEST_TIMEOUT))
+            .map_err(|error| error.to_string())
+    })
 }
 
 fn codex_executable() -> Result<PathBuf, String> {
@@ -930,15 +1307,42 @@ fn stop_codex_server(server: &CodexServer) {
     }
 }
 
+// An interactive login shell is what loads the configuration that puts version-manager directories on
+// PATH, so it is the only lookup that finds a CLI installed through nvm. Bash reads its login profile
+// instead of its rc file when it is both, and nvm installs into the rc file, so Bash sources that file
+// itself. NULs fence the PATH off from whatever startup files print ahead of it and exit traps print
+// after it.
 #[cfg(unix)]
-fn user_path() -> Option<String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+fn shell_path(shell: &str) -> Option<String> {
     Command::new(shell)
-        .args(["-lc", "printf %s \"$PATH\""])
+        .args([
+            "-lic",
+            "[ -n \"$BASH_VERSION\" ] && [ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"; printf '\\0%s\\0' \"$PATH\"",
+        ])
         .output()
         .ok()
         .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .and_then(|output| {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.split('\0')
+                .nth(1)
+                .filter(|path| !path.is_empty())
+                .map(str::to_owned)
+        })
+}
+
+// An account shell that does not speak this command leaves nothing usable, so the search falls back to
+// the POSIX shell rather than losing every provider CLI.
+// Asking costs a login shell, and the answer holds for as long as Lite is open, so it is asked once
+// and every command Lite resolves afterwards is free.
+#[cfg(unix)]
+fn user_path() -> Option<String> {
+    static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        shell_path(&CommandBuilder::new_default_prog().get_shell())
+            .or_else(|| shell_path("/bin/sh"))
+    })
+    .clone()
 }
 
 #[cfg(windows)]
@@ -950,6 +1354,103 @@ fn user_path() -> Option<String> {
 // CLIs already do with their own credentials, and it survives updates because the updater replaces the
 // bundle and not the data directory. A key is handed to a session through the environment variable its
 // CLI already reads, so nothing is copied into provider configuration.
+// Codex only knows the models in its own catalog, and it warns and guesses the limits for any other
+// one. It reads a replacement catalog from a file, so the bundled catalog is read back and the DeepSeek
+// model appended to it: cloning an entry keeps whatever shape that Codex version expects, and keeping
+// the built-in models leaves the rest of Codex working. The bundled catalog is asked for by name so a
+// launch never waits on Codex refreshing its models over the network. Every failure here returns None
+// and leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
+fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
+    let mut probe = Command::new(resolve_executable("codex")?);
+    probe.args(["debug", "models", "--bundled"]);
+    // The CLI is a Node launcher, so without the user PATH its shebang cannot find Node.
+    if let Some(path) = user_path() {
+        probe.env("PATH", path);
+    }
+    let output = probe
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let mut catalog: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let models = catalog.get_mut("models")?.as_array_mut()?;
+    if models
+        .iter()
+        .any(|model| model.get("slug").and_then(serde_json::Value::as_str) == Some(DEEPSEEK_MODEL))
+    {
+        return None;
+    }
+    let mut model = models.first()?.clone();
+    let entry = model.as_object_mut()?;
+    for (key, value) in [
+        ("slug", serde_json::json!(DEEPSEEK_MODEL)),
+        ("display_name", serde_json::json!("DeepSeek-V4-Flash")),
+        (
+            "description",
+            serde_json::json!("DeepSeek V4 Flash, served by the DeepSeek API."),
+        ),
+        ("context_window", serde_json::json!(1_048_576)),
+        ("max_context_window", serde_json::json!(1_048_576)),
+        ("default_reasoning_level", serde_json::json!("high")),
+        ("visibility", serde_json::json!("hide")),
+        ("input_modalities", serde_json::json!(["text"])),
+        // Capabilities and cache keys that belong to the model this entry was cloned from.
+        ("comp_hash", serde_json::Value::Null),
+        ("availability_nux", serde_json::Value::Null),
+        ("upgrade", serde_json::Value::Null),
+        ("tool_mode", serde_json::Value::Null),
+        ("multi_agent_version", serde_json::Value::Null),
+        ("use_responses_lite", serde_json::json!(false)),
+        ("supports_search_tool", serde_json::json!(false)),
+        ("support_verbosity", serde_json::json!(false)),
+        ("default_verbosity", serde_json::Value::Null),
+        ("supports_image_detail_original", serde_json::json!(false)),
+        (
+            "supports_reasoning_summary_parameter",
+            serde_json::json!(false),
+        ),
+        ("default_reasoning_summary", serde_json::json!("none")),
+        ("web_search_tool_type", serde_json::json!("text")),
+        (
+            "include_skills_usage_instructions",
+            serde_json::json!(false),
+        ),
+        (
+            "include_plugin_usage_instructions",
+            serde_json::json!(false),
+        ),
+        ("include_apps_usage_instructions", serde_json::json!(false)),
+        // DeepSeek documents parallel tool calls, and the entry states that rather than inheriting it.
+        ("supports_parallel_tool_calls", serde_json::json!(true)),
+        ("additional_speed_tiers", serde_json::json!([])),
+        ("service_tiers", serde_json::json!([])),
+    ] {
+        if entry.contains_key(key) {
+            entry.insert(key.to_owned(), value);
+        }
+    }
+    // Reasoning levels describe the provider, not the model this entry was cloned from, so they are
+    // stated rather than inherited: DeepSeek documents these three and a template missing one of them
+    // would otherwise leave it unreachable.
+    entry.insert(
+        "supported_reasoning_levels".to_owned(),
+        serde_json::json!([
+            {"effort": "low", "description": "Fast responses with lighter reasoning"},
+            {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+            {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"},
+        ]),
+    );
+    models.push(model);
+    let path = app.path().app_data_dir().ok()?.join("codex-models.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).ok()?;
+    }
+    let text = serde_json::to_string(&catalog).ok()?;
+    AtomicFile::new(&path, AllowOverwrite)
+        .write(|file| file.write_all(text.as_bytes()))
+        .ok()?;
+    Some(path)
+}
+
 fn api_keys_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
@@ -1017,13 +1518,132 @@ fn claude_signed_in(app: &AppHandle) -> bool {
     }
 }
 
-fn cli_signed_in(app: &AppHandle, name: &str) -> bool {
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum CliAuthMethod {
+    Provider,
+    ApiKey,
+}
+
+struct CliAuth {
+    method: CliAuthMethod,
+    key_hint: Option<String>,
+}
+
+fn key_hint(key: &str) -> String {
+    let key = key.trim();
+    key.chars()
+        .skip(key.chars().count().saturating_sub(4))
+        .collect()
+}
+
+fn kimi_provider_name(config: &toml_edit::DocumentMut) -> Option<String> {
+    let model = config.get("default_model")?.as_str()?;
+    config
+        .get("models")?
+        .get(model)?
+        .get("provider")?
+        .as_str()
+        .map(str::to_owned)
+}
+
+fn kimi_env_api_key(provider: &dyn toml_edit::TableLike) -> Option<&'static str> {
+    match provider.get("type")?.as_str()? {
+        "kimi" => Some("KIMI_API_KEY"),
+        "anthropic" => Some("ANTHROPIC_API_KEY"),
+        "openai" | "openai_responses" => Some("OPENAI_API_KEY"),
+        "google-genai" => Some("GOOGLE_API_KEY"),
+        "vertexai" => Some("VERTEXAI_API_KEY"),
+        _ => None,
+    }
+}
+
+fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
+    let config = fs::read_to_string(kimi_home(app).ok()?.join("config.toml")).ok()?;
+    let config = config.parse::<toml_edit::DocumentMut>().ok()?;
+    let provider = kimi_provider_name(&config)?;
+    let provider = config.get("providers")?.get(&provider)?.as_table_like()?;
+
+    let api_key = provider
+        .get("api_key")
+        .and_then(toml_edit::Item::as_str)
+        .filter(|key| !key.trim().is_empty())
+        .or_else(|| {
+            let name = kimi_env_api_key(provider)?;
+            provider
+                .get("env")
+                .and_then(toml_edit::Item::as_table_like)
+                .and_then(|env| env.get(name))
+                .and_then(toml_edit::Item::as_str)
+                .filter(|key| !key.trim().is_empty())
+        });
+    if let Some(api_key) = api_key {
+        Some(CliAuth {
+            method: CliAuthMethod::ApiKey,
+            key_hint: Some(key_hint(api_key)),
+        })
+    } else if provider.get("oauth").is_some() {
+        Some(CliAuth {
+            method: CliAuthMethod::Provider,
+            key_hint: None,
+        })
+    } else {
+        None
+    }
+}
+
+fn delete_kimi_api_key(app: &AppHandle) -> Result<(), String> {
+    let path = kimi_home(app)?.join("config.toml");
+    let permissions = fs::metadata(&path)
+        .map_err(|error| error.to_string())?
+        .permissions();
+    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let mut config = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|error| error.to_string())?;
+    let provider = kimi_provider_name(&config).ok_or("Kimi's default provider is missing")?;
+    let provider = config
+        .get_mut("providers")
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .and_then(|providers| providers.get_mut(&provider))
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .ok_or("Kimi's default provider is missing")?;
+
+    let env_api_key = kimi_env_api_key(provider);
+    let removed_env = env_api_key.is_some_and(|name| {
+        provider
+            .get_mut("env")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .is_some_and(|env| env.remove(name).is_some())
+    });
+    let removed = provider.remove("api_key").is_some() || removed_env;
+    if removed {
+        write_atomic(&path, config.to_string().as_bytes())?;
+        fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuth> {
     match name {
-        "claude" => claude_signed_in(app),
-        "codex" => codex_home(app).is_ok_and(|home| home.join("auth.json").is_file()),
-        "deepseek" => deepseek_profile_exists(app) || codex_declares_deepseek(app),
-        "kimi" => kimi_home(app).is_ok_and(|home| home.join("config.toml").is_file()),
-        _ => false,
+        "claude" => claude_signed_in(app).then_some(CliAuth {
+            method: CliAuthMethod::Provider,
+            key_hint: None,
+        }),
+        "codex" => codex_home(app)
+            .is_ok_and(|home| home.join("auth.json").is_file())
+            .then_some(CliAuth {
+                method: CliAuthMethod::Provider,
+                key_hint: None,
+            }),
+        "deepseek" => {
+            (deepseek_profile_exists(app) || codex_declares_deepseek(app)).then_some(CliAuth {
+                method: CliAuthMethod::ApiKey,
+                key_hint: None,
+            })
+        }
+        "kimi" => kimi_auth(app),
+        _ => None,
     }
 }
 
@@ -1032,7 +1652,8 @@ fn cli_signed_in(app: &AppHandle, name: &str) -> bool {
 struct ProviderAuth {
     name: String,
     key_hint: Option<String>,
-    cli_signed_in: bool,
+    cli_auth_method: Option<CliAuthMethod>,
+    cli_key_hint: Option<String>,
 }
 
 #[tauri::command]
@@ -1040,15 +1661,15 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
     let keys = load_api_keys(&app);
     Ok(SUPPORTED_KEYS
         .iter()
-        .map(|name| ProviderAuth {
-            name: (*name).to_owned(),
-            // Only the last characters travel to the interface, enough to tell two keys apart.
-            key_hint: keys.get(*name).map(|key| {
-                key.chars()
-                    .skip(key.chars().count().saturating_sub(4))
-                    .collect()
-            }),
-            cli_signed_in: cli_signed_in(&app, name),
+        .map(|name| {
+            let cli_auth = cli_auth(&app, name);
+            ProviderAuth {
+                name: (*name).to_owned(),
+                // Only the last characters travel to the interface, enough to tell two keys apart.
+                key_hint: keys.get(*name).map(|key| key_hint(key)),
+                cli_auth_method: cli_auth.as_ref().map(|auth| auth.method),
+                cli_key_hint: cli_auth.and_then(|auth| auth.key_hint),
+            }
         })
         .collect())
 }
@@ -1070,10 +1691,13 @@ async fn save_api_key(app: AppHandle, name: String, key: String) -> Result<(), S
 #[tauri::command]
 async fn delete_api_key(app: AppHandle, name: String) -> Result<(), String> {
     let mut keys = load_api_keys(&app);
-    if keys.remove(&name).is_none() {
-        return Ok(());
+    if keys.remove(&name).is_some() {
+        return write_api_keys(&app, &keys);
     }
-    write_api_keys(&app, &keys)
+    if name == "kimi" {
+        return delete_kimi_api_key(&app);
+    }
+    Ok(())
 }
 
 // A launched app inherits a bare PATH, and the PATH given to a child is not used to find the program
@@ -1101,18 +1725,7 @@ fn executable_exists(name: &str) -> bool {
 }
 
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
-    std::env::var_os("CODEX_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .map_or_else(
-            || {
-                app.path()
-                    .home_dir()
-                    .map(|home| home.join(".codex"))
-                    .map_err(|error| error.to_string())
-            },
-            Ok,
-        )
+    provider_home(app, "CODEX_HOME", ".codex")
 }
 
 // Looks only for the section header. The DeepSeek credential lives in that file and is never read.
@@ -1129,6 +1742,20 @@ fn codex_declares_deepseek(app: &AppHandle) -> bool {
         .any(|line| line.trim() == "[model_providers.deepseek]")
 }
 
+// A catalog is a replacement rather than a merge, so one the user configured is left to win.
+fn codex_declares_catalog(app: &AppHandle) -> bool {
+    let Ok(home) = codex_home(app) else {
+        return false;
+    };
+    let Ok(file) = fs::File::open(home.join("config.toml")) else {
+        return false;
+    };
+    BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .any(|line| line.trim_start().starts_with("model_catalog_json"))
+}
+
 fn deepseek_profile_exists(app: &AppHandle) -> bool {
     codex_home(app).is_ok_and(|home| {
         home.join(format!("{DEEPSEEK_PROFILE}.config.toml"))
@@ -1137,18 +1764,7 @@ fn deepseek_profile_exists(app: &AppHandle) -> bool {
 }
 
 fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
-    std::env::var_os("KIMI_CODE_HOME")
-        .filter(|home| !home.is_empty())
-        .map(PathBuf::from)
-        .map_or_else(
-            || {
-                app.path()
-                    .home_dir()
-                    .map(|home| home.join(".kimi-code"))
-                    .map_err(|error| error.to_string())
-            },
-            Ok,
-        )
+    provider_home(app, "KIMI_CODE_HOME", ".kimi-code")
 }
 
 // Kimi groups sessions under an opaque per-directory key that its workspace index maps back to a path.
@@ -1222,7 +1838,6 @@ fn agent_command(
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
-    name: &str,
 ) -> Result<CommandBuilder, String> {
     let mut command = match agent {
         "claude" => {
@@ -1230,7 +1845,9 @@ fn agent_command(
             if resume {
                 command.args(["--resume", session_id]);
             } else {
-                command.args(["--session-id", session_id, "--name", name]);
+                // Naming the session after its folder is the one thing that stops Claude Code from
+                // naming it after what it is doing, and that name is what the tab is titled with.
+                command.args(["--session-id", session_id]);
             }
             command
         }
@@ -1238,24 +1855,35 @@ fn agent_command(
             let mut command = CommandBuilder::new("codex");
             // DeepSeek is selected per launch so the default Codex provider stays whatever the user set.
             if provider == Some("deepseek") {
-                if saved_api_key(app, agent, provider).is_some() {
-                    // A key held by Lite defines the provider inline and is read from the environment,
-                    // so no Codex configuration file has to exist or be written.
-                    for override_value in [
-                        "model_providers.deepseek.name=\"deepseek\"",
-                        "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
-                        "model_providers.deepseek.wire_api=\"responses\"",
-                        "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
-                    ] {
-                        command.args(["-c", override_value]);
+                let key = saved_api_key(app, agent, provider).is_some();
+                if !key && deepseek_profile_exists(app) {
+                    // A profile the user wrote owns the whole model configuration, catalog included.
+                    command.args(["--profile", DEEPSEEK_PROFILE]);
+                } else {
+                    if key {
+                        // A key held by Lite defines the provider inline and is read from the
+                        // environment, so no Codex configuration file has to exist or be written.
+                        for override_value in [
+                            "model_providers.deepseek.name=\"deepseek\"",
+                            "model_providers.deepseek.base_url=\"https://api.deepseek.com/\"",
+                            "model_providers.deepseek.wire_api=\"responses\"",
+                            "model_providers.deepseek.env_key=\"DEEPSEEK_API_KEY\"",
+                        ] {
+                            command.args(["-c", override_value]);
+                        }
                     }
                     command.args(["-c", "model_provider=\"deepseek\""]);
                     command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
-                } else if deepseek_profile_exists(app) {
-                    command.args(["--profile", DEEPSEEK_PROFILE]);
-                } else {
-                    command.args(["-c", "model_provider=\"deepseek\""]);
-                    command.args(["-c", &format!("model=\"{DEEPSEEK_MODEL}\"")]);
+                    if let Some(catalog) = (!codex_declares_catalog(app))
+                        .then(|| deepseek_catalog(app))
+                        .flatten()
+                    {
+                        // A Windows path is full of backslashes, which TOML reads as escapes.
+                        let catalog = path_text(&catalog)
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"");
+                        command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
+                    }
                 }
             }
             if let Some(provider_session_id) = provider_session_id {
@@ -1273,7 +1901,12 @@ fn agent_command(
             }
             command
         }
-        "shell" => CommandBuilder::new_default_prog(),
+        "shell" => {
+            let mut command = CommandBuilder::new_default_prog();
+            #[cfg(target_os = "macos")]
+            command.env("TERM_PROGRAM", "Apple_Terminal");
+            command
+        }
         _ => return Err("Unknown session type".into()),
     };
     if let Some(path) = user_path() {
@@ -1405,6 +2038,14 @@ async fn open_url(url: String) -> Result<(), String> {
     open_external(&url)
 }
 
+// A session root has already been chosen by the user and registered with Lite. Resolve that grant
+// again here so the interface cannot ask the operating system to open an arbitrary path.
+#[tauri::command]
+fn open_directory(root_id: String, roots: State<'_, Roots>) -> Result<(), String> {
+    let path = root_path(&roots, &root_id)?;
+    open_external(&path_text(&path))
+}
+
 fn open_external(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
@@ -1435,16 +2076,31 @@ async fn spawn_session(
     session_id: String,
     run_id: String,
     root_id: String,
+    cwd: String,
     mut provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
     mode: Option<String>,
     theme: Option<String>,
-    name: String,
     resume: bool,
     cols: u16,
     rows: u16,
 ) -> Result<Option<String>, String> {
+    if !roots
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .contains_key(&root_id)
+    {
+        uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid folder permission")?;
+        let path = fs::canonicalize(cwd).map_err(|_| "The selected folder no longer exists")?;
+        if is_sensitive_root(&path) {
+            return Err("Credential and configuration folders cannot be opened".into());
+        }
+        update_roots(&app, &roots, |roots| {
+            roots.entry(root_id.clone()).or_insert(path);
+        })?;
+    }
     let cwd = root_path(&roots, &root_id)?;
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
@@ -1528,11 +2184,10 @@ async fn spawn_session(
             resume,
             &session_id,
             provider_session_id.as_deref(),
-            &name,
         )?
     };
     if !signing_in && agent == "claude" {
-        let settings = claude_settings(&app, &session_id)?;
+        let settings = claude_settings(&app, &session_id, &run_id)?;
         command.args(["--settings", &path_text(&settings)]);
     }
     command.cwd(path_text(&cwd));
@@ -1603,6 +2258,8 @@ async fn spawn_session(
             master: pair.master,
             writer,
             run_id: run_id.clone(),
+            alive: Arc::new(AtomicBool::new(true)),
+            agent_watch: Arc::new(AtomicU64::new(0)),
         },
     );
     drop(running);
@@ -1701,6 +2358,132 @@ async fn spawn_session(
     Ok(provider_session_id)
 }
 
+fn is_agent_process(process: &sysinfo::Process, agent: &str) -> bool {
+    let name = process.name().to_string_lossy().to_ascii_lowercase();
+    if name.strip_suffix(".exe").unwrap_or(&name) == agent {
+        return true;
+    }
+    process.cmd().iter().any(|argument| {
+        let argument = argument.to_string_lossy().to_ascii_lowercase();
+        let executable = Path::new(&argument)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
+        executable.strip_suffix(".exe").unwrap_or(executable) == agent
+            || (agent == "codex" && executable == "codex.js")
+            || (agent == "kimi" && argument.contains("kimi-code"))
+    })
+}
+
+fn agent_descendants(system: &System, root: sysinfo::Pid, agent: &str) -> Vec<sysinfo::Pid> {
+    system
+        .processes()
+        .iter()
+        .filter_map(|(pid, process)| {
+            if !is_agent_process(process, agent) {
+                return None;
+            }
+            let mut parent = process.parent();
+            while let Some(ancestor) = parent {
+                if ancestor == root {
+                    return Some(*pid);
+                }
+                parent = system
+                    .process(ancestor)
+                    .and_then(|process| process.parent());
+            }
+            None
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn watch_shell_agent(
+    app: AppHandle,
+    sessions: State<Sessions>,
+    session_id: String,
+    agent: String,
+) -> Result<(), String> {
+    if !matches!(agent.as_str(), "claude" | "codex" | "kimi") {
+        return Err("Unknown agent".into());
+    }
+    let (root, run_id, alive, agent_watch) = {
+        let sessions = sessions.0.lock().map_err(|error| error.to_string())?;
+        let session = sessions.get(&session_id).ok_or("Session is not running")?;
+        let root = session
+            .child
+            .process_id()
+            .ok_or("Session has no process id")?;
+        (
+            sysinfo::Pid::from_u32(root),
+            session.run_id.clone(),
+            Arc::clone(&session.alive),
+            Arc::clone(&session.agent_watch),
+        )
+    };
+    thread::spawn(move || {
+        let discover = ProcessRefreshKind::nothing()
+            .with_cmd(UpdateKind::OnlyIfNotSet)
+            .without_tasks();
+        let mut system = System::new();
+        let mut processes = Vec::new();
+        for _ in 0..10 {
+            if !alive.load(Ordering::Relaxed) {
+                return;
+            }
+            system.refresh_processes_specifics(ProcessesToUpdate::All, true, discover);
+            processes = agent_descendants(&system, root, &agent);
+            if !processes.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(500));
+        }
+        if processes.is_empty() || !alive.load(Ordering::Relaxed) {
+            return;
+        }
+        let watch = agent_watch.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = app.emit(
+            "shell-agent",
+            ShellAgent {
+                session_id: session_id.clone(),
+                run_id: run_id.clone(),
+                agent: Some(agent),
+            },
+        );
+        // Discovery is brief; a long-running agent retains and refreshes only its matching child PIDs.
+        system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&processes),
+            true,
+            ProcessRefreshKind::nothing().without_tasks(),
+        );
+        loop {
+            thread::sleep(Duration::from_secs(1));
+            if !alive.load(Ordering::Relaxed) || agent_watch.load(Ordering::Relaxed) != watch {
+                return;
+            }
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&processes),
+                true,
+                ProcessRefreshKind::nothing().without_tasks(),
+            );
+            processes.retain(|pid| system.process(*pid).is_some());
+            if processes.is_empty() {
+                let _ = app.emit(
+                    "shell-agent",
+                    ShellAgent {
+                        session_id,
+                        run_id,
+                        agent: None,
+                    },
+                );
+                return;
+            }
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 fn write_session(
     sessions: State<Sessions>,
@@ -1772,6 +2555,11 @@ fn delete_session_data(
             Err(error) => return Err(error.to_string()),
         }
     }
+    if let Err(error) = fs::remove_dir_all(directory.join(format!("activity-{session_id}")))
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        return Err(error.to_string());
+    }
     update_provider_session(&app, &provider_sessions, &session_id, None).map(|_| ())
 }
 
@@ -1796,6 +2584,7 @@ async fn list_directory(
         if name == ".git"
             || name == "node_modules"
             || name == "target"
+            || name == ".venv"
             || is_sensitive_path(&root, &entry.path())
         {
             continue;
@@ -1856,12 +2645,14 @@ async fn read_text_file(
 #[tauri::command]
 async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<GitStatus>, String> {
     let path = root_path(&roots, &root_id)?;
-    let root = match command_output(&path, &["rev-parse", "--show-toplevel"]) {
+    // Locating Git runs a login shell, so one refresh resolves it once rather than once per command.
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let root = match command_output(&git, &path, &["rev-parse", "--show-toplevel"]) {
         Ok(root) => root,
         Err(_) => return Ok(None),
     };
-    let branch = command_output(&path, &["branch", "--show-current"])?;
-    let mut child = Command::new(resolve_executable("git").unwrap_or_else(|| "git".into()))
+    let branch = command_output(&git, &path, &["branch", "--show-current"])?;
+    let mut child = Command::new(&git)
         .arg("-C")
         .arg(path_text(&path))
         .args(["status", "--short"])
@@ -1884,6 +2675,80 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
     if !status.success() && !changes_truncated {
         return Err("Could not read Git status".into());
     }
+    let line_diffs = Command::new(&git)
+        .arg("-C")
+        .arg(&root)
+        .args(["diff", "--numstat", "-z", "HEAD"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()
+        .and_then(|mut child| {
+            let stdout = child.stdout.take()?;
+            let mut output = Vec::new();
+            if stdout
+                .take(MAX_GIT_DIFF_BYTES + 1)
+                .read_to_end(&mut output)
+                .is_err()
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            if output.len() > MAX_GIT_DIFF_BYTES as usize {
+                output.truncate(MAX_GIT_DIFF_BYTES as usize);
+                let _ = child.kill();
+                let _ = child.wait();
+            } else if !child.wait().ok()?.success() {
+                return None;
+            }
+            if output.last() != Some(&0) {
+                output.truncate(
+                    output
+                        .iter()
+                        .rposition(|byte| *byte == 0)
+                        .map_or(0, |i| i + 1),
+                );
+            }
+            Some(output)
+        })
+        .map(|output| {
+            let mut diffs = BTreeMap::<String, LineDiff>::new();
+            let mut records = output.split(|byte| *byte == 0);
+            while let Some(header) = records.next().filter(|record| !record.is_empty()) {
+                let mut fields = header.splitn(3, |byte| *byte == b'\t');
+                let Some(additions) = fields
+                    .next()
+                    .and_then(|value| String::from_utf8_lossy(value).parse::<u64>().ok())
+                else {
+                    continue;
+                };
+                let Some(deletions) = fields
+                    .next()
+                    .and_then(|value| String::from_utf8_lossy(value).parse::<u64>().ok())
+                else {
+                    continue;
+                };
+                let Some(path) = fields.next() else { continue };
+                // With -z, a rename leaves the header path empty and follows it with old and new paths.
+                let path = if path.is_empty() {
+                    let _ = records.next();
+                    records.next()
+                } else {
+                    Some(path)
+                };
+                let Some(path) = path else { continue };
+                diffs.insert(
+                    String::from_utf8_lossy(path).into_owned(),
+                    LineDiff {
+                        additions,
+                        deletions,
+                    },
+                );
+            }
+            diffs
+        })
+        .unwrap_or_default();
     Ok(Some(GitStatus {
         branch: if branch.is_empty() {
             "Detached HEAD".into()
@@ -1892,8 +2757,50 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         },
         worktree: root,
         changes,
+        line_diffs,
         changes_truncated,
     }))
+}
+
+// A remote is stored the way the repository was cloned, and only its https form opens in a browser.
+// Anything else is left alone rather than guessed at, so a link is offered only when it will work.
+fn browse_url(remote: &str) -> Option<String> {
+    let remote = remote.trim().trim_end_matches('/');
+    let remote = remote.strip_suffix(".git").unwrap_or(remote);
+    // The scp form names a user, and not everyone's is git.
+    if !remote.contains("://") {
+        let (authority, repository) = remote.split_once(':')?;
+        let host = authority
+            .rsplit_once('@')
+            .map_or(authority, |(_, host)| host);
+        return Some(format!("https://{host}/{repository}"));
+    }
+    let ssh = remote.strip_prefix("ssh://");
+    let rest = ssh.or_else(|| remote.strip_prefix("https://"))?;
+    let (authority, repository) = rest.split_once('/')?;
+    // Whatever the clone was made with — a token, an account name — is Git's business and has none in a
+    // link, still less in a browser's address bar and history. An ssh port reaches nothing a browser
+    // can read, where an https one is the site itself.
+    let host = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if ssh.is_some() && host.contains(':') {
+        return None;
+    }
+    Some(format!("https://{host}/{repository}"))
+}
+
+// The repository a folder was cloned from, asked for on its own: naming it costs one git call, where
+// the full status reads the whole worktree.
+#[tauri::command]
+async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<String>, String> {
+    let path = root_path(&roots, &root_id)?;
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    Ok(
+        command_output(&git, &path, &["remote", "get-url", "origin"])
+            .ok()
+            .and_then(|remote| browse_url(&remote)),
+    )
 }
 
 #[tauri::command]
@@ -1910,18 +2817,79 @@ async fn read_usage(
     }
     match agent.as_str() {
         "claude" => {
-            let path = app
+            let directory = app
                 .path()
                 .app_data_dir()
-                .map_err(|error| error.to_string())?
-                .join(format!("usage-{session_id}.json"));
-            match fs::read(path) {
-                Ok(bytes) => serde_json::from_slice(&bytes)
-                    .map(Some)
-                    .map_err(|error| error.to_string()),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(error) => Err(error.to_string()),
+                .map_err(|error| error.to_string())?;
+            let path = directory.join(format!("usage-{session_id}.json"));
+            let mut usage = match fs::read(path) {
+                Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    UsageSnapshot::default()
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            // Claude's limits are account-wide, while its context and cost belong to this session.
+            // Use Claude's newest report for each account-wide limit rather than hiding one when the
+            // selected session has not sent a message yet or another report omitted that window.
+            if let Ok(entries) = fs::read_dir(directory) {
+                let mut latest = [None, None];
+                for (modified, window) in entries
+                    .flatten()
+                    .filter(|entry| {
+                        entry.file_name().to_str().is_some_and(|name| {
+                            name.starts_with("usage-") && name.ends_with(".json")
+                        })
+                    })
+                    .filter_map(|entry| {
+                        let modified = entry.metadata().ok()?.modified().ok()?;
+                        let snapshot: UsageSnapshot =
+                            serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
+                        Some((modified, snapshot.windows))
+                    })
+                    .flat_map(|(modified, windows)| {
+                        windows.into_iter().map(move |window| (modified, window))
+                    })
+                {
+                    let index = match window.label.as_str() {
+                        "Current session" | "5 hour" => 0,
+                        "Current week" | "7 day" => 1,
+                        _ => continue,
+                    };
+                    if latest[index]
+                        .as_ref()
+                        .is_none_or(|(current, _)| modified > *current)
+                    {
+                        latest[index] = Some((modified, window));
+                    }
+                }
+                let windows: Vec<_> = latest
+                    .into_iter()
+                    .flatten()
+                    .map(|(_, window)| window)
+                    .collect();
+                if !windows.is_empty() {
+                    usage.windows = windows;
+                }
             }
+            for window in &mut usage.windows {
+                window.label = match window.label.as_str() {
+                    "5 hour" => "Current session".into(),
+                    "7 day" => "Current week".into(),
+                    _ => continue,
+                };
+            }
+            let now = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |duration| duration.as_secs());
+            usage
+                .windows
+                .retain(|window| window.resets_at.is_none_or(|reset| reset > now));
+            Ok((usage.context_used_percent.is_some()
+                || usage.context_tokens.is_some_and(|tokens| tokens > 0)
+                || usage.cost_usd.is_some_and(|cost| cost > 0.0)
+                || !usage.windows.is_empty())
+            .then_some(usage))
         }
         "codex" => codex_usage(&codex_server).map(Some),
         "kimi" | "shell" => Ok(None),
@@ -1945,6 +2913,55 @@ fn stop_runtime(app: &AppHandle) {
         let _ = stop_pty(&mut session);
     }
     stop_codex_server(&app.state::<CodexServer>());
+}
+
+// A local build names the commit it came from instead of the release version it would otherwise be
+// mistaken for. It follows main directly so fixes can be used before release assets exist.
+#[tauri::command]
+fn local_update() -> Result<Option<String>, String> {
+    let built = option_env!("LITE_COMMIT").ok_or("This is not a local build")?;
+    let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    command_output(
+        &git,
+        Path::new(repo),
+        &["fetch", "--quiet", "origin", "main"],
+    )
+    .map_err(|_| "Could not fetch origin/main".to_string())?;
+    let head = command_output(
+        &git,
+        Path::new(repo),
+        &["rev-parse", "--short", "origin/main"],
+    )
+    .map_err(|_| format!("Could not read {repo}"))?;
+    Ok((head != built).then_some(head))
+}
+
+// When this build was made, which for a release is the day it was published.
+#[tauri::command]
+fn build_date() -> Option<&'static str> {
+    option_env!("LITE_DATE")
+}
+
+#[tauri::command]
+fn local_commit() -> Option<&'static str> {
+    option_env!("LITE_COMMIT")
+}
+
+// The tree a local build came from, which is the one place a rebuild of it can be run.
+#[tauri::command]
+fn local_repo() -> Option<&'static str> {
+    option_env!("LITE_REPO")
+}
+
+// That same tree, opened for the one thing Lite does with it. The path is the one compiled into this
+// build rather than one handed in, and it deliberately does not go through use_directory: that records
+// what it opens as the folder to offer next, and rebuilding Lite is not the same as choosing to work
+// in it. The sensitive-folder rule still applies, as it does to every other grant.
+#[tauri::command]
+async fn grant_repo(app: AppHandle, roots: State<'_, Roots>) -> Result<DirectoryGrant, String> {
+    let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
+    grant_directory(&app, &roots, PathBuf::from(repo), None)
 }
 
 #[tauri::command]
@@ -1974,11 +2991,77 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .await
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "No update is available.".to_string())?;
+    // The download reports every chunk it receives, which is thousands of messages for a bar with a
+    // hundred steps it can show, so only a percent the dialog has not already been given is worth
+    // sending. A server that never said how large the update is says nothing rather than filling a
+    // bar against a size nobody knows, and the dialog keeps its spinner for that download.
+    let progress_app = app.clone();
+    let mut downloaded = 0u64;
+    let mut sent = 0;
     update
-        .download_and_install(|_, _| {}, || {})
+        .download_and_install(
+            move |chunk_length, total| {
+                downloaded += chunk_length as u64;
+                let Some(total) = total.filter(|total| *total > 0) else {
+                    return;
+                };
+                let percent = (downloaded * 100 / total).min(100);
+                if percent == sent {
+                    return;
+                }
+                sent = percent;
+                let _ = progress_app.emit("update-progress", percent);
+            },
+            || {},
+        )
         .await
         .map_err(|error| error.to_string())?;
     app.restart()
+}
+
+#[tauri::command]
+fn startup_ready(app: AppHandle) {
+    // Showing owns focus as well: a relaunch inherits no activation from the process an update replaced.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+    if let Some(window) = app.get_webview_window("splash") {
+        let _ = window.close();
+    }
+}
+
+// Tauri fills the About panel from the bundle config, which reaches it with only a name and version,
+// so the panel read as bare. macOS only: it is the one platform Tauri gives an application menu, and
+// setting one on Windows or Linux would put a native menu bar on a window that draws its own chrome.
+// Those platforms carry the same details in the installer metadata from tauri.conf.json instead.
+//
+// Only the fields NSAboutPanel actually renders are set. It ignores authors, comments, license and
+// website, so setting those here would look thorough and show nothing.
+#[cfg(target_os = "macos")]
+fn describe_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    use tauri::menu::{AboutMetadata, Menu, MenuItemKind, PredefinedMenuItem};
+
+    let about = AboutMetadata {
+        name: Some("Lite".into()),
+        version: Some(app.package_info().version.to_string()),
+        copyright: Some("© 2026 Ultralytics Inc.".into()),
+        // Credits are a plain NSAttributedString in a short scroll view: no link attributes, so a URL
+        // is dead text, and more than a line or two becomes a wall behind a scrollbar. The panel
+        // already states the name, version and copyright, so this only says what Lite is. The
+        // clickable way to the repository is the logomark in the top bar.
+        credits: Some("A fast, local workspace for AI coding agents.".into()),
+        ..Default::default()
+    };
+
+    let menu = Menu::default(app)?;
+    // About is the first item of the application submenu, which is the first submenu on macOS.
+    if let Some(MenuItemKind::Submenu(app_menu)) = menu.items()?.first() {
+        app_menu.remove_at(0)?;
+        app_menu.insert(&PredefinedMenuItem::about(app, None, Some(about))?, 0)?;
+    }
+    app.set_menu(menu)?;
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1991,30 +3074,43 @@ pub fn run() {
             app.manage(load_roots(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
             app.manage(load_codex_server(app.handle())?);
+            #[cfg(target_os = "macos")]
+            describe_app(app.handle())?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             choose_directory,
+            follow_directory,
+            github_items,
             use_directory,
             default_directory,
             revoke_directory,
             spawn_session,
             write_session,
+            watch_shell_agent,
             resize_session,
             stop_session,
             delete_session_data,
             list_directory,
             read_text_file,
             git_status,
+            git_remote,
             read_usage,
             agent_availability,
             open_setup_docs,
             open_url,
+            open_directory,
             provider_auth,
             save_api_key,
             delete_api_key,
             check_update,
-            install_update
+            install_update,
+            local_commit,
+            grant_repo,
+            local_repo,
+            build_date,
+            local_update,
+            startup_ready
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lite")

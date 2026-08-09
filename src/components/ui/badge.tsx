@@ -1,9 +1,12 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+"use client";
+
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 
+import { SEMANTIC_BADGE_CLASSES } from "@/lib/semantic-styles";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
@@ -18,6 +21,10 @@ const badgeVariants = cva(
         outline: "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost: "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
+        success: SEMANTIC_BADGE_CLASSES.success,
+        warning: SEMANTIC_BADGE_CLASSES.warning,
+        error: SEMANTIC_BADGE_CLASSES.error,
+        purple: "border-transparent bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400",
       },
     },
     defaultVariants: {
@@ -26,12 +33,9 @@ const badgeVariants = cva(
   },
 );
 
-function Badge({
-  className,
-  variant = "default",
-  render,
-  ...props
-}: useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>) {
+type BadgeProps = useRender.ComponentProps<"span"> & VariantProps<typeof badgeVariants>;
+
+function Badge({ className, variant = "default", render, ...props }: BadgeProps) {
   return useRender({
     defaultTagName: "span",
     props: mergeProps<"span">(
@@ -48,4 +52,4 @@ function Badge({
   });
 }
 
-export { Badge, badgeVariants };
+export { Badge };

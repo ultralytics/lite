@@ -4,6 +4,12 @@
   height: 100%;
 }
 
+/* Session actions belong to the terminal while the pointer or keyboard is working there. */
+[data-terminal-surface]:hover [data-terminal-action],
+[data-terminal-surface]:has(.xterm.focus) [data-terminal-action] {
+  display: inline-flex;
+}
+
 /* The scroll areas live in narrow panels, so their bars are slimmer than the component's default. */
 [data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
   width: 0.375rem;
@@ -18,7 +24,8 @@
   display: none;
 }
 
-.xterm-viewport {
+[data-context-session] .xterm .xterm-viewport {
+  background-color: var(--background);
   scrollbar-width: thin;
   scrollbar-color: color-mix(in oklch, var(--muted-foreground) 40%, transparent) transparent;
 }

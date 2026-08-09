@@ -11,13 +11,29 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Lite",
         "width": 1280,
         "height": 800,
         "minWidth": 900,
         "minHeight": 600,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "visible": false
+      },
+      {
+        "label": "splash",
+        "url": "splash.html",
+        "width": 480,
+        "height": 300,
+        "center": true,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "closable": false,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
       }
     ],
     "security": {
@@ -28,6 +44,14 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
+    "publisher": "Ultralytics",
+    "homepage": "https://www.ultralytics.com",
+    "copyright": "© 2026 Ultralytics Inc.",
+    "license": "AGPL-3.0",
+    "licenseFile": "../LICENSE",
+    "category": "DeveloperTool",
+    "shortDescription": "A fast, local workspace for AI coding agents.",
+    "longDescription": "Lite is a fast, local workspace for Claude Code, Codex on OpenAI or DeepSeek, Kimi Code, and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "macOS": {
       "signingIdentity": "-"

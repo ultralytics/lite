@@ -16,6 +16,14 @@ export default defineConfig(async () => ({
       "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
+  build: {
+    rollupOptions: {
+      input: {
+        main: path.resolve(import.meta.dirname, "./index.html"),
+        splash: path.resolve(import.meta.dirname, "./splash.html"),
+      },
+    },
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
