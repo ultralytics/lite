@@ -1318,47 +1318,97 @@ function App() {
     void launch(session, false);
   }
 
-  function deferSessionAction(session: Session, action: "Close" | "Restart", perform: () => Promise<void>) {
+  function sessionUndoToast(
+    session: Session,
+    action: "Closed" | "Restarted",
+    completed: Promise<boolean>,
+    undo: () => void,
+    cleanup: () => Promise<void>,
+  ) {
     let undone = false;
-    toast.add({
+    let toastId = "";
+    void completed.then((successful) => {
+      if (!successful) toast.close(toastId);
+    });
+    toastId = toast.add({
       title: `${action} “${session.name}”`,
       type: "success",
       timeout: 8000,
       onClose: async () => {
-        if (!undone) await perform();
+        if ((await completed) && !undone) await cleanup();
       },
       actionProps: {
         children: "Undo",
         onClick: () => {
           undone = true;
+          toast.close(toastId);
+          undo();
         },
       },
     });
   }
 
   // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
-  // tab takes a new id. Nothing changes until the shared Undo window expires.
+  // session it resumed by id is retained only until the shared Undo window expires.
   function restartSession(session: Session, select = true) {
-    deferSessionAction(session, "Restart", () => restartSessionNow(session, select));
+    const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
+    const restarted = restartSessionNow(session, fresh, select);
+    sessionUndoToast(
+      session,
+      "Restarted",
+      restarted,
+      () => {
+        const restored = { ...session, running: false };
+        setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
+        setSelectedId((current) => (current === fresh.id ? session.id : current));
+        resumed.current = session.id;
+        void restarted.then(async (successful) => {
+          if (!successful) return;
+          const runId = runs.current.get(fresh.id);
+          runs.current.delete(fresh.id);
+          try {
+            await invoke("stop_session", { sessionId: fresh.id });
+          } catch (reason) {
+            if (runId) runs.current.set(fresh.id, runId);
+            setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
+            setSelectedId((current) => (current === session.id ? fresh.id : current));
+            resumed.current = fresh.id;
+            setError(`Restart could not be undone: ${String(reason)}`);
+            return;
+          }
+          await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
+          clearOutput(fresh.id);
+          clearUsageCache(fresh.id);
+          void launch(restored, true);
+        });
+      },
+      async () => {
+        await invoke("delete_session_data", { sessionId: session.id }).catch((reason) =>
+          setError(`Session restarted, but local cleanup failed: ${String(reason)}`),
+        );
+        clearOutput(session.id);
+        clearUsageCache(session.id);
+      },
+    );
   }
 
-  async function restartSessionNow(session: Session, select: boolean) {
+  async function restartSessionNow(session: Session, fresh: Session, select: boolean): Promise<boolean> {
+    const runId = runs.current.get(session.id);
     runs.current.delete(session.id);
-    setSessions((current) => current.map((item) => (item.id === session.id ? { ...item, running: false } : item)));
-    try {
-      await invoke("stop_session", { sessionId: session.id });
-    } catch (reason) {
-      setSessions((current) =>
-        current.map((item) => (item.id === session.id ? { ...item, running: session.running } : item)),
-      );
-      setError(`Session could not be restarted: ${String(reason)}`);
-      return;
-    }
-    const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
     if (select) {
       setSelectedId(fresh.id);
       resumed.current = fresh.id;
+    }
+    try {
+      await invoke("stop_session", { sessionId: session.id });
+    } catch (reason) {
+      if (runId) runs.current.set(session.id, runId);
+      setSessions((current) => current.map((item) => (item.id === fresh.id ? session : item)));
+      setSelectedId((current) => (current === fresh.id ? session.id : current));
+      resumed.current = session.id;
+      setError(`Session could not be restarted: ${String(reason)}`);
+      return false;
     }
     if (!(await launch(fresh, false))) {
       await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
@@ -1369,14 +1419,10 @@ function App() {
       setSelectedId((current) => (current === fresh.id ? session.id : current));
       resumed.current = session.id;
       if (await launch(restored, true)) setError("Restart failed; the original session was restored.");
-      return;
+      return false;
     }
     if (fresh.agent === "kimi") startKimiConversation(fresh.id);
-    await invoke("delete_session_data", { sessionId: session.id }).catch((reason) =>
-      setError(`Session restarted, but local cleanup failed: ${String(reason)}`),
-    );
-    clearOutput(session.id);
-    clearUsageCache(session.id);
+    return true;
   }
 
   async function restartAllSessions() {
@@ -1400,20 +1446,13 @@ function App() {
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
-  // Closing uses the same deferred action as restarting: Undo leaves the running terminal untouched.
+  // Closing is reversible: the row leaves immediately and its PTY stops, while the provider session
+  // metadata and directory grant remain until the toast closes without being undone.
   function closeSession(session: Session) {
-    deferSessionAction(session, "Close", () => closeSessionNow(session));
-  }
-
-  async function closeSessionNow(session: Session) {
+    const index = sessions.findIndex((item) => item.id === session.id);
     const wasSelected = selectedId === session.id;
     const nextSelectedId = sessions.find((item) => item.id !== session.id)?.id ?? "";
-    try {
-      await invoke("stop_session", { sessionId: session.id });
-    } catch (reason) {
-      setError(`Session could not be closed: ${String(reason)}`);
-      return;
-    }
+    const runId = runs.current.get(session.id);
     runs.current.delete(session.id);
     if (resumed.current === session.id) resumed.current = "";
     const timer = workTimers.current.get(session.id);
@@ -1426,7 +1465,44 @@ function App() {
     });
     setSessions((current) => current.filter((item) => item.id !== session.id));
     if (wasSelected) setSelectedId(nextSelectedId);
-    await cleanupSession(session);
+
+    function restore(running: boolean) {
+      setSessions((current) => {
+        if (current.some((item) => item.id === session.id)) return current;
+        const restored = [...current];
+        restored.splice(Math.min(index, restored.length), 0, { ...session, running });
+        return restored;
+      });
+      if (wasSelected) setSelectedId((current) => (current === nextSelectedId ? session.id : current));
+    }
+    const stopped = invoke("stop_session", { sessionId: session.id }).then(
+      () => true,
+      (reason) => {
+        if (runId) {
+          runs.current.set(session.id, runId);
+          resumed.current = session.id;
+        }
+        restore(session.running);
+        setError(`Session could not be closed: ${String(reason)}`);
+        return false;
+      },
+    );
+    sessionUndoToast(
+      session,
+      "Closed",
+      stopped,
+      () => {
+        const restored = { ...session, running: false };
+        restore(false);
+        void stopped.then((successful) => {
+          if (successful) {
+            resumed.current = session.id;
+            void launch(restored, true);
+          }
+        });
+      },
+      () => cleanupSession(session),
+    );
   }
 
   async function checkForUpdates() {
