@@ -1168,6 +1168,24 @@ function App() {
     };
   }, [rootId]);
 
+  async function signIn(agent: Session["agent"]) {
+    setSettingsOpen(false);
+    try {
+      const grant = await invoke<{ id: string; path: string }>("default_directory");
+      createSession({
+        id: crypto.randomUUID(),
+        agent,
+        mode: "login",
+        cwd: grant.path,
+        rootId: grant.id,
+        name: `Sign in · ${sessionLabel({ agent })}`,
+        running: false,
+      });
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   function createSession(session: Session) {
     resumed.current = session.id;
     setSessions((current) => [...current, session]);
@@ -1875,7 +1893,7 @@ function App() {
             </DialogContent>
           </Dialog>
           <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
-          <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+          <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
           <Toaster />
         </div>
       </AppContextMenu>

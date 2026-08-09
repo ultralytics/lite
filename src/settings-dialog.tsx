@@ -38,6 +38,7 @@ const providers: {
   label: string;
   variable: string;
   configured: string;
+  signIn: boolean;
 }[] = [
   {
     id: "claude",
@@ -45,6 +46,7 @@ const providers: {
     label: "Anthropic",
     variable: "ANTHROPIC_API_KEY",
     configured: "Signed in through Claude Code",
+    signIn: true,
   },
   {
     id: "codex",
@@ -53,6 +55,7 @@ const providers: {
     label: "OpenAI",
     variable: "OPENAI_API_KEY",
     configured: "Signed in through Codex",
+    signIn: true,
   },
   {
     id: "deepseek",
@@ -61,6 +64,7 @@ const providers: {
     label: "DeepSeek",
     variable: "DEEPSEEK_API_KEY",
     configured: "Using API key",
+    signIn: false,
   },
   {
     id: "kimi",
@@ -68,6 +72,7 @@ const providers: {
     label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
     configured: "Signed in through Kimi Code",
+    signIn: true,
   },
 ];
 
@@ -81,9 +86,11 @@ interface ProviderAuth {
 export function SettingsDialog({
   open: isOpen,
   onOpenChange,
+  onSignIn,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSignIn: (agent: Agent) => void;
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -203,6 +210,11 @@ export function SettingsDialog({
                   </ItemContent>
                   {open ? null : (
                     <ItemActions>
+                      {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (
+                        <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
+                          Sign in
+                        </Button>
+                      ) : null}
                       <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
                         {status?.keyHint || status?.cliAuthMethod === "apiKey" ? "Replace API key" : "Use API key"}
                       </Button>
