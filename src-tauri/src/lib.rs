@@ -480,22 +480,110 @@ fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String>
         .map_err(|error| error.to_string())?;
     let settings_path = directory.join(format!("claude-{session_id}.json"));
     let usage_path = directory.join(format!("usage-{session_id}.json"));
+    let activity_path = directory.join(format!("activity-{session_id}"));
+    if activity_path.exists() {
+        fs::remove_dir_all(&activity_path).map_err(|error| error.to_string())?;
+    }
+    fs::create_dir_all(&activity_path).map_err(|error| error.to_string())?;
     let executable = std::env::current_exe().map_err(|error| error.to_string())?;
-    let command = format!(
-        "{} --claude-statusline {}",
+    let status = format!(
+        "{} --claude-statusline {} {}",
         shell_quote(&path_text(&executable)),
-        shell_quote(&path_text(&usage_path))
+        shell_quote(&path_text(&usage_path)),
+        shell_quote(&path_text(&activity_path))
     );
+    let activity = format!(
+        "{} --claude-activity {}",
+        shell_quote(&path_text(&executable)),
+        shell_quote(&path_text(&activity_path))
+    );
+    let tool_hook = || serde_json::json!([{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }]);
     write_atomic(
         &settings_path,
-        serde_json::json!({ "statusLine": { "type": "command", "command": command } })
-            .to_string()
-            .as_bytes(),
+        serde_json::json!({
+            "statusLine": { "type": "command", "command": status, "refreshInterval": 1 },
+            "hooks": {
+                "PreToolUse": tool_hook(),
+                "PostToolUse": tool_hook(),
+                "PostToolUseFailure": tool_hook(),
+                "PermissionDenied": tool_hook(),
+                "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
+                "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }],
+                "Stop": [{ "hooks": [{ "type": "command", "command": activity }] }]
+            }
+        })
+        .to_string()
+        .as_bytes(),
     )?;
     Ok(settings_path)
 }
 
-pub fn capture_claude_status(path: &str) -> Result<(), String> {
+fn activity_key<'a>(input: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+    input
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| {
+            value.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+            })
+        })
+}
+
+pub fn capture_claude_activity(path: &str) -> Result<(), String> {
+    let input: serde_json::Value =
+        serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
+    let directory = Path::new(path);
+    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    let event = input
+        .get("hook_event_name")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default();
+    let key = activity_key(
+        &input,
+        if event.starts_with("Subagent") {
+            "agent_id"
+        } else {
+            "tool_use_id"
+        },
+    );
+    match event {
+        "PreToolUse" | "SubagentStart" => {
+            if let Some(key) = key {
+                fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
+            }
+        }
+        "PostToolUse" | "PostToolUseFailure" | "PermissionDenied" | "SubagentStop" => {
+            if let Some(key) = key
+                && let Err(error) = fs::remove_file(directory.join(key))
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error.to_string());
+            }
+        }
+        "Stop" => {
+            for entry in fs::read_dir(directory)
+                .map_err(|error| error.to_string())?
+                .flatten()
+            {
+                fs::remove_file(entry.path()).map_err(|error| error.to_string())?;
+            }
+            for task in input
+                .get("background_tasks")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(key) = activity_key(task, "id") {
+                    fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), String> {
     let input: serde_json::Value =
         serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
     let context = input
@@ -542,14 +630,16 @@ pub fn capture_claude_status(path: &str) -> Result<(), String> {
         lifetime_tokens: None,
         windows,
     };
-    write_atomic(
-        Path::new(path),
-        &serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?,
-    )?;
+    let usage = serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?;
+    if !fs::read(path).is_ok_and(|current| current == usage) {
+        write_atomic(Path::new(path), &usage)?;
+    }
+    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some());
+    let activity = if working { "working" } else { "idle" };
     if let Some(percent) = snapshot.context_used_percent {
-        println!("Lite · {percent:.0}% context");
+        println!("\x1b]6973;lite-{activity}\x07Lite · {percent:.0}% context");
     } else {
-        println!("Lite");
+        println!("\x1b]6973;lite-{activity}\x07Lite");
     }
     Ok(())
 }

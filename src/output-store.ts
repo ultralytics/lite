@@ -24,6 +24,11 @@ const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
 // owner lives here where every session's output arrives rather than in the mounted terminal.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const METADATA = /\x1b\]([027]);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+// Lite's Claude status line reports work that produces no terminal output, such as a parent waiting
+// for subagents or a quiet shell command. The private OSC stays invisible while the shared output
+// owner makes the signal available even when the session's terminal is not mounted.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
+const ACTIVITY = /\x1b\]6973;lite-(working|idle)(?:\x07|\x1b\\)/g;
 
 // The same sequence begun but not yet terminated, which the chunk that ends it completes. A title may
 // hold an escape of its own, so the payload ends only at a terminator, and a lone escape is kept
@@ -85,6 +90,7 @@ export function appendOutput(sessionId: string, data: number[]) {
   const text = buffer.tail + decoded;
   let title = "";
   let path = "";
+  let activity: boolean | undefined;
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
     if (match[1] === "7") {
@@ -92,9 +98,11 @@ export function appendOutput(sessionId: string, data: number[]) {
         path = decodeURIComponent(new URL(match[2]).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
     } else title = match[2];
   }
+  ACTIVITY.lastIndex = 0;
+  for (let match = ACTIVITY.exec(text); match; match = ACTIVITY.exec(text)) activity = match[1] === "working";
   const tail = text.match(UNTERMINATED)?.[0] ?? "";
   buffer.tail = tail.length > MAX_TAIL ? "" : tail;
-  return { title, path };
+  return { title, path, activity };
 }
 
 export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) => void) {

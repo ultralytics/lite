@@ -1083,10 +1083,10 @@ function App() {
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const { title, path } = appendOutput(payload.sessionId, payload.data);
+        const { title, path, activity } = appendOutput(payload.sessionId, payload.data);
         if (title) markTitle(payload.sessionId, title);
         if (path) markDirectory(payload.sessionId, path);
-        markWorking(payload.sessionId);
+        if (activity !== false) markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
