@@ -521,12 +521,17 @@ function AppContextMenu({
 // Long enough that the gaps between an agent's own writes do not flicker the dot.
 const QUIET_MS = 1200;
 
-// Three states the sidebar dot tells apart: the terminal is gone, it is up and quiet, or it is up and
-// producing output. Color carries the state when motion is suppressed, and animation only reinforces it.
+// Four states the sidebar dot tells apart: the terminal is gone, it is up and quiet, it is producing
+// output, or it needs the user. Color carries the state when motion is suppressed, and animation only
+// reinforces it.
 const SESSION_STATUS = {
   disconnected: { dot: "bg-muted-foreground/40", label: "Disconnected" },
   idle: { dot: "bg-success", label: "Connected, idle" },
   working: { dot: "bg-sky-500 animate-pulse motion-reduce:animate-none", label: "Connected, working" },
+  attention: {
+    dot: "bg-orange-500 animate-pulse motion-reduce:animate-none",
+    label: "Connected, needs attention",
+  },
 } as const;
 
 // A local build names its commit and is red, so it is never mistaken for the installed copy.
@@ -643,12 +648,11 @@ function SessionBadge({
   starting: boolean;
   working: boolean;
 }) {
-  const status = SESSION_STATUS[!session.running ? "disconnected" : working ? "working" : "idle"];
+  const status =
+    SESSION_STATUS[!session.running ? "disconnected" : attention ? "attention" : working ? "working" : "idle"];
   const ring = active ? "ring-sidebar-accent" : "ring-sidebar";
   return (
-    <span
-      className={`relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background ${attention ? "border-sky-500 ring-2 ring-sky-500/70 ring-offset-1 ring-offset-sidebar" : ""}`}
-    >
+    <span className="relative flex size-7 shrink-0 items-center justify-center rounded-md border bg-background">
       <ProviderIcon agent={agent} provider={session.provider} />
       {starting ? (
         <Spinner
@@ -658,7 +662,7 @@ function SessionBadge({
         <span
           role="img"
           className={`absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ${ring} ${status.dot}`}
-          aria-label={attention ? `${status.label}; needs attention` : status.label}
+          aria-label={status.label}
         />
       )}
     </span>
