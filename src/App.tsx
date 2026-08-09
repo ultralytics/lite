@@ -1874,7 +1874,9 @@ function App() {
                                 variant="ghost"
                                 size="icon-sm"
                                 aria-pressed={session.id === selectedId}
-                                aria-label={session.name}
+                                aria-label={
+                                  attention.includes(session.id) ? `${session.name}; needs attention` : session.name
+                                }
                                 data-context-session={session.id}
                                 className={
                                   session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"
@@ -2242,6 +2244,8 @@ function App() {
                 <Button
                   variant="destructive"
                   onClick={() => {
+                    attentionRef.current = [];
+                    setAttention([]);
                     void Promise.all(
                       sessions.map(async (session) => {
                         runs.current.delete(session.id);
