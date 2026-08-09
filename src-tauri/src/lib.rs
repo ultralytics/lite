@@ -1772,12 +1772,14 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
     let keys = load_api_keys(&app);
     Ok(SUPPORTED_KEYS
         .iter()
+        .copied()
+        .chain(["qwen"])
         .map(|name| {
             let cli_auth = cli_auth(&app, name);
             ProviderAuth {
-                name: (*name).to_owned(),
+                name: name.to_owned(),
                 // Only the last characters travel to the interface, enough to tell two keys apart.
-                key_hint: keys.get(*name).map(|key| key_hint(key)),
+                key_hint: keys.get(name).map(|key| key_hint(key)),
                 cli_auth_method: cli_auth.as_ref().map(|auth| auth.method),
                 cli_key_hint: cli_auth.and_then(|auth| auth.key_hint),
             }

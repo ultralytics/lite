@@ -161,12 +161,23 @@ export function NewSessionDialog({
     setError("");
     try {
       await invoke("install_agent", { agent: choice.agent });
-      const result = await invoke<Availability>("agent_availability", {
-        agent: choice.agent,
-        provider: choice.provider,
-      });
-      setAvailability((current) => ({ ...current, [choice.id]: result }));
-      if (!result.available) setError(result.detail);
+      const results = await Promise.all(
+        choices
+          .filter((option) => option.agent === choice.agent)
+          .map(
+            async (option) =>
+              [
+                option.id,
+                await invoke<Availability>("agent_availability", {
+                  agent: option.agent,
+                  provider: option.provider,
+                }),
+              ] as const,
+          ),
+      );
+      setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
+      const result = results.find(([id]) => id === choice.id)?.[1];
+      if (result && !result.available) setError(result.detail);
     } catch (reason) {
       setError(String(reason));
     } finally {
