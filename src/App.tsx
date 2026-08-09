@@ -46,7 +46,7 @@ import {
   useState,
 } from "react";
 
-import { LiteLogomark, ProviderIcon } from "@/brand-icons";
+import { ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
@@ -1517,15 +1517,19 @@ function App() {
                       render={
                         <Button
                           variant="ghost"
-                          size="icon-sm"
-                          className="shrink-0"
+                          size="sm"
+                          className="min-w-0 flex-1 px-1.5"
                           aria-label="Lite on GitHub"
                           data-context-url="https://github.com/ultralytics/lite"
                           onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
                         />
                       }
                     >
-                      <LiteLogomark className="size-5" />
+                      <img
+                        src="/ultralytics-logotype.svg"
+                        alt=""
+                        className="h-4 w-full max-w-[104px] object-contain dark:brightness-0 dark:invert"
+                      />
                     </TooltipTrigger>
                     <TooltipContent>View Lite on GitHub</TooltipContent>
                   </Tooltip>

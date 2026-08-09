@@ -37,4 +37,4 @@ function ScrollBar({ className, orientation = "vertical", ...props }: ScrollArea
   );
 }
 
-export { ScrollArea, ScrollBar };
+export { ScrollArea };

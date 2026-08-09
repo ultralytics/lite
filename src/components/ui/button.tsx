@@ -67,4 +67,4 @@ function ActionIconButton({
   );
 }
 
-export { ActionIconButton, Button, type ButtonProps };
+export { ActionIconButton, Button };

@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "local": "tauri build --bundles app --config '{\"productName\":\"Lite Dev\",\"bundle\":{\"createUpdaterArtifacts\":false,\"icon\":[\"icons/dev/32x32.png\",\"icons/dev/128x128.png\",\"icons/dev/128x128@2x.png\",\"icons/dev/icon.icns\",\"icons/dev/icon.ico\"]}}'",
-    "check": "bun run lint && bun run typecheck",
+    "check": "bun run lint && bun run typecheck && bun run deadcode",
+    "deadcode": "knip",
     "format": "biome check --write .",
     "lint": "biome check . --diagnostic-level=error",
     "typecheck": "tsgo --noEmit"
@@ -46,6 +47,12 @@
     "@types/react-dom": "^19.2.4",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitejs/plugin-react": "^6.0.5",
+    "knip": "^6.32.0",
     "vite": "^8.2.1"
+  },
+  "knip": {
+    "ignoreDependencies": [
+      "@fontsource-variable/geist"
+    ]
   }
 }
