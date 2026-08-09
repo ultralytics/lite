@@ -894,7 +894,13 @@ function commandAgent(command: string): Agent | undefined {
     .pop()
     ?.replace(/\.exe$/i, "")
     .toLowerCase();
-  return executable === "claude" || executable === "codex" || executable === "kimi" ? executable : undefined;
+  return executable === "claude" ||
+    executable === "codex" ||
+    executable === "gemini" ||
+    executable === "kimi" ||
+    executable === "qwen"
+    ? executable
+    : undefined;
 }
 
 function App() {

@@ -21,30 +21,12 @@ import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle }
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AUTH_PROVIDERS, type AuthProviderId, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
-import { type Agent, type ModelProvider, type Session, sessionLabel } from "@/types";
+import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import { type Session, sessionLabel } from "@/types";
 
-interface Choice {
-  id: string;
-  agent: Agent;
-  provider?: ModelProvider;
-  auth?: AuthProviderId;
-  description?: string;
-  note?: string;
-}
-
-const choices: Choice[] = [
-  { id: "claude", agent: "claude", auth: "claude" },
-  { id: "codex", agent: "codex", provider: "openai", auth: "codex" },
-  {
-    id: "codex-deepseek",
-    agent: "codex",
-    provider: "deepseek",
-    auth: "deepseek",
-    note: "Runs the Codex harness against the DeepSeek provider in your Codex configuration. Usage bills DeepSeek, not OpenAI.",
-  },
-  { id: "kimi", agent: "kimi", auth: "kimi" },
-  { id: "shell", agent: "shell", description: "Open your default shell" },
+const choices = [
+  ...Object.values(AUTH_PROVIDERS),
+  { id: "shell", agent: "shell" as const, provider: undefined, description: "Open your default shell" },
 ];
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
@@ -226,7 +208,7 @@ export function NewSessionDialog({
                 {choices.map((option) => {
                   const state = availability[option.id];
                   const active = option.id === choiceId;
-                  const authProvider = option.auth ? AUTH_PROVIDERS[option.auth] : undefined;
+                  const authProvider = "variable" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   const row = (
                     <Item
@@ -251,7 +233,7 @@ export function NewSessionDialog({
                         {authProvider ? (
                           <ProviderAuthDescription provider={authProvider} status={authStatus} />
                         ) : (
-                          <ItemDescription>{option.description}</ItemDescription>
+                          <ItemDescription>{"description" in option ? option.description : undefined}</ItemDescription>
                         )}
                       </ItemContent>
                       <ItemActions>
@@ -260,7 +242,7 @@ export function NewSessionDialog({
                       </ItemActions>
                     </Item>
                   );
-                  return option.note ? (
+                  return "note" in option ? (
                     <Tooltip key={option.id}>
                       <TooltipTrigger render={row} />
                       <TooltipContent className="max-w-64">{option.note}</TooltipContent>

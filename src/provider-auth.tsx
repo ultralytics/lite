@@ -32,6 +32,26 @@ export const AUTH_PROVIDERS = {
     variable: "DEEPSEEK_API_KEY",
     configured: "Using API key",
     signIn: false,
+    note: "Runs Codex against DeepSeek. Usage bills DeepSeek, not OpenAI.",
+  },
+  openrouter: {
+    id: "openrouter",
+    agent: "codex",
+    provider: "openrouter",
+    label: "OpenRouter",
+    variable: "OPENROUTER_API_KEY",
+    configured: "Using API key",
+    signIn: false,
+    note: "Runs Codex against OpenRouter. Usage bills OpenRouter, not OpenAI.",
+  },
+  gemini: {
+    id: "gemini",
+    agent: "gemini",
+    provider: undefined,
+    label: "Google Gemini",
+    variable: "GEMINI_API_KEY",
+    configured: "Signed in through Gemini CLI",
+    signIn: true,
   },
   kimi: {
     id: "kimi",
@@ -40,6 +60,15 @@ export const AUTH_PROVIDERS = {
     label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
     configured: "Signed in through Kimi Code",
+    signIn: true,
+  },
+  qwen: {
+    id: "qwen",
+    agent: "qwen",
+    provider: undefined,
+    label: "Alibaba ModelStudio",
+    variable: "DASHSCOPE_API_KEY",
+    configured: "Set up through Qwen Code",
     signIn: true,
   },
 } as const satisfies Record<
@@ -52,6 +81,7 @@ export const AUTH_PROVIDERS = {
     variable: string;
     configured: string;
     signIn: boolean;
+    note?: string;
   }
 >;
 

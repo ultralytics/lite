@@ -1,8 +1,8 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-// A harness runs the session; a model provider bills it. Codex is the one harness that supports both.
-export type Agent = "claude" | "codex" | "kimi" | "shell";
-export type ModelProvider = "openai" | "deepseek";
+// A harness runs the session; a model provider bills it. Codex can run against multiple providers.
+export type Agent = "claude" | "codex" | "gemini" | "kimi" | "qwen" | "shell";
+export type ModelProvider = "openai" | "deepseek" | "openrouter";
 
 export interface Session {
   id: string;
@@ -22,12 +22,24 @@ export interface Session {
 const agentLabels: Record<Agent, string> = {
   claude: "Claude Code",
   codex: "Codex",
+  gemini: "Gemini CLI",
   kimi: "Kimi Code",
+  qwen: "Qwen Code",
   shell: "Shell",
 };
 
+const providerLabels: Record<ModelProvider, string> = {
+  openai: "OpenAI",
+  deepseek: "DeepSeek",
+  openrouter: "OpenRouter",
+};
+
+export function providerLabel(provider: ModelProvider): string {
+  return providerLabels[provider];
+}
+
 export function sessionLabel({ agent, provider }: Pick<Session, "agent" | "provider">): string {
-  if (agent === "codex" && provider === "deepseek") return "Codex · DeepSeek";
+  if (agent === "codex" && provider && provider !== "openai") return `Codex · ${providerLabels[provider]}`;
   return agentLabels[agent];
 }
 
