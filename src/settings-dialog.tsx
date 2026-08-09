@@ -216,7 +216,7 @@ export function SettingsDialog({
                         </Button>
                       ) : null}
                       <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
-                        {status?.keyHint ? "Replace API key" : "Use API key"}
+                        {status?.keyHint || status?.cliAuthMethod === "apiKey" ? "Replace API key" : "Use API key"}
                       </Button>
                       {status?.keyHint ? (
                         <ActionIconButton
