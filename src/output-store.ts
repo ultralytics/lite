@@ -101,6 +101,7 @@ export function appendOutput(sessionId: string, data: number[]) {
   ACTIVITY.lastIndex = 0;
   for (let match = ACTIVITY.exec(text); match; match = ACTIVITY.exec(text)) activity = match[1] === "working";
   const tail = text.match(UNTERMINATED)?.[0] ?? "";
+  if (activity === undefined && tail.startsWith("\x1b]6973;lite-")) activity = false;
   buffer.tail = tail.length > MAX_TAIL ? "" : tail;
   return { title, path, activity };
 }
