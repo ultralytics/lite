@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
@@ -1213,14 +1213,60 @@ fn codex_requests(
     codex_requests_once(&endpoint, requests)
 }
 
-fn codex_usage(server: &CodexServer) -> Result<UsageSnapshot, String> {
-    let responses = codex_requests(
-        server,
-        &[
-            (1, "account/rateLimits/read", serde_json::json!({})),
-            (2, "account/usage/read", serde_json::json!({})),
-        ],
-    )?;
+// Codex records what a thread holds in context only in the thread's own rollout file, and the newest
+// count sits at its end. The tail is read rather than the file so a long thread stays cheap, and a
+// line the CLI is still writing simply fails to parse and is passed over.
+fn codex_context(path: &Path) -> Option<(f64, u64, u64)> {
+    const BASELINE_TOKENS: u64 = 12_000;
+    let mut file = fs::File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(256 * 1024)))
+        .ok()?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail).ok()?;
+    let (tokens, window) = String::from_utf8_lossy(&tail)
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| {
+            event
+                .pointer("/payload/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("token_count")
+        })
+        .find_map(|event| {
+            let info = event.pointer("/payload/info")?;
+            Some((
+                info.pointer("/last_token_usage/total_tokens")
+                    .and_then(serde_json::Value::as_u64)?,
+                info.get("model_context_window")
+                    .and_then(serde_json::Value::as_u64)?,
+            ))
+        })?;
+    // Codex measures the window the user can fill, past the system prompt and tool instructions that
+    // are always in it, so the panel reports the share the Codex CLI itself would report.
+    let effective = window.checked_sub(BASELINE_TOKENS)?;
+    let used = tokens.saturating_sub(BASELINE_TOKENS);
+    Some((
+        (used as f64 / effective as f64 * 100.0).clamp(0.0, 100.0),
+        tokens,
+        window,
+    ))
+}
+
+fn codex_usage(server: &CodexServer, thread_id: Option<&str>) -> Result<UsageSnapshot, String> {
+    let mut requests = vec![
+        (1, "account/rateLimits/read", serde_json::json!({})),
+        (2, "account/usage/read", serde_json::json!({})),
+    ];
+    if let Some(thread_id) = thread_id {
+        requests.push((
+            3,
+            "thread/read",
+            serde_json::json!({"threadId": thread_id, "includeTurns": false}),
+        ));
+    }
+    let responses = codex_requests(server, &requests)?;
     let rates = responses.get(&1);
     let summary = responses.get(&2);
 
@@ -1267,7 +1313,15 @@ fn codex_usage(server: &CodexServer) -> Result<UsageSnapshot, String> {
             });
         }
     }
+    let context = responses
+        .get(&3)
+        .and_then(|response| response.pointer("/thread/path"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|path| codex_context(Path::new(path)));
     Ok(UsageSnapshot {
+        context_used_percent: context.map(|(percent, _, _)| percent),
+        context_window: context.map(|(_, _, window)| window),
+        context_tokens: context.map(|(_, tokens, _)| tokens),
         lifetime_tokens: summary
             .and_then(|value| value.pointer("/summary/lifetimeTokens"))
             .and_then(serde_json::Value::as_u64),
@@ -3143,6 +3197,7 @@ async fn read_usage(
     agent: String,
     provider: Option<String>,
     session_id: String,
+    provider_session_id: Option<String>,
 ) -> Result<Option<UsageSnapshot>, String> {
     // A custom-provider Codex session does not bill OpenAI, so OpenAI account limits are not its usage.
     if agent == "codex" && codex_provider(provider.as_deref()).is_some() {
@@ -3224,7 +3279,7 @@ async fn read_usage(
                 || !usage.windows.is_empty())
             .then_some(usage))
         }
-        "codex" => codex_usage(&codex_server).map(Some),
+        "codex" => codex_usage(&codex_server, provider_session_id.as_deref()).map(Some),
         "gemini" | "kimi" | "qwen" | "shell" => Ok(None),
         _ => Err("Unknown session type".into()),
     }

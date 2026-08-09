@@ -987,6 +987,7 @@ function UsagePanel({ session }: { session: Session }) {
       agent: session.agent,
       provider: session.provider,
       sessionId: session.id,
+      providerSessionId: session.providerSessionId,
     })
       .then((next) => {
         if (!disposed) {
@@ -1000,7 +1001,7 @@ function UsagePanel({ session }: { session: Session }) {
     return () => {
       disposed = true;
     };
-  }, [session.agent, session.provider, session.id]);
+  }, [session.agent, session.provider, session.id, session.providerSessionId]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1037,7 +1038,9 @@ function UsagePanel({ session }: { session: Session }) {
                 </Item>
               ) : (
                 <ItemDescription>
-                  {session.agent === "codex" ? "The Codex CLI" : "This provider"} does not report per-session context.
+                  {session.agent === "codex"
+                    ? "Codex reports this session's context after its first response."
+                    : "This provider does not report per-session context."}
                 </ItemDescription>
               )}
               {usage.windows.map((window) => (
