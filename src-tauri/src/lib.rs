@@ -1328,13 +1328,62 @@ fn claude_signed_in(app: &AppHandle) -> bool {
     }
 }
 
-fn cli_auth_configured(app: &AppHandle, name: &str) -> bool {
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum CliAuthMethod {
+    Provider,
+    ApiKey,
+}
+
+fn kimi_auth_method(app: &AppHandle) -> Option<CliAuthMethod> {
+    let config = fs::read_to_string(kimi_home(app).ok()?.join("config.toml")).ok()?;
+    let config = config.parse::<toml::Table>().ok()?;
+    let model = config.get("default_model")?.as_str()?;
+    let provider = config
+        .get("models")?
+        .as_table()?
+        .get(model)?
+        .as_table()?
+        .get("provider")?
+        .as_str()?;
+    let provider = config
+        .get("providers")?
+        .as_table()?
+        .get(provider)?
+        .as_table()?;
+
+    let has_api_key = provider
+        .get("api_key")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|key| !key.trim().is_empty())
+        || provider
+            .get("env")
+            .and_then(toml::Value::as_table)
+            .is_some_and(|env| {
+                env.iter().any(|(name, value)| {
+                    name.ends_with("_API_KEY")
+                        && value.as_str().is_some_and(|key| !key.trim().is_empty())
+                })
+            });
+    if has_api_key {
+        Some(CliAuthMethod::ApiKey)
+    } else if provider.get("oauth").is_some_and(toml::Value::is_table) {
+        Some(CliAuthMethod::Provider)
+    } else {
+        None
+    }
+}
+
+fn cli_auth_method(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
     match name {
-        "claude" => claude_signed_in(app),
-        "codex" => codex_home(app).is_ok_and(|home| home.join("auth.json").is_file()),
-        "deepseek" => deepseek_profile_exists(app) || codex_declares_deepseek(app),
-        "kimi" => kimi_home(app).is_ok_and(|home| home.join("config.toml").is_file()),
-        _ => false,
+        "claude" => claude_signed_in(app).then_some(CliAuthMethod::Provider),
+        "codex" => codex_home(app)
+            .is_ok_and(|home| home.join("auth.json").is_file())
+            .then_some(CliAuthMethod::Provider),
+        "deepseek" => (deepseek_profile_exists(app) || codex_declares_deepseek(app))
+            .then_some(CliAuthMethod::ApiKey),
+        "kimi" => kimi_auth_method(app),
+        _ => None,
     }
 }
 
@@ -1343,7 +1392,7 @@ fn cli_auth_configured(app: &AppHandle, name: &str) -> bool {
 struct ProviderAuth {
     name: String,
     key_hint: Option<String>,
-    cli_auth_configured: bool,
+    cli_auth_method: Option<CliAuthMethod>,
 }
 
 #[tauri::command]
@@ -1359,7 +1408,7 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
                     .skip(key.chars().count().saturating_sub(4))
                     .collect()
             }),
-            cli_auth_configured: cli_auth_configured(&app, name),
+            cli_auth_method: cli_auth_method(&app, name),
         })
         .collect())
 }

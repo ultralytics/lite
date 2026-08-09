@@ -71,7 +71,7 @@ const providers: {
     agent: "kimi",
     label: "Kimi Code",
     variable: "MOONSHOT_API_KEY",
-    configured: "Kimi Code authentication detected (OAuth or provider key)",
+    configured: "Using Kimi Code OAuth",
     signIn: true,
   },
 ];
@@ -79,7 +79,7 @@ const providers: {
 interface ProviderAuth {
   name: string;
   keyHint: string | null;
-  cliAuthConfigured: boolean;
+  cliAuthMethod: "provider" | "apiKey" | null;
 }
 
 export function SettingsDialog({
@@ -195,8 +195,12 @@ export function SettingsDialog({
                           <span className="font-mono">••••{status.keyHint}</span>
                         </span>
                       ) : status ? (
-                        status.cliAuthConfigured ? (
-                          option.configured
+                        status.cliAuthMethod ? (
+                          status.cliAuthMethod === "apiKey" && option.id === "kimi" ? (
+                            "Using API key configured in Kimi Code"
+                          ) : (
+                            option.configured
+                          )
                         ) : (
                           "Not set up"
                         )
@@ -207,7 +211,7 @@ export function SettingsDialog({
                   </ItemContent>
                   {open ? null : (
                     <ItemActions>
-                      {!status?.keyHint && !status?.cliAuthConfigured && option.signIn ? (
+                      {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (
                         <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
                           Sign in
                         </Button>
@@ -215,7 +219,7 @@ export function SettingsDialog({
                       <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
                         {status?.keyHint
                           ? "Replace Lite key"
-                          : status?.cliAuthConfigured
+                          : status?.cliAuthMethod
                             ? "Override in Lite"
                             : "Use a Lite key"}
                       </Button>
