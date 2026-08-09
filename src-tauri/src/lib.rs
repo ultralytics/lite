@@ -564,7 +564,7 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
             } else {
                 let marker = shell_quote(&marker);
                 format!(
-                    "touch {marker}; trap {} EXIT\n{command}",
+                    "touch {marker}; trap {} EXIT\n(\n{command}\n)",
                     shell_quote(&format!("rm -f {marker}"))
                 )
             };
