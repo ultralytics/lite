@@ -528,7 +528,9 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
     let input: serde_json::Value =
         serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
     let directory = Path::new(path);
-    fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    if !directory.is_dir() {
+        return Ok(());
+    }
     let event = input
         .get("hook_event_name")
         .and_then(serde_json::Value::as_str)
@@ -554,7 +556,11 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
 
 fn claude_shell_running() -> bool {
     let mut system = System::new();
-    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().without_tasks(),
+    );
     let Ok(current) = sysinfo::get_current_pid() else {
         return false;
     };
