@@ -13,6 +13,7 @@ use std::{
     thread,
     time::{Duration, SystemTime},
 };
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -444,10 +445,6 @@ fn shell_quote(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\\\""))
 }
 
-fn powershell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 fn provider_home(app: &AppHandle, variable: &str, fallback: &str) -> Result<PathBuf, String> {
     std::env::var_os(variable)
         .filter(|home| !home.is_empty())
@@ -506,7 +503,6 @@ fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String>
         serde_json::json!({
             "statusLine": { "type": "command", "command": status, "refreshInterval": 1 },
             "hooks": {
-                "PreToolUse": [{ "matcher": "Bash|PowerShell", "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }]
             }
@@ -517,9 +513,9 @@ fn claude_settings(app: &AppHandle, session_id: &str) -> Result<PathBuf, String>
     Ok(settings_path)
 }
 
-fn activity_key<'a>(input: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+fn activity_key(input: &serde_json::Value) -> Option<&str> {
     input
-        .get(field)
+        .get("agent_id")
         .and_then(serde_json::Value::as_str)
         .filter(|value| {
             value.chars().all(|character| {
@@ -538,54 +534,13 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     match event {
-        "PreToolUse" => {
-            // The hook runs before permission and returns before a background command exits, so the
-            // command itself owns the marker from its actual start through shell cleanup.
-            let Some(key) = activity_key(&input, "tool_use_id") else {
-                return Ok(());
-            };
-            let Some(mut tool_input) = input.get("tool_input").cloned() else {
-                return Ok(());
-            };
-            let Some(command) = tool_input
-                .get("command")
-                .and_then(serde_json::Value::as_str)
-            else {
-                return Ok(());
-            };
-            let marker = path_text(&directory.join(key));
-            let command = if input.get("tool_name").and_then(serde_json::Value::as_str)
-                == Some("PowerShell")
-            {
-                let marker = powershell_quote(&marker);
-                format!(
-                    "New-Item -ItemType File -Force -Path {marker} | Out-Null; try {{\n{command}\n}} finally {{ Remove-Item -Force -LiteralPath {marker} }}"
-                )
-            } else {
-                let marker = shell_quote(&marker);
-                format!(
-                    "touch {marker}; trap {} EXIT\n(\n{command}\n)",
-                    shell_quote(&format!("rm -f {marker}"))
-                )
-            };
-            tool_input["command"] = command.into();
-            println!(
-                "{}",
-                serde_json::json!({
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "updatedInput": tool_input
-                    }
-                })
-            );
-        }
         "SubagentStart" => {
-            if let Some(key) = activity_key(&input, "agent_id") {
+            if let Some(key) = activity_key(&input) {
                 fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
             }
         }
         "SubagentStop" => {
-            if let Some(key) = activity_key(&input, "agent_id")
+            if let Some(key) = activity_key(&input)
                 && let Err(error) = fs::remove_file(directory.join(key))
                 && error.kind() != std::io::ErrorKind::NotFound
             {
@@ -595,6 +550,47 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
         _ => {}
     }
     Ok(())
+}
+
+fn claude_shell_running() -> bool {
+    let mut system = System::new();
+    system.refresh_processes_specifics(ProcessesToUpdate::All, true, ProcessRefreshKind::nothing());
+    let Ok(current) = sysinfo::get_current_pid() else {
+        return false;
+    };
+    let mut ancestors = HashSet::from([current]);
+    let mut parent = system.process(current).and_then(|process| process.parent());
+    let claude = loop {
+        let Some(pid) = parent else { return false };
+        ancestors.insert(pid);
+        let Some(process) = system.process(pid) else {
+            return false;
+        };
+        let name = process.name().to_string_lossy().to_ascii_lowercase();
+        if name.strip_suffix(".exe").unwrap_or(&name) == "claude" {
+            break pid;
+        }
+        parent = process.parent();
+    };
+    system.processes().iter().any(|(pid, process)| {
+        let name = process.name().to_string_lossy().to_ascii_lowercase();
+        if ancestors.contains(pid)
+            || !matches!(
+                name.strip_suffix(".exe").unwrap_or(&name),
+                "bash" | "cmd" | "dash" | "fish" | "nu" | "powershell" | "pwsh" | "sh" | "zsh"
+            )
+        {
+            return false;
+        }
+        let mut parent = process.parent();
+        while let Some(pid) = parent {
+            if pid == claude {
+                return true;
+            }
+            parent = system.process(pid).and_then(|process| process.parent());
+        }
+        false
+    })
 }
 
 pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), String> {
@@ -648,7 +644,8 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
     if !fs::read(path).is_ok_and(|current| current == usage) {
         write_atomic(Path::new(path), &usage)?;
     }
-    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some());
+    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some())
+        || claude_shell_running();
     let activity = if working { "working" } else { "idle" };
     if let Some(percent) = snapshot.context_used_percent {
         println!("\x1b]6973;lite-{activity}\x07Lite · {percent:.0}% context");
