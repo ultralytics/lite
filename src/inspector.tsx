@@ -489,19 +489,19 @@ function FileTree({
     }
   }
 
-  // A search has to see the whole tree, so the first keystroke loads it and the next query — not the
-  // render a failure causes — retries a walk that failed; one that succeeded is not repeated, and a
-  // cleared search forgets the failure so the same query asks again.
+  const lowered = query.trim().toLowerCase();
+
+  // A search has to see the whole tree, so the first searching keystroke loads it and the next query
+  // — not the render a failure causes — retries a walk that failed; one that succeeded is not
+  // repeated, and a cleared search forgets the failure so the same query asks again.
   const attempted = useRef("");
   useEffect(() => {
-    if (!query) attempted.current = "";
-    else if (query !== attempted.current && !walked.current && !expandingAll) {
-      attempted.current = query;
+    if (!lowered) attempted.current = "";
+    else if (lowered !== attempted.current && !walked.current && !expandingAll) {
+      attempted.current = lowered;
       void walk(false);
     }
   });
-
-  const lowered = query.trim().toLowerCase();
 
   // A folder is worth showing while searching if anything under it matches; only loaded listings can
   // answer, which is what the walk above is for.
@@ -779,11 +779,11 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
 
   // Asking GitHub on mount updates the stale snapshot already painted above.
   useEffect(() => {
-    if (!named.urls.length && !named.guessed.length) {
-      githubItemsCache.set(sessionId, []);
-      return setItems([]);
-    }
+    if (!named.urls.length && !named.guessed.length) return setItems([]);
     let disposed = false;
+    // A remote that arrives after an empty first pass starts a real check, so the panel goes back to
+    // its last checked snapshot — or to checking — rather than staying empty without a word.
+    setItems(githubItemsCache.get(sessionId));
     void invoke<GitHubItem[]>("github_items", { urls: named.urls, guessed: named.guessed })
       .then((checked) => {
         if (!disposed) {
