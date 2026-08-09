@@ -299,7 +299,7 @@ const FILE_FAMILIES: (FileKind & { extensions: string[] })[] = [
   { icon: FileAudio, color: "text-purple-500", extensions: ["mp3", "wav", "flac", "ogg", "m4a"] },
   { icon: FileVideo, color: "text-purple-500", extensions: ["mp4", "mov", "mkv", "webm", "avi"] },
   { icon: FileSpreadsheet, color: "text-green-600", extensions: ["csv", "tsv", "xls", "xlsx", "parquet"] },
-  { icon: FileArchive, color: "text-stone-500", extensions: ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar"] },
+  { icon: FileArchive, color: "text-amber-600", extensions: ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar"] },
   { icon: Database, color: "text-indigo-500", extensions: ["sql", "db", "sqlite", "sqlite3"] },
   { icon: FileType, color: "text-cyan-500", extensions: ["woff", "woff2", "ttf", "otf"] },
   { icon: FileDiff, color: "text-orange-500", extensions: ["diff", "patch"] },
