@@ -82,6 +82,9 @@ export function NewSessionDialog({
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
+  // Creation runs the worktree command against the dialog's grant, so closing must wait for it:
+  // a Cancel mid-command would revoke the grant the command is still using.
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
   const [repo, setRepo] = useState<string | null>();
@@ -197,7 +200,7 @@ export function NewSessionDialog({
   }
 
   function changeOpen(open: boolean) {
-    if (!open && installing) return;
+    if (!open && (installing || creating)) return;
     if (!open && directory) {
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
@@ -206,46 +209,51 @@ export function NewSessionDialog({
   }
 
   async function create() {
-    let folder = await grant();
-    if (!folder) return;
-    let worktree = false;
-    // The probe's answer can lag the folder field, so the granted folder is asked directly:
-    // the worktree and the recorded repository always describe where the session will run.
-    let root: string | null;
+    setCreating(true);
     try {
-      root = await invoke<string | null>("git_repo", { path: folder.path });
-    } catch (reason) {
-      setError(String(reason));
-      return;
-    }
-    // The toggle must still describe this folder: root === repo fails when the folder changed
-    // after the probe that enabled the option, and a worktree is never made on a stale answer.
-    if (root && root === repo && worktreeOn) {
+      let folder = await grant();
+      if (!folder) return;
+      let worktree = false;
+      // The probe's answer can lag the folder field, so the granted folder is asked directly:
+      // the worktree and the recorded repository always describe where the session will run.
+      let root: string | null;
       try {
-        folder = await invoke<DirectoryGrant>("create_worktree", {
-          rootId: folder.id,
-          branch: branch.trim() || suggestedBranch(root),
-        });
-        worktree = true;
+        root = await invoke<string | null>("git_repo", { path: folder.path });
       } catch (reason) {
         setError(String(reason));
         return;
       }
+      // The toggle must still describe this folder: root === repo fails when the folder changed
+      // after the probe that enabled the option, and a worktree is never made on a stale answer.
+      if (root && root === repo && worktreeOn) {
+        try {
+          folder = await invoke<DirectoryGrant>("create_worktree", {
+            rootId: folder.id,
+            branch: branch.trim() || suggestedBranch(root),
+          });
+          worktree = true;
+        } catch (reason) {
+          setError(String(reason));
+          return;
+        }
+      }
+      const project = defaultSessionName(folder.path);
+      onCreate({
+        id: crypto.randomUUID(),
+        agent: choice.agent,
+        provider: choice.provider,
+        cwd: folder.path,
+        rootId: folder.id,
+        name: project,
+        running: false,
+        worktree,
+        repo: root || undefined,
+      });
+      setDirectory(undefined);
+      onOpenChange(false);
+    } finally {
+      setCreating(false);
     }
-    const project = defaultSessionName(folder.path);
-    onCreate({
-      id: crypto.randomUUID(),
-      agent: choice.agent,
-      provider: choice.provider,
-      cwd: folder.path,
-      rootId: folder.id,
-      name: project,
-      running: false,
-      worktree,
-      repo: root || undefined,
-    });
-    setDirectory(undefined);
-    onOpenChange(false);
   }
 
   async function install() {
@@ -282,6 +290,7 @@ export function NewSessionDialog({
   // request to install it, which is the only one of the two it can answer.
   const ready =
     !installing &&
+    !creating &&
     Boolean(missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim())));
   function start() {
     if (missing?.installable) void install();
@@ -419,7 +428,7 @@ export function NewSessionDialog({
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" disabled={Boolean(installing)} onClick={() => changeOpen(false)}>
+            <Button variant="outline" disabled={Boolean(installing) || creating} onClick={() => changeOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!ready}>
