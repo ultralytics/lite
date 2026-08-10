@@ -20,7 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
-import { defaultSessionName, folderName, type Session, sessionLabel } from "@/types";
+import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
 const choices = [
   ...Object.values(AUTH_PROVIDERS),
@@ -30,12 +30,6 @@ const harnesses = [...new Set(choices.map((option) => option.agent).filter((agen
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
-
-// A short random tail keeps concurrent sessions distinct without exposing an implementation timestamp.
-function suggestedBranch(repo: string) {
-  const name = folderName(repo).replace(/[^A-Za-z0-9_-]/g, "-") || "project";
-  return `lite/${name}-${crypto.randomUUID().slice(0, 8)}`;
-}
 
 // Two sessions share a project when they sit in the same repository — which a worktree's path
 // cannot say, since Lite worktrees live beside the checkout rather than under it, so the repo
@@ -51,6 +45,7 @@ interface DirectoryGrant {
 }
 
 interface Repository {
+  branch: string;
   root: string;
   worktree: string;
 }
@@ -139,7 +134,7 @@ export function NewSessionDialog({
           // Sessions already sharing this repository make the worktree the default rather than the
           // option; a fresh repository leaves the choice with the main checkout.
           setWorktreeOn(Boolean(root && sessionsRef.current.some((session) => sharesRepo(session, root))));
-          setBranch(root ? suggestedBranch(root) : "");
+          setBranch(repository?.branch ?? "");
         })
         .catch(() => {
           if (!disposed) {
@@ -252,7 +247,7 @@ export function NewSessionDialog({
         try {
           folder = await invoke<DirectoryGrant>("create_worktree", {
             rootId: folder.id,
-            branch: branch.trim() || suggestedBranch(root),
+            branch: branch.trim(),
           });
           worktree = true;
         } catch (reason) {

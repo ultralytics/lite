@@ -3506,7 +3506,12 @@ fn main_checkout(git: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(common)
 }
 
-fn next_worktree(git: &Path, repo: &Path) -> Result<PathBuf, String> {
+struct WorktreeCandidate {
+    path: PathBuf,
+    branch: String,
+}
+
+fn next_worktree(git: &Path, repo: &Path) -> Result<WorktreeCandidate, String> {
     let parent = repo
         .parent()
         .ok_or("The repository root has no parent folder")?;
@@ -3515,11 +3520,30 @@ fn next_worktree(git: &Path, repo: &Path) -> Result<PathBuf, String> {
         .ok_or("The repository root names no folder")?
         .to_string_lossy();
     let registered = command_output(git, repo, &["worktree", "list", "--porcelain"])?;
+    let branches: HashSet<String> = command_output(
+        git,
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/lite/worktree-*",
+        ],
+    )?
+    .lines()
+    .map(str::to_owned)
+    .collect();
     for index in 1.. {
         let candidate = parent.join(format!("{name}-worktree-{index}"));
         let registration = format!("worktree {}", path_text(&candidate));
-        if !candidate.exists() && !registered.lines().any(|line| line == registration) {
-            return Ok(candidate);
+        let branch = format!("lite/worktree-{index}");
+        if !candidate.exists()
+            && !registered.lines().any(|line| line == registration)
+            && !branches.contains(&branch)
+        {
+            return Ok(WorktreeCandidate {
+                path: candidate,
+                branch,
+            });
         }
     }
     unreachable!()
@@ -3544,6 +3568,7 @@ fn owned_worktree(git: &Path, repo: &Path, root_id: &str, branch: &str) -> Optio
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Repository {
+    branch: String,
     root: String,
     worktree: String,
 }
@@ -3571,8 +3596,10 @@ async fn git_repo(app: AppHandle, path: String) -> Result<Option<Repository>, St
     let Ok(root) = main_checkout(&git, &path) else {
         return Ok(None);
     };
+    let candidate = next_worktree(&git, &root)?;
     Ok(Some(Repository {
-        worktree: path_text(&next_worktree(&git, &root)?),
+        worktree: path_text(&candidate.path),
+        branch: candidate.branch,
         root: path_text(&root),
     }))
 }
@@ -3590,7 +3617,11 @@ async fn create_worktree(
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     // Anchored at the main checkout even when the session's folder is itself a linked worktree.
     let repo = main_checkout(&git, &folder)?;
-    let branch = branch.trim();
+    let candidate = next_worktree(&git, &repo)?;
+    let branch = match branch.trim() {
+        "" => candidate.branch.as_str(),
+        branch => branch,
+    };
     command_output(&git, &repo, &["check-ref-format", "--branch", branch])
         .map_err(|_| format!("“{branch}” is not a valid branch name"))?;
     // A retry resumes the worktree this grant already marked; a new create takes the next free
@@ -3598,7 +3629,7 @@ async fn create_worktree(
     let owned = owned_worktree(&git, &repo, &root_id, branch);
     let worktree = match owned.as_ref() {
         Some(worktree) => worktree.clone(),
-        None => next_worktree(&git, &repo)?,
+        None => candidate.path,
     };
     // A new branch starts where the selected folder is, not where the main checkout happens to
     // be: a worktree made from a feature worktree keeps the feature's commits. An empty
