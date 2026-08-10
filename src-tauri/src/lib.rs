@@ -1242,7 +1242,9 @@ fn codex_context(path: &Path) -> Option<UsageSnapshot> {
                     .and_then(serde_json::Value::as_u64)?,
             ))
         })?;
-    let effective = window.checked_sub(BASELINE_TOKENS)?;
+    let effective = window
+        .checked_sub(BASELINE_TOKENS)
+        .filter(|effective| *effective > 0)?;
     Some(UsageSnapshot {
         context_used_percent: Some(
             (tokens.saturating_sub(BASELINE_TOKENS) as f64 / effective as f64 * 100.0)
