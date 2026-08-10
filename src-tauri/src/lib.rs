@@ -3656,6 +3656,20 @@ async fn create_worktree(
     if owned.is_none() {
         match command_output(&git, &repo, &args) {
             Ok(_) => {}
+            // A previous attempt created the branch and lost everything after it — folder,
+            // worktree mark, record. The repository's mark vouches for the name, and a branch
+            // checked out nowhere is resumed directly instead of failing on it.
+            Err(error)
+                if branch_exists(&git, &repo, branch)?
+                    && repo_mark_present(&git, &repo, &root_id, branch)
+                    && !command_output(&git, &repo, &["worktree", "list", "--porcelain"])?
+                        .lines()
+                        .any(|line| line == format!("branch refs/heads/{branch}")) =>
+            {
+                if command_output(&git, &repo, &["worktree", "add", &target, branch]).is_err() {
+                    return Err(error);
+                }
+            }
             Err(error) if head.is_none() => {
                 if command_output(
                     &git,
