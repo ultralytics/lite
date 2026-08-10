@@ -3511,11 +3511,11 @@ struct WorktreeCandidate {
     branch: String,
 }
 
-fn next_worktree(git: &Path, repo: &Path) -> Result<WorktreeCandidate, String> {
-    let parent = repo
+fn next_worktree(git: &Path, repo: &Path, checkout: &Path) -> Result<WorktreeCandidate, String> {
+    let parent = checkout
         .parent()
         .ok_or("The repository root has no parent folder")?;
-    let name = repo
+    let name = checkout
         .file_name()
         .ok_or("The repository root names no folder")?
         .to_string_lossy();
@@ -3596,7 +3596,10 @@ async fn git_repo(app: AppHandle, path: String) -> Result<Option<Repository>, St
     let Ok(root) = main_checkout(&git, &path) else {
         return Ok(None);
     };
-    let candidate = next_worktree(&git, &root)?;
+    let checkout = command_output(&git, &path, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| root.clone());
+    let candidate = next_worktree(&git, &root, &checkout)?;
     Ok(Some(Repository {
         worktree: path_text(&candidate.path),
         branch: candidate.branch,
@@ -3617,7 +3620,10 @@ async fn create_worktree(
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     // Anchored at the main checkout even when the session's folder is itself a linked worktree.
     let repo = main_checkout(&git, &folder)?;
-    let candidate = next_worktree(&git, &repo)?;
+    let checkout = command_output(&git, &folder, &["rev-parse", "--show-toplevel"])
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| repo.clone());
+    let candidate = next_worktree(&git, &repo, &checkout)?;
     let branch = match branch.trim() {
         "" => candidate.branch.as_str(),
         branch => branch,
