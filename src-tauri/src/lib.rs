@@ -1291,11 +1291,18 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
         })
 }
 
-fn codex_usage(server: &CodexServer, thread_id: Option<&str>) -> Result<UsageSnapshot, String> {
-    let mut requests = vec![
-        (1, "account/rateLimits/read", serde_json::json!({})),
-        (2, "account/usage/read", serde_json::json!({})),
-    ];
+fn codex_usage(
+    server: &CodexServer,
+    thread_id: Option<&str>,
+    account: bool,
+) -> Result<UsageSnapshot, String> {
+    let mut requests = Vec::new();
+    if account {
+        requests.extend([
+            (1, "account/rateLimits/read", serde_json::json!({})),
+            (2, "account/usage/read", serde_json::json!({})),
+        ]);
+    }
     if let Some(thread_id) = thread_id {
         requests.push((
             3,
@@ -3283,10 +3290,6 @@ async fn read_usage(
     provider: Option<String>,
     session_id: String,
 ) -> Result<Option<UsageSnapshot>, String> {
-    // A custom-provider Codex session does not bill OpenAI, so OpenAI account limits are not its usage.
-    if agent == "codex" && codex_provider(provider.as_deref()).is_some() {
-        return Ok(None);
-    }
     let provider_session_id = if agent == "codex" || agent == "kimi" {
         provider_sessions
             .0
@@ -3373,7 +3376,15 @@ async fn read_usage(
                 || !usage.windows.is_empty())
             .then_some(usage))
         }
-        "codex" => codex_usage(&codex_server, provider_session_id.as_deref()).map(Some),
+        "codex" => {
+            // Custom providers have local thread context but do not bill OpenAI, so omit only the
+            // account requests rather than omitting the whole session.
+            let account = codex_provider(provider.as_deref()).is_none();
+            if !account && provider_session_id.is_none() {
+                return Ok(None);
+            }
+            codex_usage(&codex_server, provider_session_id.as_deref(), account).map(Some)
+        }
         "gemini" | "qwen" => Ok(native_session_path(&app, &agent, &session_id)
             .and_then(|path| native_context(&path, &agent))),
         "kimi" => Ok(provider_session_id

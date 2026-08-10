@@ -978,7 +978,7 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
 function missingUsage(session: Session): string {
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
-    return `${providerLabel(session.provider)} publishes no account limits locally. Codex reports this session's usage in the terminal.`;
+    return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
   if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
