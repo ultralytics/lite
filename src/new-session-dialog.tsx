@@ -391,7 +391,7 @@ export function NewSessionDialog({
                       className="h-14 w-full min-w-0 justify-start overflow-hidden px-3"
                       aria-pressed={active}
                       disabled={Boolean(installing)}
-                      title={sessionLabel(option)}
+                      title={"note" in option ? option.note : sessionLabel(option)}
                       onClick={() => setChoiceId(option.id)}
                     >
                       <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />

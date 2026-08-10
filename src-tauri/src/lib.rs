@@ -3444,21 +3444,15 @@ async fn create_worktree(
     if let Some(parent) = worktree.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
-    // The new branch starts where the selected folder is, not where the main checkout happens to
-    // be: a worktree made from a feature worktree keeps the feature's commits.
-    let head = command_output(&git, &folder, &["rev-parse", "HEAD"])?;
-    command_output(
-        &git,
-        &repo,
-        &[
-            "worktree",
-            "add",
-            &path_text(&worktree),
-            "-b",
-            branch,
-            &head,
-        ],
-    )?;
+    // A new branch starts where the selected folder is, not where the main checkout happens to
+    // be. An empty repository has no HEAD; without a start point Git creates the unborn branch.
+    let head = command_output(&git, &folder, &["rev-parse", "HEAD"]).ok();
+    let target = path_text(&worktree);
+    let mut args = vec!["worktree", "add", "-b", branch, &target];
+    if let Some(head) = head.as_deref() {
+        args.push(head);
+    }
+    command_output(&git, &repo, &args)?;
     if let Err(error) = record_worktree(&app, &root_id, &worktree, branch, &repo) {
         undo_worktree(&git, &repo, &worktree, branch);
         return Err(error);
