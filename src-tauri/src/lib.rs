@@ -99,12 +99,6 @@ struct Sessions(Mutex<HashMap<String, PtySession>>);
 #[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
 
-// The worktrees Lite created, keyed by their session's grant id. Kept apart from Roots on
-// purpose: a shell session's grant follows its cd, but this record never moves, so cleanup can
-// only ever remove the exact folder Lite made for that grant.
-#[derive(Default)]
-struct Worktrees(Mutex<HashMap<String, PathBuf>>);
-
 #[derive(Default)]
 struct ProviderSessions(Mutex<HashMap<String, String>>);
 
@@ -343,40 +337,30 @@ fn load_roots(app: &AppHandle) -> Roots {
     ))
 }
 
+// The worktrees Lite created, one file per grant id like provider sessions: two copies of Lite
+// never share a file to race over, and a shell session's grant following its cd never touches
+// them, so cleanup can only ever remove the exact folder Lite made for that grant.
 fn worktrees_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?
-        .join("worktrees.json"))
+        .join("worktrees"))
 }
 
-fn load_worktrees(app: &AppHandle) -> Worktrees {
-    Worktrees(Mutex::new(
-        worktrees_path(app)
-            .as_deref()
-            .map(read_roots)
-            .unwrap_or_default(),
-    ))
+fn record_worktree(app: &AppHandle, root_id: &str, worktree: &Path) -> Result<(), String> {
+    uuid::Uuid::parse_str(root_id).map_err(|_| "Invalid grant ID")?;
+    let directory = worktrees_path(app)?;
+    fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    write_atomic(&directory.join(root_id), path_text(worktree).as_bytes())
 }
 
-// The same read-modify-write discipline as update_roots: a second copy of Lite writes this file
-// too, so the change is made against what is on disk rather than what this copy loaded.
-fn update_worktrees(
-    app: &AppHandle,
-    worktrees: &Worktrees,
-    update: impl FnOnce(&mut HashMap<String, PathBuf>),
-) -> Result<(), String> {
-    let path = worktrees_path(app)?;
-    let mut worktrees = worktrees.0.lock().map_err(|error| error.to_string())?;
-    let mut next = read_roots(&path);
-    update(&mut next);
-    write_atomic(
-        &path,
-        &serde_json::to_vec(&next).map_err(|error| error.to_string())?,
-    )?;
-    *worktrees = next;
-    Ok(())
+// worktree add has already run when these are reached, so a failure after it puts the folder and
+// branch back rather than leaving an orphan nothing can clean up.
+fn undo_worktree(git: &Path, repo: &Path, worktree: &Path, branch: &str) {
+    let target = path_text(worktree);
+    let _ = command_output(git, repo, &["worktree", "remove", "--force", &target]);
+    let _ = command_output(git, repo, &["branch", "-D", branch]);
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -3353,7 +3337,6 @@ async fn git_repo(app: AppHandle, path: String) -> Result<Option<String>, String
 async fn create_worktree(
     app: AppHandle,
     roots: State<'_, Roots>,
-    worktrees: State<'_, Worktrees>,
     root_id: String,
     branch: String,
 ) -> Result<DirectoryGrant, String> {
@@ -3386,10 +3369,20 @@ async fn create_worktree(
         &repo,
         &["worktree", "add", &path_text(&worktree), "-b", branch],
     )?;
-    let grant = grant_directory(&app, &roots, worktree.clone(), None)?;
-    update_worktrees(&app, &worktrees, |worktrees| {
-        worktrees.insert(grant.id.clone(), worktree);
-    })?;
+    let grant = match grant_directory(&app, &roots, worktree.clone(), None) {
+        Ok(grant) => grant,
+        Err(error) => {
+            undo_worktree(&git, &repo, &worktree, branch);
+            return Err(error);
+        }
+    };
+    if let Err(error) = record_worktree(&app, &grant.id, &worktree) {
+        let _ = update_roots(&app, &roots, |roots| {
+            roots.remove(&grant.id);
+        });
+        undo_worktree(&git, &repo, &worktree, branch);
+        return Err(error);
+    }
     Ok(grant)
 }
 
@@ -3405,16 +3398,15 @@ async fn create_worktree(
 async fn remove_worktree(
     app: AppHandle,
     roots: State<'_, Roots>,
-    worktrees: State<'_, Worktrees>,
     root_id: String,
     force: bool,
     branch: String,
 ) -> Result<(), String> {
-    let recorded = {
-        let worktrees = worktrees.0.lock().map_err(|error| error.to_string())?;
-        worktrees.get(&root_id).cloned()
-    }
-    .ok_or("This session's worktree is not one Lite created")?;
+    uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
+    let record = worktrees_path(&app)?.join(&root_id);
+    let recorded = fs::read_to_string(&record)
+        .map(PathBuf::from)
+        .map_err(|_| "This session's worktree is not one Lite created".to_owned())?;
     let current = root_path(&roots, &root_id)?;
     if current != recorded && !current.starts_with(&recorded) {
         return Err("The session's folder is no longer inside its worktree".into());
@@ -3446,10 +3438,11 @@ async fn remove_worktree(
     if !branch.is_empty() {
         let _ = command_output(&git, &main, &["branch", "-D", branch.as_str()]);
     }
-    update_worktrees(&app, &worktrees, |worktrees| {
-        worktrees.remove(&root_id);
-    })?;
-    Ok(())
+    match fs::remove_file(&record) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -3741,7 +3734,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
-            app.manage(load_worktrees(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
             app.manage(load_codex_server(app.handle())?);
             #[cfg(target_os = "macos")]

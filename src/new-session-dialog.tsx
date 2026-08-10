@@ -166,6 +166,7 @@ export function NewSessionDialog({
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setDirectory(selected);
         setPath(selected.path);
+        setRepo("");
       }
     } catch (reason) {
       setError(String(reason));
@@ -204,10 +205,11 @@ export function NewSessionDialog({
     // The probe's answer can lag the folder field, so the granted folder is asked directly:
     // the worktree and the recorded repository always describe where the session will run.
     const root = await invoke<string | null>("git_repo", { path: folder.path }).catch(() => null);
-    if (root && worktreeOn) {
+    // The toggle must still describe this folder: root === repo fails when the folder changed
+    // after the probe that enabled the option, and a worktree is never made on a stale answer.
+    if (root && root === repo && worktreeOn) {
       try {
-        // The suggested branch is only reused while it still names the repository the field shows.
-        createdBranch = root === repo && branch.trim() ? branch.trim() : suggestedBranch(root);
+        createdBranch = branch.trim() || suggestedBranch(root);
         const granted = await invoke<DirectoryGrant>("create_worktree", {
           rootId: folder.id,
           branch: createdBranch,
