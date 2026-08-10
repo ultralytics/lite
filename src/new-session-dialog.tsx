@@ -19,7 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
-import { AUTH_PROVIDERS } from "@/provider-auth";
+import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { defaultSessionName, folderName, type Session, sessionLabel } from "@/types";
 
 const choices = [
@@ -80,6 +80,7 @@ export function NewSessionDialog({
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
+  const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
   const [error, setError] = useState("");
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
@@ -133,6 +134,7 @@ export function NewSessionDialog({
     let disposed = false;
     setError("");
     setAvailability({});
+    setAuth(undefined);
     void invoke<DirectoryGrant | null>("default_directory")
       .then((selected) => {
         if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
@@ -140,6 +142,13 @@ export function NewSessionDialog({
           setDirectory(selected);
           setPath(selected.path);
         }
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    void invoke<ProviderAuth[]>("provider_auth")
+      .then((result) => {
+        if (!disposed) setAuth(result);
       })
       .catch((reason) => {
         if (!disposed) setError(String(reason));
@@ -291,12 +300,12 @@ export function NewSessionDialog({
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
       <DialogContent className="sm:min-h-[32rem] sm:max-w-xl">
-        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+        <form onSubmit={submit} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New session</DialogTitle>
             <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
           </DialogHeader>
-          <DialogBody className="space-y-4">
+          <DialogBody className="min-w-0 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="project-folder" className={SECTION}>
                 Project folder
@@ -343,7 +352,7 @@ export function NewSessionDialog({
                   <Switch id="new-worktree" checked={worktreeOn} onCheckedChange={setWorktreeOn} />
                 </div>
                 {worktreeOn ? (
-                  <div className="space-y-1.5">
+                  <div className="min-w-0 space-y-1.5">
                     <Label htmlFor="worktree-branch">Branch</Label>
                     <Input
                       id="worktree-branch"
@@ -355,7 +364,10 @@ export function NewSessionDialog({
                       spellCheck={false}
                       onChange={(event) => setBranch(event.target.value)}
                     />
-                    <p className="truncate font-mono text-xs text-muted-foreground" title={worktreePath(repo, branch)}>
+                    <p
+                      className="max-w-full truncate font-mono text-xs text-muted-foreground"
+                      title={worktreePath(repo, branch)}
+                    >
                       {worktreePath(repo, branch)}
                     </p>
                   </div>
@@ -364,23 +376,39 @@ export function NewSessionDialog({
             ) : null}
             <div className="space-y-1.5">
               <p className={SECTION}>Agent</p>
-              <div className="grid grid-cols-4 gap-2">
+              <div className="grid min-w-0 grid-cols-4 gap-2">
                 {choices.map((option) => {
                   const active = choiceId === option.id;
+                  const state = availability[option.id];
+                  const authProvider = "configured" in option ? option : undefined;
+                  const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   return (
                     <Button
                       key={option.id}
                       type="button"
                       size="lg"
                       variant={active ? "secondary" : "outline"}
-                      className="min-w-0 justify-start px-2"
+                      className="h-14 w-full min-w-0 justify-start overflow-hidden px-3"
                       aria-pressed={active}
                       disabled={Boolean(installing)}
                       title={sessionLabel(option)}
                       onClick={() => setChoiceId(option.id)}
                     >
-                      <ProviderIcon agent={option.agent} provider={option.provider} />
-                      <span className="truncate">{sessionLabel(option)}</span>
+                      <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+                      <div className="min-w-0 flex-1 text-left">
+                        <span className="block truncate">{sessionLabel(option)}</span>
+                        {state && !state.available ? (
+                          <span className="block truncate text-xs font-normal text-muted-foreground">
+                            Not installed
+                          </span>
+                        ) : authProvider ? (
+                          <ProviderAuthDescription provider={authProvider} status={authStatus} />
+                        ) : (
+                          <span className="block truncate text-xs font-normal text-muted-foreground">
+                            {state ? "Available" : "Checking…"}
+                          </span>
+                        )}
+                      </div>
                     </Button>
                   );
                 })}
