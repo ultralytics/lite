@@ -2446,6 +2446,10 @@ function App() {
                         const { error, restorable } = await cleanupSession(session);
                         if (error && restorable) {
                           failed.add(session.id);
+                          // The PTY is already stopped; the retained tab must not look live.
+                          setSessions((current) =>
+                            current.map((item) => (item.id === session.id ? { ...item, running: false } : item)),
+                          );
                           return;
                         }
                         setSessions((current) => current.filter((item) => item.id !== session.id));
