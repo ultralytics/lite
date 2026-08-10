@@ -2394,7 +2394,7 @@ function App() {
               ) : closingWorktree?.force ? (
                 <DialogBody>
                   <p className="text-xs text-muted-foreground">
-                    The worktree holds ignored files or submodules, so removing it needs force.
+                    The worktree contains submodules, so removal needs force.
                   </p>
                 </DialogBody>
               ) : null}
