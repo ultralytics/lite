@@ -1779,11 +1779,14 @@ function App() {
       },
     );
     if (!reversible) {
-      void stopped.then(async (successful) => {
+      const cleanup = async () => {
+        const successful = await stopped;
         if (!successful) return;
         const { error, restorable } = await cleanupSession(session);
         if (error && restorable) restore(false);
-      });
+      };
+      pendingCleanups.current.add(cleanup);
+      void cleanup().finally(() => pendingCleanups.current.delete(cleanup));
       return;
     }
     sessionUndoToast(

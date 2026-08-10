@@ -3943,8 +3943,9 @@ async fn remove_worktree(
             );
         }
         if worktree_registered(&git, &main, &path)? {
-            // A manual deletion leaves the registration — and the worktree's mark — until
-            // it is pruned.
+            // A filesystem move and a manual deletion both leave this registration behind. Lite
+            // cannot distinguish them, so pruning could break a moved worktree that still uses
+            // the branch. Retain every ownership record until Git no longer registers the path.
             let owner =
                 fs::read_to_string(PathBuf::from(&recorded.admin).join("lite")).map_err(|_| {
                     "The recorded worktree is no longer one Lite can prove it created".to_owned()
@@ -3954,7 +3955,10 @@ async fn remove_worktree(
                     "The recorded worktree is no longer one Lite can prove it created".into(),
                 );
             }
-            let _ = command_output(&git, &main, &["worktree", "prune"]);
+            return Err(
+                "Git still registers this missing worktree; repair or remove it with Git before closing the session"
+                    .into(),
+            );
         } else if !branch_exists(&git, &main, &recorded.branch)? {
             // Neither registration nor branch: only the record — and the mark — are left.
             remove_repo_mark(&git, &main, &root_id);
