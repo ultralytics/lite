@@ -277,7 +277,7 @@ export function NewSessionDialog({
       );
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === choice.id)?.[1];
-      if (result && !result.available) setError(result.detail);
+      if (result && !result.available && result.installable) setError(result.detail);
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -408,7 +408,7 @@ export function NewSessionDialog({
                         <span className="block truncate">{sessionLabel(option)}</span>
                         {state && !state.available ? (
                           <span className="block truncate text-xs font-normal text-muted-foreground">
-                            Not installed
+                            {state.installable ? "Not installed" : "Setup required"}
                           </span>
                         ) : authProvider ? (
                           <ProviderAuthDescription provider={authProvider} status={authStatus} />
@@ -422,7 +422,20 @@ export function NewSessionDialog({
                   );
                 })}
               </div>
-              {missing ? <p className="text-xs text-muted-foreground">{missing.detail}</p> : null}
+              {!missing?.installable && (missing || (choice.agent !== "shell" && status)) ? (
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <p className="min-w-0 text-xs text-muted-foreground">
+                    {missing?.detail ||
+                      `Lite manages ${sessionLabel({ agent: choice.agent, provider: undefined })} installation and updates.`}
+                  </p>
+                  {choice.agent !== "shell" && status ? (
+                    <Button type="button" size="sm" variant="ghost" disabled={Boolean(installing)} onClick={install}>
+                      {installing === choice.id ? <Spinner /> : null}
+                      {installing === choice.id ? "Updating…" : "Update"}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
             </div>
             {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
@@ -432,8 +445,8 @@ export function NewSessionDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!ready}>
-              {!status || installing ? <Spinner /> : null}
-              {installing
+              {!status || (installing && missing?.installable) ? <Spinner /> : null}
+              {installing && missing?.installable
                 ? `Installing ${sessionLabel(choice)}…`
                 : missing?.installable
                   ? `Install ${sessionLabel(choice)}`
