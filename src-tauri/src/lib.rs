@@ -2111,8 +2111,12 @@ fn agent_command(
         }
         "shell" => {
             let mut command = CommandBuilder::new_default_prog();
+            // macOS keys its per-session shell history on the exported session id.
             #[cfg(target_os = "macos")]
-            command.env("TERM_PROGRAM", "Apple_Terminal");
+            {
+                command.env("TERM_PROGRAM", "Apple_Terminal");
+                command.env("TERM_SESSION_ID", session_id);
+            }
             command
         }
         _ => return Err("Unknown session type".into()),
