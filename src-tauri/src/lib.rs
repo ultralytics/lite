@@ -3781,6 +3781,15 @@ fn delete_branch(git: &Path, main: &Path, branch: &str, head: &str) -> Result<()
     {
         return Ok(());
     }
+    // A branch checked out in another worktree — say, Lite's own worktree moved elsewhere by
+    // hand — is not deleted: the record keeps a way back, and the close dialog offers keep.
+    let worktrees = command_output(git, main, &["worktree", "list", "--porcelain"])?;
+    let checked_out = format!("branch refs/heads/{branch}");
+    if worktrees.lines().any(|line| line == checked_out) {
+        return Err(format!(
+            "Branch {branch} is checked out in a worktree; it is left in place"
+        ));
+    }
     command_output(git, main, &["update-ref", "-d", &reference, &tip]).map(|_| ())
 }
 
