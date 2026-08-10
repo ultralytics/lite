@@ -458,11 +458,28 @@ async fn forget_worktree(
 }
 
 // worktree add has already run when these are reached, so a failure after it puts the folder and
-// branch back rather than leaving an orphan nothing can clean up.
-fn undo_worktree(git: &Path, repo: &Path, worktree: &Path, branch: &str) {
+// branch back rather than leaving an orphan nothing can clean up. A rollback that fails is said
+// out loud: the caller's error alone would strand the worktree without a word about where.
+fn undo_worktree(git: &Path, repo: &Path, worktree: &Path, branch: &str) -> Result<(), String> {
     let target = path_text(worktree);
-    let _ = command_output(git, repo, &["worktree", "remove", "--force", &target]);
-    let _ = command_output(git, repo, &["branch", "-D", branch]);
+    command_output(git, repo, &["worktree", "remove", "--force", &target])?;
+    command_output(git, repo, &["branch", "-D", branch]).map(|_| ())
+}
+
+fn fail_with_rollback(
+    error: String,
+    git: &Path,
+    repo: &Path,
+    worktree: &Path,
+    branch: &str,
+) -> String {
+    match undo_worktree(git, repo, worktree, branch) {
+        Ok(()) => error,
+        Err(rollback) => format!(
+            "{error}; rollback also failed ({rollback}), the worktree may remain at {}",
+            path_text(worktree)
+        ),
+    }
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -3502,43 +3519,52 @@ async fn create_worktree(
     }
     // A new branch starts where the selected folder is, not where the main checkout happens to
     // be: a worktree made from a feature worktree keeps the feature's commits. An empty
-    // repository has no HEAD; without a start point Git creates the unborn branch, and the
-    // record simply has no ancestor to check later.
+    // repository has no HEAD; current git starts the unborn branch without a start point, older
+    // git needs --orphan for the same start, and the record simply has no ancestor to check later.
     let head = command_output(&git, &folder, &["rev-parse", "HEAD"]).ok();
     let target = path_text(&worktree);
     let mut args = vec!["worktree", "add", "-b", branch, &target];
     if let Some(head) = head.as_deref() {
         args.push(head);
     }
-    command_output(&git, &repo, &args)?;
+    match command_output(&git, &repo, &args) {
+        Ok(_) => {}
+        Err(error) if head.is_none() => {
+            command_output(
+                &git,
+                &repo,
+                &["worktree", "add", "--orphan", "-b", branch, &target],
+            )
+            .map_err(|_| error)?;
+        }
+        Err(error) => return Err(error),
+    }
     // Lite marks the worktrees it makes inside their administrative folder, where git status
     // cannot see it, and the repository itself in its info folder — git's own place for
     // repo-local metadata. Removal asks for these marks: whatever else comes to sit at a
     // recorded path — a main checkout, a planted worktree, a re-clone's — has neither.
     let admin = match command_output(&git, &worktree, &["rev-parse", "--absolute-git-dir"]) {
         Ok(admin) => PathBuf::from(admin),
-        Err(error) => {
-            undo_worktree(&git, &repo, &worktree, branch);
-            return Err(error);
-        }
+        Err(error) => return Err(fail_with_rollback(error, &git, &repo, &worktree, branch)),
     };
     if let Err(error) = fs::write(admin.join("lite"), &root_id) {
-        undo_worktree(&git, &repo, &worktree, branch);
-        return Err(error.to_string());
+        return Err(fail_with_rollback(
+            error.to_string(),
+            &git,
+            &repo,
+            &worktree,
+            branch,
+        ));
     }
     let main_git = match command_output(&git, &repo, &["rev-parse", "--absolute-git-dir"]) {
         Ok(main_git) => PathBuf::from(main_git),
-        Err(error) => {
-            undo_worktree(&git, &repo, &worktree, branch);
-            return Err(error);
-        }
+        Err(error) => return Err(fail_with_rollback(error, &git, &repo, &worktree, branch)),
     };
     if let Err(error) = write_atomic(
         &main_git.join("info").join(format!("lite-{root_id}")),
         branch.as_bytes(),
     ) {
-        undo_worktree(&git, &repo, &worktree, branch);
-        return Err(error);
+        return Err(fail_with_rollback(error, &git, &repo, &worktree, branch));
     }
     if let Err(error) = record_worktree(
         &app,
@@ -3550,8 +3576,7 @@ async fn create_worktree(
         head.as_deref().unwrap_or(""),
     ) {
         remove_repo_mark(&git, &repo, &root_id);
-        undo_worktree(&git, &repo, &worktree, branch);
-        return Err(error);
+        return Err(fail_with_rollback(error, &git, &repo, &worktree, branch));
     }
     match grant_directory(&app, &roots, worktree.clone(), Some(root_id.clone())) {
         Ok(grant) => Ok(grant),
@@ -3560,8 +3585,7 @@ async fn create_worktree(
                 let _ = forget_record(&directory.join(&root_id));
             }
             remove_repo_mark(&git, &repo, &root_id);
-            undo_worktree(&git, &repo, &worktree, branch);
-            Err(error)
+            Err(fail_with_rollback(error, &git, &repo, &worktree, branch))
         }
     }
 }
