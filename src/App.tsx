@@ -5,6 +5,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ArrowDown,
+  ArrowUp,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -19,6 +21,8 @@ import {
   Moon,
   MoreHorizontal,
   Pencil,
+  Pin,
+  PinOff,
   Play,
   Plus,
   RefreshCw,
@@ -297,6 +301,8 @@ function AppContextMenu({
   startingIds,
   onSelectSession,
   onRenameSession,
+  onPinSession,
+  onMoveSession,
   onRestartSession,
   onCloseSession,
   onRestartAll,
@@ -308,6 +314,8 @@ function AppContextMenu({
   startingIds: Set<string>;
   onSelectSession: (session: Session) => void;
   onRenameSession: (session: Session) => void;
+  onPinSession: (session: Session) => void;
+  onMoveSession: (session: Session, direction: -1 | 1) => void;
   onRestartSession: (session: Session) => void;
   onCloseSession: (session: Session) => void;
   onRestartAll: () => void;
@@ -321,6 +329,12 @@ function AppContextMenu({
       ? context.editable.readOnly || context.editable.disabled
       : false;
   const session = sessions.find((item) => item.id === context.sessionId);
+  const sessionIndex = session ? sessions.indexOf(session) : -1;
+  const canMoveUp = sessionIndex > 0 && Boolean(sessions[sessionIndex - 1].pinned) === Boolean(session?.pinned);
+  const canMoveDown =
+    sessionIndex >= 0 &&
+    sessionIndex < sessions.length - 1 &&
+    Boolean(sessions[sessionIndex + 1].pinned) === Boolean(session?.pinned);
   const linkGroup = Boolean(context.url || context.value);
   const surfaceGroup = [
     context.collapseFiles || context.collapsePanel || context.collapseSessions,
@@ -357,6 +371,18 @@ function AppContextMenu({
             <ContextMenuItem onClick={() => writeClipboard(session.cwd)}>
               <Copy />
               Copy path
+            </ContextMenuItem>
+            <ContextMenuItem onClick={() => onPinSession(session)}>
+              {session.pinned ? <PinOff /> : <Pin />}
+              {session.pinned ? "Unpin" : "Pin to top"}
+            </ContextMenuItem>
+            <ContextMenuItem disabled={!canMoveUp} onClick={() => onMoveSession(session, -1)}>
+              <ArrowUp />
+              Move up
+            </ContextMenuItem>
+            <ContextMenuItem disabled={!canMoveDown} onClick={() => onMoveSession(session, 1)}>
+              <ArrowDown />
+              Move down
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onRestartSession(session)}>
@@ -722,9 +748,14 @@ function SessionRow({
   starting,
   working,
   renaming,
+  drop,
   onSelect,
   onRename,
   onRenamingChange,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onDragCancel,
   onRestart,
   onClose,
 }: {
@@ -735,13 +766,29 @@ function SessionRow({
   starting: boolean;
   working: boolean;
   renaming: boolean;
+  drop?: "before" | "after";
   onSelect: () => void;
   onRename: (name: string) => void;
   onRenamingChange: (renaming: boolean) => void;
+  onDragStart: () => void;
+  onDragMove: (clientX: number, clientY: number) => void;
+  onDragEnd: () => void;
+  onDragCancel: () => void;
   onRestart: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(session.name);
+  const dragPointer = useRef<
+    | {
+        id: number;
+        x: number;
+        y: number;
+        target: Element;
+        dragging: boolean;
+      }
+    | undefined
+  >(undefined);
+  const suppressClick = useRef(false);
 
   function saveName() {
     const next = name.trim();
@@ -755,9 +802,57 @@ function SessionRow({
       data-context-session={session.id}
       size="xs"
       onClick={onSelect}
+      onClickCapture={(event) => {
+        if (!suppressClick.current) return;
+        suppressClick.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
+      onPointerDown={(event) => {
+        const target = event.target as Element;
+        if (event.button !== 0 || renaming || target.closest("input,[data-slot=item-actions]")) return;
+        target.setPointerCapture(event.pointerId);
+        dragPointer.current = {
+          id: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          target,
+          dragging: false,
+        };
+      }}
+      onPointerMove={(event) => {
+        const pointer = dragPointer.current;
+        if (!pointer || pointer.id !== event.pointerId) return;
+        if (!pointer.dragging) {
+          if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) < 4) return;
+          pointer.dragging = true;
+          onDragStart();
+        }
+        event.preventDefault();
+        onDragMove(event.clientX, event.clientY);
+      }}
+      onPointerUp={(event) => {
+        const pointer = dragPointer.current;
+        if (!pointer || pointer.id !== event.pointerId) return;
+        if (pointer.target.hasPointerCapture(pointer.id)) pointer.target.releasePointerCapture(pointer.id);
+        dragPointer.current = undefined;
+        if (!pointer.dragging) return;
+        event.preventDefault();
+        suppressClick.current = true;
+        onDragEnd();
+        window.setTimeout(() => {
+          suppressClick.current = false;
+        });
+      }}
+      onPointerCancel={(event) => {
+        const pointer = dragPointer.current;
+        if (!pointer || pointer.id !== event.pointerId) return;
+        dragPointer.current = undefined;
+        if (pointer.dragging) onDragCancel();
+      }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`flex-nowrap transition-[color,background-color,opacity] active:opacity-70 ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
+      className={`relative flex-nowrap transition-[color,background-color,opacity] before:pointer-events-none before:absolute before:z-10 before:inset-x-1 before:h-0.5 before:rounded-full before:bg-primary after:pointer-events-none after:absolute after:z-10 after:inset-x-1 after:h-0.5 after:rounded-full after:bg-primary active:opacity-70 ${drop === "before" ? "before:-top-0.5" : "before:hidden"} ${drop === "after" ? "after:-bottom-0.5" : "after:hidden"} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge
@@ -788,18 +883,21 @@ function SessionRow({
       ) : (
         <div className="min-w-0 flex-1 text-left">
           {/* Only the visible title owns rename; its hit area stops where its text stops. */}
-          <button
-            type="button"
-            className="block w-fit max-w-full truncate text-xs font-medium"
-            onClick={(event) => {
-              event.stopPropagation();
-              if (active && session.running) onRenamingChange(true);
-              else onSelect();
-            }}
-            onDoubleClick={() => onRenamingChange(true)}
-          >
-            {session.name}
-          </button>
+          <div className="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              className="block w-fit max-w-full truncate text-xs font-medium"
+              onClick={(event) => {
+                event.stopPropagation();
+                if (active && session.running) onRenamingChange(true);
+                else onSelect();
+              }}
+              onDoubleClick={() => onRenamingChange(true)}
+            >
+              {session.name}
+            </button>
+            {session.pinned ? <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" /> : null}
+          </div>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
             title={session.cwd}
@@ -929,6 +1027,7 @@ function App() {
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
   const [query, setQuery] = useState("");
   const [renamingId, setRenamingId] = useState("");
+  const [sessionDrop, setSessionDrop] = useState<{ targetId: string; after: boolean }>();
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
@@ -955,6 +1054,8 @@ function App() {
   const [updateError, setUpdateError] = useState("");
   const updateDialog = useRef<HTMLDivElement>(null);
   const runs = useRef(new Map<string, string>());
+  const draggingSession = useRef("");
+  const sessionDropRef = useRef<{ targetId: string; after: boolean } | undefined>(undefined);
   const sessionsRef = useRef(sessions);
   const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
@@ -1390,6 +1491,94 @@ function App() {
     void launch(session, false);
   }
 
+  function pinSession(session: Session) {
+    setSessions((current) => {
+      const index = current.findIndex((item) => item.id === session.id);
+      if (index < 0) return current;
+      const next = [...current];
+      const [item] = next.splice(index, 1);
+      const pinned = !item.pinned;
+      const boundary = next.findIndex((candidate) => !candidate.pinned);
+      next.splice(boundary < 0 ? next.length : boundary, 0, { ...item, pinned: pinned || undefined });
+      return next;
+    });
+  }
+
+  function moveSession(session: Session, direction: -1 | 1) {
+    setSessions((current) => {
+      const index = current.findIndex((item) => item.id === session.id);
+      const target = index + direction;
+      if (
+        index < 0 ||
+        target < 0 ||
+        target >= current.length ||
+        Boolean(current[index].pinned) !== Boolean(current[target].pinned)
+      )
+        return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
+  function reorderSession(draggedId: string, targetId: string, after: boolean) {
+    setSessions((current) => {
+      const draggedIndex = current.findIndex((session) => session.id === draggedId);
+      const targetIndex = current.findIndex((session) => session.id === targetId);
+      if (
+        draggedIndex < 0 ||
+        targetIndex < 0 ||
+        draggedIndex === targetIndex ||
+        Boolean(current[draggedIndex].pinned) !== Boolean(current[targetIndex].pinned)
+      )
+        return current;
+      const next = [...current];
+      const [dragged] = next.splice(draggedIndex, 1);
+      const destination = next.findIndex((session) => session.id === targetId) + Number(after);
+      next.splice(destination, 0, dragged);
+      return next.every((session, index) => session === current[index]) ? current : next;
+    });
+  }
+
+  function dragSessionOver(targetId: string, after: boolean) {
+    const dragged = sessionsRef.current.find((session) => session.id === draggingSession.current);
+    const target = sessionsRef.current.find((session) => session.id === targetId);
+    if (!dragged || !target || Boolean(dragged.pinned) !== Boolean(target.pinned)) {
+      sessionDropRef.current = undefined;
+      setSessionDrop(undefined);
+      return;
+    }
+    sessionDropRef.current = { targetId, after };
+    setSessionDrop((current) => {
+      if (current?.targetId === targetId && current.after === after) return current;
+      return { targetId, after };
+    });
+  }
+
+  function dragSessionAt(clientX: number, clientY: number) {
+    const row = document
+      .elementFromPoint(clientX, clientY)
+      ?.closest<HTMLElement>("[data-slot=item][data-context-session]");
+    if (!row) {
+      sessionDropRef.current = undefined;
+      return setSessionDrop(undefined);
+    }
+    const bounds = row.getBoundingClientRect();
+    dragSessionOver(row.dataset.contextSession ?? "", clientY >= bounds.top + bounds.height / 2);
+  }
+
+  function endSessionDrag() {
+    const drop = sessionDropRef.current;
+    if (drop) reorderSession(draggingSession.current, drop.targetId, drop.after);
+    cancelSessionDrag();
+  }
+
+  function cancelSessionDrag() {
+    draggingSession.current = "";
+    sessionDropRef.current = undefined;
+    setSessionDrop(undefined);
+  }
+
   function sessionUndoToast(
     session: Session,
     action: "Closed" | "Restarted",
@@ -1582,7 +1771,10 @@ function App() {
           return current.map((item) => (item.id === session.id ? { ...item, running } : item));
         }
         const restored = [...current];
-        restored.splice(Math.min(index, restored.length), 0, { ...session, running });
+        const firstUnpinned = restored.findIndex((item) => !item.pinned);
+        const boundary = firstUnpinned < 0 ? restored.length : firstUnpinned;
+        const position = session.pinned ? Math.min(index, boundary) : Math.max(index, boundary);
+        restored.splice(Math.min(position, restored.length), 0, { ...session, running });
         return restored;
       });
       if (wasSelected) setSelectedId((current) => (current === nextSelectedId ? session.id : current));
@@ -1701,6 +1893,8 @@ function App() {
           setRenamingId(session.id);
           if (shut.sidebar) glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size));
         }}
+        onPinSession={pinSession}
+        onMoveSession={moveSession}
         onRestartSession={(session) => void restartSession(session)}
         onCloseSession={closeSession}
         onRestartAll={() => void restartAllSessions()}
@@ -1899,7 +2093,10 @@ function App() {
                               working={working.has(session.id)}
                             />
                           </TooltipTrigger>
-                          <TooltipContent side="right">{session.name}</TooltipContent>
+                          <TooltipContent side="right">
+                            {session.name}
+                            {session.pinned ? " · Pinned" : ""}
+                          </TooltipContent>
                         </Tooltip>
                       ))}
                     </div>
@@ -1956,6 +2153,13 @@ function App() {
                             starting={startingIds.has(session.id)}
                             working={working.has(session.id)}
                             renaming={renamingId === session.id}
+                            drop={
+                              sessionDrop?.targetId === session.id
+                                ? sessionDrop.after
+                                  ? "after"
+                                  : "before"
+                                : undefined
+                            }
                             onSelect={() => openRef.current(session)}
                             onRename={(name) =>
                               setSessions((current) =>
@@ -1965,6 +2169,14 @@ function App() {
                               )
                             }
                             onRenamingChange={(renaming) => setRenamingId(renaming ? session.id : "")}
+                            onDragStart={() => {
+                              draggingSession.current = session.id;
+                              sessionDropRef.current = undefined;
+                              setSessionDrop(undefined);
+                            }}
+                            onDragMove={dragSessionAt}
+                            onDragEnd={endSessionDrag}
+                            onDragCancel={cancelSessionDrag}
                             onRestart={() => void restartSession(session)}
                             onClose={() => closeSession(session)}
                           />
