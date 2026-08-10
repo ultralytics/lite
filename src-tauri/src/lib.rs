@@ -459,28 +459,42 @@ async fn forget_worktree(
 }
 
 // worktree add has already run when these are reached, so a failure after it puts the folder and
-// branch back rather than leaving an orphan nothing can clean up. A rollback that fails is said
-// out loud: the caller's error alone would strand the worktree without a word about where.
+// branch back rather than leaving an orphan nothing can clean up. Both removals are always
+// attempted — one failing must not strand the other — and a rollback that fails is said out
+// loud: the caller's error alone would strand the worktree without a word about where.
 fn undo_worktree(git: &Path, repo: &Path, worktree: &Path, branch: &str) -> Result<(), String> {
     let target = path_text(worktree);
-    command_output(git, repo, &["worktree", "remove", "--force", &target])?;
-    command_output(git, repo, &["branch", "-D", branch]).map(|_| ())
+    let removed = command_output(git, repo, &["worktree", "remove", "--force", &target]);
+    let branch_gone = command_output(git, repo, &["branch", "-D", branch]);
+    removed.and(branch_gone).map(|_| ())
 }
 
+// On a clean rollback the repository's mark goes too: nothing is left to prove. On a failed one
+// it stays — the worktree and branch are still there, and the mark is the only way a later
+// attempt can prove they are Lite's.
 fn fail_with_rollback(
     error: String,
     git: &Path,
     repo: &Path,
     worktree: &Path,
     branch: &str,
+    root_id: &str,
 ) -> String {
-    match undo_worktree(git, repo, worktree, branch) {
-        Ok(()) => error,
+    let result = match undo_worktree(git, repo, worktree, branch) {
+        Ok(()) => {
+            remove_repo_mark(git, repo, root_id);
+            error
+        }
         Err(rollback) => format!(
             "{error}; rollback also failed ({rollback}), the worktree may remain at {}",
             path_text(worktree)
         ),
+    };
+    // The <repo>-worktrees folder Lite made for this goes too — but only ever when empty.
+    if let Some(parent) = worktree.parent() {
+        let _ = fs::remove_dir(parent);
     }
+    result
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -3655,10 +3669,15 @@ async fn create_worktree(
                 )
                 .is_err()
                 {
+                    // The <repo>-worktrees folder Lite made goes too — but only ever when empty.
+                    let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
                     return Err(error);
                 }
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
+                return Err(error);
+            }
         }
     }
     // Lite marks the worktrees it makes inside their administrative folder, where git status
@@ -3667,7 +3686,11 @@ async fn create_worktree(
     // recorded path — a main checkout, a planted worktree, a re-clone's — has neither.
     let admin = match command_output(&git, &worktree, &["rev-parse", "--absolute-git-dir"]) {
         Ok(admin) => PathBuf::from(admin),
-        Err(error) => return Err(fail_with_rollback(error, &git, &repo, &worktree, branch)),
+        Err(error) => {
+            return Err(fail_with_rollback(
+                error, &git, &repo, &worktree, branch, &root_id,
+            ));
+        }
     };
     if let Err(error) = fs::write(admin.join("lite"), &root_id) {
         return Err(fail_with_rollback(
@@ -3676,17 +3699,24 @@ async fn create_worktree(
             &repo,
             &worktree,
             branch,
+            &root_id,
         ));
     }
     let main_git = match command_output(&git, &repo, &["rev-parse", "--absolute-git-dir"]) {
         Ok(main_git) => PathBuf::from(main_git),
-        Err(error) => return Err(fail_with_rollback(error, &git, &repo, &worktree, branch)),
+        Err(error) => {
+            return Err(fail_with_rollback(
+                error, &git, &repo, &worktree, branch, &root_id,
+            ));
+        }
     };
     if let Err(error) = write_atomic(
         &main_git.join("info").join(format!("lite-{root_id}")),
         branch.as_bytes(),
     ) {
-        return Err(fail_with_rollback(error, &git, &repo, &worktree, branch));
+        return Err(fail_with_rollback(
+            error, &git, &repo, &worktree, branch, &root_id,
+        ));
     }
     if let Err(error) = record_worktree(
         &app,
@@ -3697,8 +3727,9 @@ async fn create_worktree(
         &admin,
         head.as_deref().unwrap_or(""),
     ) {
-        remove_repo_mark(&git, &repo, &root_id);
-        return Err(fail_with_rollback(error, &git, &repo, &worktree, branch));
+        return Err(fail_with_rollback(
+            error, &git, &repo, &worktree, branch, &root_id,
+        ));
     }
     match grant_directory(&app, &roots, worktree.clone(), Some(root_id.clone())) {
         Ok(grant) => Ok(grant),
@@ -3706,8 +3737,9 @@ async fn create_worktree(
             if let Ok(directory) = worktrees_path(&app) {
                 let _ = forget_record(&directory.join(&root_id));
             }
-            remove_repo_mark(&git, &repo, &root_id);
-            Err(fail_with_rollback(error, &git, &repo, &worktree, branch))
+            Err(fail_with_rollback(
+                error, &git, &repo, &worktree, branch, &root_id,
+            ))
         }
     }
 }

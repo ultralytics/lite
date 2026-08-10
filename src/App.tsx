@@ -2459,35 +2459,40 @@ function App() {
                     // and grant survive for a retry, and they need a row to be retried from.
                     const failed = new Set<string>();
                     setClosingAllRunning(true);
-                    void Promise.all(
-                      sessions.map(async (session) => {
-                        // A session that cannot be stopped is left alone, still live and still
-                        // hearing its PTY; every promise settles, so the dialog always comes back.
-                        const stopped = await invoke("stop_session", { sessionId: session.id }).then(
-                          () => true,
-                          () => false,
-                        );
-                        if (!stopped) {
-                          failed.add(session.id);
-                          return;
-                        }
-                        runs.current.delete(session.id);
-                        const { error, restorable } = await cleanupSession(session);
-                        if (error && restorable) {
-                          failed.add(session.id);
-                          // The PTY is already stopped; the retained tab must not look live.
-                          setSessions((current) =>
-                            current.map((item) => (item.id === session.id ? { ...item, running: false } : item)),
+                    // Registered like every other cleanup: closing the app mid-run waits for this
+                    // instead of abandoning stops and cleanups half-done.
+                    const close = async () => {
+                      await Promise.all(
+                        sessions.map(async (session) => {
+                          // A session that cannot be stopped is left alone, still live and still
+                          // hearing its PTY; every promise settles, so the dialog always comes back.
+                          const stopped = await invoke("stop_session", { sessionId: session.id }).then(
+                            () => true,
+                            () => false,
                           );
-                          return;
-                        }
-                        setSessions((current) => current.filter((item) => item.id !== session.id));
-                      }),
-                    ).then(() => {
+                          if (!stopped) {
+                            failed.add(session.id);
+                            return;
+                          }
+                          runs.current.delete(session.id);
+                          const { error, restorable } = await cleanupSession(session);
+                          if (error && restorable) {
+                            failed.add(session.id);
+                            // The PTY is already stopped; the retained tab must not look live.
+                            setSessions((current) =>
+                              current.map((item) => (item.id === session.id ? { ...item, running: false } : item)),
+                            );
+                            return;
+                          }
+                          setSessions((current) => current.filter((item) => item.id !== session.id));
+                        }),
+                      );
                       setSelectedId(sessions.find((session) => failed.has(session.id))?.id ?? "");
                       setClosingAllRunning(false);
                       setClosingAll(false);
-                    });
+                    };
+                    pendingCleanups.current.add(close);
+                    void close().finally(() => pendingCleanups.current.delete(close));
                   }}
                 >
                   {closingAllRunning ? <Spinner /> : null}
