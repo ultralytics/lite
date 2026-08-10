@@ -1727,12 +1727,13 @@ function App() {
     } else {
       keptWorktrees.current.add(session.id);
     }
-    closeSessionNow(session);
+    closeSessionNow(session, false);
   }
 
-  // Closing is reversible: the row leaves immediately and its PTY stops, while the provider session
-  // metadata and directory grant remain until the toast closes without being undone.
-  function closeSessionNow(session: Session) {
+  // Ordinary closing is reversible: the row leaves immediately and its PTY stops, while the provider
+  // metadata and directory grant remain until the toast closes. A worktree's explicit keep/delete
+  // choice instead runs cleanup as soon as the PTY stops, while the confirmation is still current.
+  function closeSessionNow(session: Session, reversible = true) {
     if (startingIds.has(session.id)) return;
     clearAttention(session.id);
     const index = sessions.findIndex((item) => item.id === session.id);
@@ -1777,6 +1778,14 @@ function App() {
         return false;
       },
     );
+    if (!reversible) {
+      void stopped.then(async (successful) => {
+        if (!successful) return;
+        const { error, restorable } = await cleanupSession(session);
+        if (error && restorable) restore(false);
+      });
+      return;
+    }
     sessionUndoToast(
       session,
       "Closed",

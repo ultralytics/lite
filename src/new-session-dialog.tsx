@@ -95,9 +95,11 @@ export function NewSessionDialog({
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
 
-  // Startup checks are independent, so one slow registry request never holds up another harness.
+  // Dialog checks are independent, so one slow registry request never holds up another harness.
   useEffect(() => {
+    if (!isOpen) return;
     let disposed = false;
+    setUpdates({});
     for (const agent of harnesses) {
       void invoke<boolean>("agent_update_available", { agent })
         .then((available) => {
@@ -110,7 +112,7 @@ export function NewSessionDialog({
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [isOpen]);
 
   // A typed path settles for a moment before it is probed, so a folder is never looked up once per
   // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
