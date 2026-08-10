@@ -486,7 +486,7 @@ fn fail_with_rollback(
             error
         }
         Err(rollback) => format!(
-            "{error}; rollback also failed ({rollback}); the worktree remains at {} — starting the session again resumes it",
+            "{error}; rollback also failed ({rollback}); the worktree or branch may remain from {}",
             path_text(worktree)
         ),
     }
