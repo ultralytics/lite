@@ -2525,33 +2525,32 @@ async fn agent_availability(
 #[tauri::command]
 async fn install_agent(agent: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let mut command = if agent == "kimi" {
+        let mut command = if agent == "kimi" || agent == "claude" {
+            let url = if agent == "kimi" {
+                "https://code.kimi.com/kimi-code/install"
+            } else {
+                "https://claude.ai/install"
+            };
             #[cfg(windows)]
             {
                 let powershell = resolve_executable("powershell")
                     .ok_or("Could not find PowerShell in your PATH")?;
                 let mut command = Command::new(powershell);
-                command.args([
-                    "-NoProfile",
-                    "-Command",
-                    "irm https://code.kimi.com/kimi-code/install.ps1 | iex",
-                ]);
+                command
+                    .args(["-NoProfile", "-Command"])
+                    .arg(format!("irm {url}.ps1 | iex"));
                 command
             }
             #[cfg(unix)]
             {
                 let mut command = Command::new("/bin/sh");
-                command.args([
-                    "-c",
-                    "curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash",
-                ]);
+                command.arg("-c").arg(format!("curl -fsSL {url}.sh | bash"));
                 command
             }
         } else {
             let package = match agent.as_str() {
-                "claude" => "@anthropic-ai/claude-code",
-                "codex" => "@openai/codex",
-                "gemini" => "@google/gemini-cli",
+                "codex" => "@openai/codex@latest",
+                "gemini" => "@google/gemini-cli@latest",
                 "qwen" => "@qwen-code/qwen-code@latest",
                 _ => return Err("This session type cannot be installed automatically".into()),
             };
@@ -2619,6 +2618,64 @@ async fn install_agent(agent: String) -> Result<(), String> {
     })
     .await
     .map_err(|error| format!("Could not finish the install: {error}"))?
+}
+
+#[tauri::command]
+async fn agent_update_available(agent: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let executable = agent_executable(&agent).ok_or("Unknown session type")?;
+        let Some(executable) = resolve_executable(executable) else {
+            return Ok(false);
+        };
+        let package = match agent.as_str() {
+            "claude" => "@anthropic-ai/claude-code",
+            "codex" => "@openai/codex",
+            "gemini" => "@google/gemini-cli",
+            "kimi" => "@moonshot-ai/kimi-code",
+            "qwen" => "@qwen-code/qwen-code",
+            _ => return Err("Unknown session type".into()),
+        };
+        let npm = resolve_executable("npm").ok_or("Could not check for updates without npm")?;
+        let run = |program: &Path, args: &[&str]| -> Result<String, String> {
+            let mut command = Command::new(program);
+            command.args(args);
+            if let Some(path) = user_path() {
+                command.env("PATH", path);
+            }
+            let output = command.output().map_err(|error| error.to_string())?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+            } else {
+                Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
+            }
+        };
+        let version = |output: &str| {
+            output.split_whitespace().find_map(|word| {
+                let word = word.trim_matches(|character: char| {
+                    !character.is_ascii_alphanumeric() && !['.', '-', '+'].contains(&character)
+                });
+                (word.contains('.')
+                    && word.starts_with(|character: char| character.is_ascii_digit()))
+                .then(|| word.to_owned())
+            })
+        };
+        let current = version(&run(&executable, &["--version"])?)
+            .ok_or("Could not read the installed version")?;
+        let latest = version(&run(
+            &npm,
+            &[
+                "view",
+                package,
+                "version",
+                "--fetch-timeout=5000",
+                "--fetch-retries=0",
+            ],
+        )?)
+        .ok_or("Could not read the latest version")?;
+        Ok(current != latest)
+    })
+    .await
+    .map_err(|error| format!("Could not check for updates: {error}"))?
 }
 
 #[tauri::command]
@@ -4195,6 +4252,7 @@ pub fn run() {
             forget_worktree,
             read_usage,
             agent_availability,
+            agent_update_available,
             install_agent,
             open_setup_docs,
             open_url,

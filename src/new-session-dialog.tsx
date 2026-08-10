@@ -26,6 +26,7 @@ const choices = [
   ...Object.values(AUTH_PROVIDERS),
   { id: "shell", agent: "shell" as const, provider: undefined, description: "Open your default shell" },
 ];
+const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
@@ -82,7 +83,8 @@ export function NewSessionDialog({
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
-  const [updatedAgents, setUpdatedAgents] = useState<Set<string>>(new Set());
+  // Undefined while checking, null when the registry could not answer, otherwise whether an update exists.
+  const [updates, setUpdates] = useState<Record<string, boolean | null>>({});
   // Creation runs the worktree command against the dialog's grant, so closing must wait for it:
   // a Cancel mid-command would revoke the grant the command is still using.
   const [creating, setCreating] = useState(false);
@@ -101,6 +103,23 @@ export function NewSessionDialog({
   // the toggle the user has already answered.
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+
+  // Startup checks are independent, so one slow registry request never holds up another harness.
+  useEffect(() => {
+    let disposed = false;
+    for (const agent of harnesses) {
+      void invoke<boolean>("agent_update_available", { agent })
+        .then((available) => {
+          if (!disposed) setUpdates((current) => ({ ...current, [agent]: available }));
+        })
+        .catch(() => {
+          if (!disposed) setUpdates((current) => ({ ...current, [agent]: null }));
+        });
+    }
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   // A typed path settles for a moment before it is probed, so a folder is never looked up once per
   // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
@@ -157,7 +176,7 @@ export function NewSessionDialog({
       .catch((reason) => {
         if (!disposed) setError(String(reason));
       });
-    // Checked only while the dialog is open, so Lite never probes the system in the background.
+    // Installation and provider setup can change while the app runs, so refresh them on each open.
     for (const option of choices) {
       void invoke<Availability>("agent_availability", { agent: option.agent, provider: option.provider })
         .then((result) => {
@@ -279,7 +298,7 @@ export function NewSessionDialog({
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === choice.id)?.[1];
       if (result && !result.available && result.installable) setError(result.detail);
-      else setUpdatedAgents((current) => new Set(current).add(choice.agent));
+      else setUpdates((current) => ({ ...current, [choice.agent]: false }));
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -436,19 +455,27 @@ export function NewSessionDialog({
                       size="sm"
                       variant="ghost"
                       className={
-                        updatedAgents.has(choice.agent)
+                        updates[choice.agent] === false
                           ? "text-green-600 disabled:opacity-100 dark:text-green-400"
                           : undefined
                       }
-                      disabled={Boolean(installing) || updatedAgents.has(choice.agent)}
+                      disabled={
+                        Boolean(installing) || updates[choice.agent] === false || updates[choice.agent] === undefined
+                      }
                       onClick={install}
                     >
-                      {updatedAgents.has(choice.agent) ? <Check /> : installing === choice.id ? <Spinner /> : null}
-                      {updatedAgents.has(choice.agent)
+                      {updates[choice.agent] === false ? (
+                        <Check />
+                      ) : installing === choice.id || updates[choice.agent] === undefined ? (
+                        <Spinner />
+                      ) : null}
+                      {updates[choice.agent] === false
                         ? "Up to date"
                         : installing === choice.id
                           ? "Updating…"
-                          : "Update"}
+                          : updates[choice.agent] === undefined
+                            ? "Checking…"
+                            : "Update"}
                     </Button>
                   ) : null}
                 </div>
