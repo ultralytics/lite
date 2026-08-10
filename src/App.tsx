@@ -2452,9 +2452,8 @@ function App() {
                     setClosingAllRunning(true);
                     void Promise.all(
                       sessions.map(async (session) => {
-                        runs.current.delete(session.id);
-                        // A session that cannot be stopped is left alone, still live; every
-                        // promise settles, so the dialog always comes back.
+                        // A session that cannot be stopped is left alone, still live and still
+                        // hearing its PTY; every promise settles, so the dialog always comes back.
                         const stopped = await invoke("stop_session", { sessionId: session.id }).then(
                           () => true,
                           () => false,
@@ -2463,6 +2462,7 @@ function App() {
                           failed.add(session.id);
                           return;
                         }
+                        runs.current.delete(session.id);
                         const { error, restorable } = await cleanupSession(session);
                         if (error && restorable) {
                           failed.add(session.id);
