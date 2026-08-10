@@ -33,7 +33,11 @@ const ACTIVITY = /\x1b\]6973;lite-(working|idle)(?:\x07|\x1b\\)/g;
 // Lite needs only the signal for its in-app attention state; the terminal still owns rendering and
 // the notification payload is not retained separately from the bounded output buffer.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a terminal notification is defined by them
-const NOTIFICATION = /\x1b\](?:9;[^\x07\x1b]*|99;[^\x07\x1b]*|777;notify;[^\x07\x1b]*)(?:\x07|\x1b\\)/;
+const NOTIFICATION = /\x1b\](?:9;(?!4;)[^\x07\x1b]*|99;[^\x07\x1b]*|777;notify;[^\x07\x1b]*)(?:\x07|\x1b\\)/;
+// A bare bell is the portable fallback used by agent harnesses and shells. Remove completed OSC first
+// because their bell terminator is framing, not a notification of its own.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
+const OSC_OR_BELL = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|(\x07)/g;
 
 // The same sequence begun but not yet terminated, which the chunk that ends it completes. A title may
 // hold an escape of its own, so the payload ends only at a terminator, and a lone escape is kept
@@ -96,7 +100,10 @@ export function appendOutput(sessionId: string, data: number[]) {
   let title = "";
   let path = "";
   let activity: boolean | undefined;
-  const notification = NOTIFICATION.test(text);
+  let notification = NOTIFICATION.test(text);
+  OSC_OR_BELL.lastIndex = 0;
+  for (let match = OSC_OR_BELL.exec(text); !notification && match; match = OSC_OR_BELL.exec(text))
+    notification = Boolean(match[1]);
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
     if (match[1] === "7") {

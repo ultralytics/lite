@@ -529,7 +529,7 @@ const SESSION_STATUS = {
   idle: { dot: "bg-success", label: "Connected, idle" },
   working: { dot: "bg-sky-500 animate-pulse motion-reduce:animate-none", label: "Connected, working" },
   attention: {
-    dot: "bg-orange-500 animate-pulse motion-reduce:animate-none",
+    dot: "bg-amber-500 animate-attention motion-reduce:animate-none",
     label: "Connected, needs attention",
   },
 } as const;
@@ -1076,7 +1076,7 @@ function App() {
   }, []);
 
   // Opening a session reads its current notifications. A later notification remains highlighted until
-  // the user returns to that session, including when it arrives in the already selected session.
+  // the user returns to that session.
   useEffect(() => {
     if (selectedId && document.hasFocus()) clearAttention(selectedId);
   }, [selectedId, clearAttention]);
@@ -1241,7 +1241,8 @@ function App() {
         const { title, path, activity, notification } = appendOutput(payload.sessionId, payload.data);
         if (title) markTitle(payload.sessionId, title);
         if (path) markDirectory(payload.sessionId, path);
-        if (notification) markAttention(payload.sessionId);
+        if (notification && (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()))
+          markAttention(payload.sessionId);
         if (activity !== false) markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
