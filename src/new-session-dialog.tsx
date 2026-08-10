@@ -32,11 +32,13 @@ const choices = [
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
-// The branch a new worktree starts from, named for the repository and the moment so two sessions
-// created on the same project never collide: lite/<repo>-<yyyymmdd-hhmmss>.
+// The branch a new worktree starts from: lite/<repo>-<date>-<time>-<random>. The folder component
+// is reduced to a branch-safe alphabet (a folder named "my project" must not fail git's own
+// check), and the random tail keeps two Lite instances starting in the same second apart.
 function suggestedBranch(repo: string) {
   const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
-  return `lite/${folderName(repo) || "project"}-${stamp.slice(0, 8)}-${stamp.slice(8)}`;
+  const name = folderName(repo).replace(/[^A-Za-z0-9_-]/g, "-") || "project";
+  return `lite/${name}-${stamp.slice(0, 8)}-${stamp.slice(8)}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
 // Two sessions share a project when they sit in the same repository — which a worktree's path
