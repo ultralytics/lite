@@ -921,6 +921,9 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
+  // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
+  // cleanup has settled, so nothing can be reopened under its own cleanup.
+  const [closingAllRunning, setClosingAllRunning] = useState(false);
   // The worktree session waiting on the close dialog's answer, with what its tree looked like when asked.
   const [closingWorktree, setClosingWorktree] = useState<{
     session: Session;
@@ -2413,7 +2416,13 @@ function App() {
               ) : null}
             </DialogContent>
           </Dialog>
-          <Dialog open={closingAll} onOpenChange={setClosingAll}>
+          <Dialog
+            open={closingAll}
+            onOpenChange={(open) => {
+              if (!open && closingAllRunning) return;
+              setClosingAll(open);
+            }}
+          >
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Close all sessions?</DialogTitle>
@@ -2425,11 +2434,12 @@ function App() {
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setClosingAll(false)}>
+                <Button variant="outline" disabled={closingAllRunning} onClick={() => setClosingAll(false)}>
                   Keep
                 </Button>
                 <Button
                   variant="destructive"
+                  disabled={closingAllRunning}
                   onClick={() => {
                     attentionRef.current = [];
                     setAttention([]);
@@ -2439,6 +2449,7 @@ function App() {
                     // A session whose cleanup failed but is restorable keeps its tab: the record
                     // and grant survive for a retry, and they need a row to be retried from.
                     const failed = new Set<string>();
+                    setClosingAllRunning(true);
                     void Promise.all(
                       sessions.map(async (session) => {
                         runs.current.delete(session.id);
@@ -2456,11 +2467,13 @@ function App() {
                       }),
                     ).then(() => {
                       setSelectedId(sessions.find((session) => failed.has(session.id))?.id ?? "");
+                      setClosingAllRunning(false);
+                      setClosingAll(false);
                     });
-                    setClosingAll(false);
                   }}
                 >
-                  Close all sessions
+                  {closingAllRunning ? <Spinner /> : null}
+                  {closingAllRunning ? "Closing…" : "Close all sessions"}
                 </Button>
               </DialogFooter>
             </DialogContent>
