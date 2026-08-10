@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Check, FolderOpen } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -276,29 +276,29 @@ export function NewSessionDialog({
     }
   }
 
-  async function install() {
-    setInstalling(choice.id);
+  async function install(option: (typeof choices)[number] = choice) {
+    setInstalling(option.id);
     setError("");
     try {
-      await invoke("install_agent", { agent: choice.agent });
+      await invoke("install_agent", { agent: option.agent });
       const results = await Promise.all(
         choices
-          .filter((option) => option.agent === choice.agent)
+          .filter((candidate) => candidate.agent === option.agent)
           .map(
-            async (option) =>
+            async (candidate) =>
               [
-                option.id,
+                candidate.id,
                 await invoke<Availability>("agent_availability", {
-                  agent: option.agent,
-                  provider: option.provider,
+                  agent: candidate.agent,
+                  provider: candidate.provider,
                 }),
               ] as const,
           ),
       );
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
-      const result = results.find(([id]) => id === choice.id)?.[1];
+      const result = results.find(([id]) => id === option.id)?.[1];
       if (result && !result.available && result.installable) setError(result.detail);
-      else setUpdates((current) => ({ ...current, [choice.agent]: false }));
+      else setUpdates((current) => ({ ...current, [option.agent]: false }));
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -410,76 +410,70 @@ export function NewSessionDialog({
                 {choices.map((option) => {
                   const active = choiceId === option.id;
                   const state = availability[option.id];
+                  const update = updates[option.agent];
+                  const managed = option.agent !== "shell" && state && !state.installable;
+                  const installable = state?.installable;
                   const authProvider = "configured" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   return (
-                    <Button
-                      key={option.id}
-                      type="button"
-                      size="lg"
-                      variant={active ? "secondary" : "outline"}
-                      className="h-14 w-full min-w-0 justify-start overflow-hidden px-3"
-                      aria-pressed={active}
-                      disabled={Boolean(installing)}
-                      title={"note" in option ? option.note : sessionLabel(option)}
-                      onClick={() => (active && ready ? start() : setChoiceId(option.id))}
-                    >
-                      <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
-                      <div className="min-w-0 flex-1 text-left">
-                        <span className="block truncate">{sessionLabel(option)}</span>
-                        {state && !state.available ? (
-                          <span className="block truncate text-xs font-normal text-muted-foreground">
-                            {state.installable ? "Not installed" : "Setup required"}
-                          </span>
-                        ) : authProvider ? (
-                          <ProviderAuthDescription provider={authProvider} status={authStatus} />
-                        ) : (
-                          <span className="block truncate text-xs font-normal text-muted-foreground">
-                            {state ? "Available" : "Checking…"}
-                          </span>
-                        )}
-                      </div>
-                    </Button>
+                    <div key={option.id} className="relative min-w-0">
+                      <Button
+                        type="button"
+                        size="lg"
+                        variant={active ? "secondary" : "outline"}
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${installable ? "pr-20" : managed && update !== false && update !== undefined ? "pr-24" : "pr-3"}`}
+                        aria-pressed={active}
+                        disabled={Boolean(installing)}
+                        title={"note" in option ? option.note : sessionLabel(option)}
+                        onClick={() => (active && ready ? start() : setChoiceId(option.id))}
+                      >
+                        <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+                        <div
+                          className={`min-w-0 flex-1 text-left ${update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : update === true ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
+                        >
+                          <span className="block truncate">{sessionLabel(option)}</span>
+                          {state && !state.available ? (
+                            <span className="block truncate text-xs font-normal text-muted-foreground">
+                              {state.installable ? "Not installed" : "Setup required"}
+                            </span>
+                          ) : authProvider ? (
+                            <ProviderAuthDescription provider={authProvider} status={authStatus} />
+                          ) : (
+                            <span className="block truncate text-xs font-normal text-muted-foreground">
+                              {state ? "Available" : "Checking…"}
+                            </span>
+                          )}
+                        </div>
+                      </Button>
+                      {installable ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="absolute top-1/2 right-1.5 -translate-y-1/2"
+                          disabled={Boolean(installing)}
+                          onClick={() => void install(option)}
+                        >
+                          {installing === option.id ? <Spinner /> : null}
+                          {installing === option.id ? "Installing…" : "Install"}
+                        </Button>
+                      ) : managed && update !== false && update !== undefined ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="absolute top-1/2 right-1.5 -translate-y-1/2"
+                          disabled={Boolean(installing)}
+                          onClick={() => void install(option)}
+                        >
+                          {installing === option.id ? <Spinner /> : null}
+                          {installing === option.id ? "Updating…" : "Update"}
+                        </Button>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
-              {!missing?.installable && (missing || (choice.agent !== "shell" && status)) ? (
-                <div className="flex min-w-0 items-center justify-between gap-3">
-                  <p className="min-w-0 text-xs text-muted-foreground">
-                    {missing?.detail ||
-                      `Lite manages ${sessionLabel({ agent: choice.agent, provider: undefined })} installation and updates.`}
-                  </p>
-                  {choice.agent !== "shell" && status ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className={
-                        updates[choice.agent] === false
-                          ? "text-green-600 disabled:opacity-100 dark:text-green-400"
-                          : undefined
-                      }
-                      disabled={
-                        Boolean(installing) || updates[choice.agent] === false || updates[choice.agent] === undefined
-                      }
-                      onClick={install}
-                    >
-                      {updates[choice.agent] === false ? (
-                        <Check />
-                      ) : installing === choice.id || updates[choice.agent] === undefined ? (
-                        <Spinner />
-                      ) : null}
-                      {updates[choice.agent] === false
-                        ? "Up to date"
-                        : installing === choice.id
-                          ? "Updating…"
-                          : updates[choice.agent] === undefined
-                            ? "Checking…"
-                            : "Update"}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : null}
             </div>
             {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
