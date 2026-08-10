@@ -3483,6 +3483,9 @@ struct WorktreeState {
     gone: bool,
     force: bool,
     dirty: bool,
+    // The removal target itself, so the close dialog names the folder deletion would actually
+    // take: a shell session's cwd may have moved anywhere since the worktree was made.
+    path: String,
 }
 
 // The state of the recorded worktree — the removal target — not of wherever the session's grant
@@ -3498,6 +3501,7 @@ async fn worktree_state(
         gone: false,
         force: false,
         dirty: false,
+        path: String::new(),
     };
     uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
     grant_known(&roots, &root_id)?;
@@ -3505,13 +3509,13 @@ async fn worktree_state(
     let Some(recorded) = read_worktree_record(&record) else {
         return Ok(EMPTY);
     };
-    let path = PathBuf::from(&recorded.path);
-    if !path.is_dir() {
+    if !PathBuf::from(&recorded.path).is_dir() {
         return Ok(WorktreeState {
             gone: true,
             ..EMPTY
         });
     }
+    let path = PathBuf::from(&recorded.path);
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     let status = command_output(
         &git,
@@ -3533,6 +3537,7 @@ async fn worktree_state(
         gone: false,
         force: dirty || ignored || submodules,
         dirty,
+        path: recorded.path,
     })
 }
 

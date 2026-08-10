@@ -928,6 +928,8 @@ function App() {
     changes: number;
     force: boolean;
     dirty: boolean;
+    // The recorded removal target, which is what the dialog must name — session.cwd may have moved.
+    folder: string;
   }>();
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
@@ -1592,7 +1594,7 @@ function App() {
     // Force is the backend's call, made against the removal target with checks user git config
     // cannot hide; the status count only puts a number on the warning.
     Promise.all([
-      invoke<{ recorded: boolean; gone: boolean; force: boolean; dirty: boolean }>("worktree_state", {
+      invoke<{ recorded: boolean; gone: boolean; force: boolean; dirty: boolean; path: string }>("worktree_state", {
         rootId: session.rootId,
       }),
       invoke<GitStatus | null>("git_status", { rootId: session.rootId }).catch(() => null),
@@ -1608,6 +1610,7 @@ function App() {
           changes: status?.changes.length ?? 0,
           force: state.force,
           dirty: state.dirty,
+          folder: state.path,
         });
       })
       // The state could not be read, so nothing is known about what closing would delete: the
@@ -2361,7 +2364,7 @@ function App() {
                 <DialogTitle>Close “{closingWorktree?.session.name}”?</DialogTitle>
                 <DialogDescription>
                   This session works in its own git worktree. Closing it can also delete the folder{" "}
-                  <span className="font-mono">{closingWorktree ? shortPath(closingWorktree.session.cwd) : ""}</span>
+                  <span className="font-mono">{closingWorktree ? shortPath(closingWorktree.folder) : ""}</span>
                   {closingWorktree?.branch ? (
                     <>
                       {" "}
