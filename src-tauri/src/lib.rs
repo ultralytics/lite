@@ -480,7 +480,7 @@ fn fail_with_rollback(
     branch: &str,
     root_id: &str,
 ) -> String {
-    let result = match undo_worktree(git, repo, worktree, branch) {
+    match undo_worktree(git, repo, worktree, branch) {
         Ok(()) => {
             remove_repo_mark(git, repo, root_id);
             error
@@ -489,12 +489,7 @@ fn fail_with_rollback(
             "{error}; rollback also failed ({rollback}), the worktree may remain at {}",
             path_text(worktree)
         ),
-    };
-    // The <repo>-worktrees folder Lite made for this goes too — but only ever when empty.
-    if let Some(parent) = worktree.parent() {
-        let _ = fs::remove_dir(parent);
     }
-    result
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -3669,15 +3664,10 @@ async fn create_worktree(
                 )
                 .is_err()
                 {
-                    // The <repo>-worktrees folder Lite made goes too — but only ever when empty.
-                    let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
                     return Err(error);
                 }
             }
-            Err(error) => {
-                let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         }
     }
     // Lite marks the worktrees it makes inside their administrative folder, where git status
