@@ -99,6 +99,12 @@ struct Sessions(Mutex<HashMap<String, PtySession>>);
 #[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
 
+// The worktrees Lite created, keyed by their session's grant id. Kept apart from Roots on
+// purpose: a shell session's grant follows its cd, but this record never moves, so cleanup can
+// only ever remove the exact folder Lite made for that grant.
+#[derive(Default)]
+struct Worktrees(Mutex<HashMap<String, PathBuf>>);
+
 #[derive(Default)]
 struct ProviderSessions(Mutex<HashMap<String, String>>);
 
@@ -335,6 +341,42 @@ fn load_roots(app: &AppHandle) -> Roots {
             .map(read_roots)
             .unwrap_or_default(),
     ))
+}
+
+fn worktrees_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("worktrees.json"))
+}
+
+fn load_worktrees(app: &AppHandle) -> Worktrees {
+    Worktrees(Mutex::new(
+        worktrees_path(app)
+            .as_deref()
+            .map(read_roots)
+            .unwrap_or_default(),
+    ))
+}
+
+// The same read-modify-write discipline as update_roots: a second copy of Lite writes this file
+// too, so the change is made against what is on disk rather than what this copy loaded.
+fn update_worktrees(
+    app: &AppHandle,
+    worktrees: &Worktrees,
+    update: impl FnOnce(&mut HashMap<String, PathBuf>),
+) -> Result<(), String> {
+    let path = worktrees_path(app)?;
+    let mut worktrees = worktrees.0.lock().map_err(|error| error.to_string())?;
+    let mut next = read_roots(&path);
+    update(&mut next);
+    write_atomic(
+        &path,
+        &serde_json::to_vec(&next).map_err(|error| error.to_string())?,
+    )?;
+    *worktrees = next;
+    Ok(())
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -3311,6 +3353,7 @@ async fn git_repo(app: AppHandle, path: String) -> Result<Option<String>, String
 async fn create_worktree(
     app: AppHandle,
     roots: State<'_, Roots>,
+    worktrees: State<'_, Worktrees>,
     root_id: String,
     branch: String,
 ) -> Result<DirectoryGrant, String> {
@@ -3343,22 +3386,40 @@ async fn create_worktree(
         &repo,
         &["worktree", "add", &path_text(&worktree), "-b", branch],
     )?;
-    grant_directory(&app, &roots, worktree, None)
+    let grant = grant_directory(&app, &roots, worktree.clone(), None)?;
+    update_worktrees(&app, &worktrees, |worktrees| {
+        worktrees.insert(grant.id.clone(), worktree);
+    })?;
+    Ok(grant)
 }
 
-// Removing a worktree is the mirror of creating one, with one guard that does not trust the
-// caller: the granted folder must be a linked worktree (its git dir is not the common git dir),
-// so a main checkout is refused no matter which session asked. Only the branch Lite created with
-// the worktree is deleted — never whatever an agent has since switched the worktree to — and a
-// branch that is already gone is no failure.
+// Removing a worktree is the mirror of creating one, with two guards that do not trust the
+// caller. The grant must still sit inside the worktree Lite recorded for it: a shell session's
+// grant follows its cd, so the path it holds now may name another folder — possibly another
+// worktree — and only the recorded one is ever removed. And the recorded folder must be a linked
+// worktree (its git dir is not the common git dir), so a main checkout is refused no matter
+// which session asked. Only the branch Lite created with the worktree is deleted — never
+// whatever an agent has since switched the worktree to — and a branch that is already gone is
+// no failure.
 #[tauri::command]
 async fn remove_worktree(
+    app: AppHandle,
     roots: State<'_, Roots>,
+    worktrees: State<'_, Worktrees>,
     root_id: String,
     force: bool,
     branch: String,
 ) -> Result<(), String> {
-    let path = root_path(&roots, &root_id)?;
+    let recorded = {
+        let worktrees = worktrees.0.lock().map_err(|error| error.to_string())?;
+        worktrees.get(&root_id).cloned()
+    }
+    .ok_or("This session's worktree is not one Lite created")?;
+    let current = root_path(&roots, &root_id)?;
+    if current != recorded && !current.starts_with(&recorded) {
+        return Err("The session's folder is no longer inside its worktree".into());
+    }
+    let path = recorded;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     let git_dir = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])?;
     let common_dir = command_output(&git, &path, &["rev-parse", "--git-common-dir"])?;
@@ -3385,6 +3446,9 @@ async fn remove_worktree(
     if !branch.is_empty() {
         let _ = command_output(&git, &main, &["branch", "-D", branch.as_str()]);
     }
+    update_worktrees(&app, &worktrees, |worktrees| {
+        worktrees.remove(&root_id);
+    })?;
     Ok(())
 }
 
@@ -3677,6 +3741,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
+            app.manage(load_worktrees(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
             app.manage(load_codex_server(app.handle())?);
             #[cfg(target_os = "macos")]

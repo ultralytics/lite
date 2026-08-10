@@ -200,9 +200,18 @@ export function NewSessionDialog({
     let folder = await grant();
     if (!folder) return;
     let worktree = false;
-    if (repo && worktreeOn) {
+    let createdBranch = "";
+    // The probe's answer can lag the folder field, so the granted folder is asked directly:
+    // the worktree and the recorded repository always describe where the session will run.
+    const root = await invoke<string | null>("git_repo", { path: folder.path }).catch(() => null);
+    if (root && worktreeOn) {
       try {
-        const granted = await invoke<DirectoryGrant>("create_worktree", { rootId: folder.id, branch });
+        // The suggested branch is only reused while it still names the repository the field shows.
+        createdBranch = root === repo && branch.trim() ? branch.trim() : suggestedBranch(root);
+        const granted = await invoke<DirectoryGrant>("create_worktree", {
+          rootId: folder.id,
+          branch: createdBranch,
+        });
         // The worktree's grant replaces the repository's: the session belongs to the folder it
         // runs in, and the main checkout was only the way to make it.
         void invoke("revoke_directory", { rootId: folder.id });
@@ -223,8 +232,8 @@ export function NewSessionDialog({
       name: project,
       running: false,
       worktree,
-      repo: repo || undefined,
-      branch: worktree ? branch.trim() : undefined,
+      repo: root || undefined,
+      branch: createdBranch || undefined,
     });
     setDirectory(undefined);
     onOpenChange(false);
@@ -296,7 +305,12 @@ export function NewSessionDialog({
                   value={path}
                   className="min-w-0 flex-1 font-mono"
                   placeholder="Type or choose a project folder"
-                  onChange={(event) => setPath(event.target.value)}
+                  onChange={(event) => {
+                    setPath(event.target.value);
+                    // The worktree section describes the probed folder; while a new one is being
+                    // typed there is nothing true to show, so it hides until the probe answers.
+                    setRepo("");
+                  }}
                 />
                 <ActionIconButton
                   variant="outline"
