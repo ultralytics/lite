@@ -2538,7 +2538,9 @@ function App() {
                           {" "}
                           and its branch <span className="break-all font-mono">{closingWorktree.branch}</span>
                         </>
-                      ) : null}
+                      ) : (
+                        <>. Its branch will be kept because Lite cannot verify ownership</>
+                      )}
                       .
                     </>
                   )}

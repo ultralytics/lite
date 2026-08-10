@@ -3791,11 +3791,18 @@ async fn worktree_state(
     let Some(recorded) = read_worktree_record(&record) else {
         return Ok(EMPTY);
     };
+    // An unborn branch has no immutable ancestor with which Lite can prove ownership, so the
+    // dialog names only the folder deletion and the branch is intentionally preserved.
+    let branch = if recorded.head.is_empty() {
+        String::new()
+    } else {
+        recorded.branch.clone()
+    };
     if !PathBuf::from(&recorded.path).is_dir() {
         return Ok(WorktreeState {
             recorded: true,
             gone: true,
-            branch: recorded.branch,
+            branch,
             path: recorded.path,
             ..EMPTY
         });
@@ -3819,7 +3826,7 @@ async fn worktree_state(
             return Ok(WorktreeState {
                 recorded: true,
                 damaged: true,
-                branch: recorded.branch,
+                branch,
                 path: recorded.path,
                 ..EMPTY
             });
@@ -3837,7 +3844,7 @@ async fn worktree_state(
         changes,
         changes_truncated,
         damaged: false,
-        branch: recorded.branch,
+        branch,
         path: recorded.path,
     })
 }
