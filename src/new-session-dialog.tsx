@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { FolderOpen } from "lucide-react";
+import { Check, FolderOpen } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -427,15 +427,28 @@ export function NewSessionDialog({
               {!missing?.installable && (missing || (choice.agent !== "shell" && status)) ? (
                 <div className="flex min-w-0 items-center justify-between gap-3">
                   <p className="min-w-0 text-xs text-muted-foreground">
-                    {updatedAgents.has(choice.agent)
-                      ? `${sessionLabel({ agent: choice.agent, provider: undefined })} is up to date.`
-                      : missing?.detail ||
-                        `Lite manages ${sessionLabel({ agent: choice.agent, provider: undefined })} installation and updates.`}
+                    {missing?.detail ||
+                      `Lite manages ${sessionLabel({ agent: choice.agent, provider: undefined })} installation and updates.`}
                   </p>
-                  {choice.agent !== "shell" && status && !updatedAgents.has(choice.agent) ? (
-                    <Button type="button" size="sm" variant="ghost" disabled={Boolean(installing)} onClick={install}>
-                      {installing === choice.id ? <Spinner /> : null}
-                      {installing === choice.id ? "Updating…" : "Update"}
+                  {choice.agent !== "shell" && status ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className={
+                        updatedAgents.has(choice.agent)
+                          ? "text-green-600 disabled:opacity-100 dark:text-green-400"
+                          : undefined
+                      }
+                      disabled={Boolean(installing) || updatedAgents.has(choice.agent)}
+                      onClick={install}
+                    >
+                      {updatedAgents.has(choice.agent) ? <Check /> : installing === choice.id ? <Spinner /> : null}
+                      {updatedAgents.has(choice.agent)
+                        ? "Up to date"
+                        : installing === choice.id
+                          ? "Updating…"
+                          : "Update"}
                     </Button>
                   ) : null}
                 </div>
