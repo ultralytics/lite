@@ -349,10 +349,10 @@ fn worktrees_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 // What Lite records about each worktree it creates: the folder, the branch it made for it, the
-// main checkout it belongs to, its administrative git folder, the commit the branch started at,
-// and whether Lite has already removed the folder itself — all used at removal time and none
-// trusted to the caller again. The administrative folder and the repository's info folder carry
-// Lite's marks: a folder or repository that merely sits at a recorded path never has them.
+// main checkout it belongs to, its administrative git folder, and the commit the branch started at —
+// all used at removal time and none trusted to the caller again. The administrative folder and the
+// repository's info folder carry Lite's marks: a folder or repository that merely sits at a recorded
+// path never has them.
 #[derive(Clone, Deserialize, Serialize)]
 struct WorktreeRecord {
     path: String,
@@ -360,8 +360,6 @@ struct WorktreeRecord {
     main: String,
     admin: String,
     head: String,
-    #[serde(default)]
-    removed: bool,
 }
 
 fn record_worktree(
@@ -382,7 +380,6 @@ fn record_worktree(
         main: path_text(main),
         admin: path_text(admin),
         head: head.to_owned(),
-        removed: false,
     };
     write_atomic(
         &directory.join(root_id),
@@ -3916,26 +3913,23 @@ async fn remove_worktree(
                     .into(),
             );
         }
-        if !recorded.removed {
-            if worktree_registered(&git, &main, &path)? {
-                // A manual deletion leaves the registration — and the worktree's mark — until
-                // it is pruned.
-                let owner = fs::read_to_string(PathBuf::from(&recorded.admin).join("lite"))
-                    .map_err(|_| {
-                        "The recorded worktree is no longer one Lite can prove it created"
-                            .to_owned()
-                    })?;
-                if owner.trim() != root_id {
-                    return Err(
-                        "The recorded worktree is no longer one Lite can prove it created".into(),
-                    );
-                }
-                let _ = command_output(&git, &main, &["worktree", "prune"]);
-            } else if !branch_exists(&git, &main, &recorded.branch)? {
-                // Neither registration nor branch: only the record — and the mark — are left.
-                remove_repo_mark(&git, &main, &root_id);
-                return forget_record(&record);
+        if worktree_registered(&git, &main, &path)? {
+            // A manual deletion leaves the registration — and the worktree's mark — until
+            // it is pruned.
+            let owner =
+                fs::read_to_string(PathBuf::from(&recorded.admin).join("lite")).map_err(|_| {
+                    "The recorded worktree is no longer one Lite can prove it created".to_owned()
+                })?;
+            if owner.trim() != root_id {
+                return Err(
+                    "The recorded worktree is no longer one Lite can prove it created".into(),
+                );
             }
+            let _ = command_output(&git, &main, &["worktree", "prune"]);
+        } else if !branch_exists(&git, &main, &recorded.branch)? {
+            // Neither registration nor branch: only the record — and the mark — are left.
+            remove_repo_mark(&git, &main, &root_id);
+            return forget_record(&record);
         }
         // Only the branch, the mark, and the record are left either way, and the branch goes
         // first so a failure can retry.
@@ -3987,31 +3981,17 @@ async fn remove_worktree(
         args.push("--force");
     }
     args.push(&target);
-    // The removed phase is written before the removal it describes: it is only ever read once
-    // the folder is gone, so a failed removal — folder intact, mark still checked — is never
-    // misled by it, and an interrupted cleanup can always prove itself. A failed write here
-    // stops before anything is destroyed rather than stranding the retry.
-    let removed = WorktreeRecord {
-        removed: true,
-        ..recorded
-    };
-    write_atomic(
-        &record,
-        serde_json::to_vec(&removed)
-            .map_err(|error| error.to_string())?
-            .as_slice(),
-    )?;
     command_output(&git, &main, &args)?;
     // The worktree's mark died with it, so before the branch goes the repository proves itself
     // again with its own mark: a replacement at the same path keeps its branch, and the
-    // removed-phase record lets the retry through the gone path finish the work.
-    if !repo_mark_present(&git, &main, &root_id, &removed.branch) {
+    // surviving record lets a retry through the gone path finish the work.
+    if !repo_mark_present(&git, &main, &root_id, &recorded.branch) {
         return Err(
             "Lite cannot prove this repository is the one it created the worktree in; the branch is left in place"
                 .into(),
         );
     }
-    delete_branch(&git, &main, &removed.branch, &removed.head)?;
+    delete_branch(&git, &main, &recorded.branch, &recorded.head)?;
     remove_repo_mark(&git, &main, &root_id);
     forget_record(&record)
 }

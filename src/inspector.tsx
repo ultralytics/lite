@@ -69,13 +69,14 @@ import {
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
-// A session's terminal is the only record of what it worked on, so explicit GitHub links and gh
-// commands are read back out of the output Lite already bounds. Numbers on their own are not work
-// items: accepting only commands and URLs avoids guessing that prose, images, or line numbers are
-// issues. Only CSI is stripped, so a link inside an OSC hyperlink survives being uncoloured.
+// A session's terminal is the only record of what it worked on, so explicit GitHub links, qualified
+// owner/repo references, and gh commands are read back out of the output Lite already bounds. Bare
+// numbers are not work items: they could be prose, images, or line numbers. Only CSI is stripped,
+// so a link inside an OSC hyperlink survives being uncoloured.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
+const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
 const GH_VIEW = /\bgh\s+(issue|pr)\s+view\s+([1-9]\d{0,8})([^\r\n]*)/gi;
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
@@ -84,6 +85,9 @@ function namedInSession(sessionId: string, remote: string) {
   const text = readOutput(sessionId).slice(-MAX_OUTPUT_BYTES).replace(COLOR, "");
   const urls = new Set(text.match(GITHUB_ITEM) ?? []);
   const prefix = "https://github.com/";
+  for (const match of text.matchAll(QUALIFIED_ITEM)) {
+    urls.add(`${prefix}${match[1]}/${match[2]}/issues/${match[3]}`);
+  }
   const base = remote.toLowerCase().startsWith(prefix) ? prefix + remote.slice(prefix.length) : "";
   for (const match of text.matchAll(GH_VIEW)) {
     const repository = match[3].match(/(?:^|\s)(?:--repo|-R)(?:=|\s+)([\w.-]+\/[\w.-]+)/)?.[1];
