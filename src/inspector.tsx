@@ -54,7 +54,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
-import { readOutput } from "@/output-store";
+import { MAX_OUTPUT_BYTES, readOutput } from "@/output-store";
 import {
   type DirectoryCursor,
   type DirectoryListing,
@@ -69,36 +69,35 @@ import {
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
-// A session's terminal is the only record of what it worked on, so what it named is read back out of
-// the output Lite already keeps: every whole pull request or issue link GitHub prints verbatim, the
-// "owner/repo#12" GitHub itself links work by, and the bare "#12" a conversation names one by. Neither
-// short form is a link, so both are sent separately and only shown once GitHub confirms them, and a
-// bare number names no repository so it can only mean the session's own. It is also how a terminal
-// counts what is not work, as in "[Image #1]", so only one a verb or a preposition introduces counts.
-// Only CSI is stripped, so a link inside an OSC hyperlink survives being uncoloured.
+// A session's terminal is the only record of what it worked on, so explicit GitHub links, qualified
+// owner/repo references, and gh commands are read back out of the output Lite already bounds. Bare
+// numbers are not work items: they could be prose, images, or line numbers. Only CSI is stripped,
+// so a link inside an OSC hyperlink survives being uncoloured.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
-// Not preceded by a path character, so the fragment of a documentation link is not read as a reference.
 const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
-const BARE_ITEM =
-  /(?:^|[^\w#])(?:prs?|pull(?:s|\s+requests?)?|issues?|close[sd]?|fix(?:e[sd])?|resolve[sd]?|see|at|in|on|and|to)\s+#([1-9]\d{0,8})(?!\w)/gi;
-const SCANNED_OUTPUT = 50_000;
+const GH_VIEW = /\bgh\s+(issue|pr)\s+view\s+([1-9]\d{0,8})([^\r\n]*)/gi;
+const GH_API =
+  /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
 
 function namedInSession(sessionId: string, remote: string) {
-  const buffered = readOutput(sessionId);
-  // The window opens at a line boundary, so a link is never read as the half of it that fit.
-  const cut = buffered.length - SCANNED_OUTPUT;
-  const text = buffered.slice(cut > 0 ? Math.max(cut, buffered.indexOf("\n", cut) + 1) : 0).replace(COLOR, "");
-  const urls = [...new Set(text.match(GITHUB_ITEM) ?? [])];
-  // A guess is spelled with the lowercase host the checker strips, and as an issue whichever kind it names.
+  const text = readOutput(sessionId).slice(-MAX_OUTPUT_BYTES).replace(COLOR, "");
+  const urls = new Set(text.match(GITHUB_ITEM) ?? []);
   const prefix = "https://github.com/";
-  const guessed = new Set(
-    [...text.matchAll(QUALIFIED_ITEM)].map((match) => `${prefix}${match[1]}/${match[2]}/issues/${match[3]}`),
-  );
+  for (const match of text.matchAll(QUALIFIED_ITEM)) {
+    urls.add(`${prefix}${match[1]}/${match[2]}/issues/${match[3]}`);
+  }
   const base = remote.toLowerCase().startsWith(prefix) ? prefix + remote.slice(prefix.length) : "";
-  if (base) for (const match of text.matchAll(BARE_ITEM)) guessed.add(`${base}/issues/${match[1]}`);
-  return { urls, guessed: [...guessed] };
+  for (const match of text.matchAll(GH_VIEW)) {
+    const repository = match[3].match(/(?:^|\s)(?:--repo|-R)(?:=|\s+)([\w.-]+\/[\w.-]+)/)?.[1];
+    const repositoryUrl = repository ? `${prefix}${repository}` : base;
+    if (repositoryUrl) urls.add(`${repositoryUrl}/${match[1].toLowerCase() === "pr" ? "pull" : "issues"}/${match[2]}`);
+  }
+  for (const match of text.matchAll(GH_API)) {
+    urls.add(`${prefix}${match[1]}/${match[2]}/${match[3].toLowerCase() === "pulls" ? "pull" : "issues"}/${match[4]}`);
+  }
+  return [...urls];
 }
 
 interface GitHubReference {
@@ -883,33 +882,32 @@ export function clearUsageCache(sessionId: string) {
 function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
   // Read once when the panel is built, like every other thing this panel shows: the refresh button
   // rebuilds it, and nothing here watches the session between those two moments.
-  const named = useMemo(() => namedInSession(sessionId, remote), [sessionId, remote]);
+  const urls = useMemo(() => namedInSession(sessionId, remote), [sessionId, remote]);
   const [status, setStatus] = useState<GitStatus | null>();
   const [items, setItems] = useState<GitHubItem[]>();
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
 
-  // The panel is only built when the tab is opened and again whenever it is refreshed, so asking
+  // The panel is only built when the tab is requested and again whenever it is refreshed, so asking
   // GitHub here asks it exactly on those two occasions and never between them.
   useEffect(() => {
-    if (!named.urls.length && !named.guessed.length) return setItems([]);
+    if (!urls.length) return setItems([]);
     let disposed = false;
     // A remote that arrives after an empty first pass starts a real check, so the panel goes back to
     // checking rather than staying empty without a word.
     setItems(undefined);
-    void invoke<GitHubItem[]>("github_items", { urls: named.urls, guessed: named.guessed })
+    void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
         if (!disposed) setItems(checked);
       })
-      // A link that could not be checked is still a link, so it is shown the way it was printed; a
-      // guessed number without GitHub's confirmation is not.
+      // A link that could not be checked is still explicit, so it is shown the way it was printed.
       .catch(() => {
-        if (!disposed) setItems(named.urls.map((url) => ({ url, title: null, state: null, occurredAt: null })));
+        if (!disposed) setItems(urls.map((url) => ({ url, title: null, state: null, occurredAt: null })));
       });
     return () => {
       disposed = true;
     };
-  }, [named]);
+  }, [urls]);
 
   const refresh = useCallback(async () => {
     setError("");
@@ -956,9 +954,7 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
           {lowered && status !== undefined && items && repositories.length && !shown.length ? (
             <p className="text-sm text-muted-foreground">No matches</p>
           ) : null}
-          {items === undefined && (named.urls.length || named.guessed.length) ? (
-            <Loading label="Checking GitHub links…" />
-          ) : null}
+          {items === undefined && urls.length ? <Loading label="Checking GitHub links…" /> : null}
           {status === null && items && !repositories.length ? (
             <Empty>
               <EmptyHeader>
@@ -1100,8 +1096,7 @@ export function Inspector({
   // the tabs rereads whichever is open, by rebuilding it, and only that one ever reads the disk.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
 
-  function selectTab(value: string) {
-    setTab(value);
+  function visitTab(value: string) {
     setVisited((current) => {
       if (current.has(value)) return current;
       const next = new Set(current);
@@ -1110,9 +1105,14 @@ export function Inspector({
     });
   }
 
+  function selectTab(value: string) {
+    setTab(value);
+    visitTab(value);
+  }
+
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
   // on. What it was showing is hidden rather than thrown away, so the file you had open is still open
-  // when it comes back, and a hidden panel reads nothing because nothing here reads without being asked.
+  // when it comes back. Hovering or focusing Git explicitly asks that panel to prepare before the click.
   const rail = (
     <div
       data-context-surface
@@ -1136,6 +1136,8 @@ export function Inspector({
           tooltip={label}
           tooltipSide="left"
           aria-label={label}
+          onPointerEnter={value === "git" ? () => visitTab(value) : undefined}
+          onFocus={value === "git" ? () => visitTab(value) : undefined}
           onClick={() => {
             selectTab(value);
             onExpand();
@@ -1165,7 +1167,16 @@ export function Inspector({
             <TabsList variant="line">
               {TABS.map(({ value, label, icon: Icon }) => (
                 <Tooltip key={value}>
-                  <TooltipTrigger render={<TabsTrigger value={value} aria-label={label} />}>
+                  <TooltipTrigger
+                    render={
+                      <TabsTrigger
+                        value={value}
+                        aria-label={label}
+                        onPointerEnter={value === "git" ? () => visitTab(value) : undefined}
+                        onFocus={value === "git" ? () => visitTab(value) : undefined}
+                      />
+                    }
+                  >
                     <Icon />
                   </TooltipTrigger>
                   <TooltipContent>{label}</TooltipContent>

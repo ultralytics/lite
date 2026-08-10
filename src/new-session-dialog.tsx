@@ -1,11 +1,10 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Check, FolderOpen } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { FolderOpen } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
-import { Badge } from "@/components/ui/badge";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,10 +16,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Switch } from "@/components/ui/switch";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
@@ -28,13 +26,28 @@ const choices = [
   ...Object.values(AUTH_PROVIDERS),
   { id: "shell", agent: "shell" as const, provider: undefined, description: "Open your default shell" },
 ];
+const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
+// Two sessions share a project when they sit in the same repository — which a worktree's path
+// cannot say, since Lite worktrees live beside the checkout rather than under it, so the repo
+// recorded at creation answers. Sessions older than that record fall back to their path.
+function sharesRepo(session: Session, repo: string) {
+  if (session.repo) return session.repo === repo;
+  return session.cwd === repo || session.cwd.startsWith(`${repo}/`) || session.cwd.startsWith(`${repo}\\`);
+}
+
 interface DirectoryGrant {
   id: string;
   path: string;
+}
+
+interface Repository {
+  branch: string;
+  root: string;
+  worktree: string;
 }
 
 interface Availability {
@@ -47,10 +60,12 @@ export function NewSessionDialog({
   open: isOpen,
   onOpenChange,
   onCreate,
+  sessions,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
+  sessions: Session[];
 }) {
   const [choiceId, setChoiceId] = useState(choices[0].id);
   const [directory, setDirectory] = useState<DirectoryGrant>();
@@ -58,11 +73,83 @@ export function NewSessionDialog({
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
+  // Undefined while checking, null when the registry could not answer, otherwise whether an update exists.
+  const [updates, setUpdates] = useState<Record<string, boolean | null>>({});
+  // Creation runs the worktree command against the dialog's grant, so closing must wait for it:
+  // a Cancel mid-command would revoke the grant the command is still using.
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
+  const [repo, setRepo] = useState<string | null>();
+  const [worktree, setWorktree] = useState("");
+  const [worktreeOn, setWorktreeOn] = useState(false);
+  const [branch, setBranch] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
+  // Sessions already working in this repository, which is the case a worktree exists for.
+  const sharing = repo ? sessions.filter((session) => sharesRepo(session, repo)).length : 0;
+  // The probe reads this rather than depending on it: a session updating elsewhere must not reset
+  // the toggle the user has already answered.
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+
+  // Dialog checks are independent, so one slow registry request never holds up another harness.
+  useEffect(() => {
+    if (!isOpen) return;
+    let disposed = false;
+    setUpdates({});
+    for (const agent of harnesses) {
+      void invoke<boolean>("agent_update_available", { agent })
+        .then((available) => {
+          if (!disposed) setUpdates((current) => ({ ...current, [agent]: available }));
+        })
+        .catch(() => {
+          if (!disposed) setUpdates((current) => ({ ...current, [agent]: null }));
+        });
+    }
+    return () => {
+      disposed = true;
+    };
+  }, [isOpen]);
+
+  // A typed path settles for a moment before it is probed, so a folder is never looked up once per
+  // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
+  // would name.
+  useEffect(() => {
+    if (!isOpen || !path.trim()) {
+      setRepo(null);
+      setWorktree("");
+      setWorktreeOn(false);
+      return;
+    }
+    setRepo(undefined);
+    let disposed = false;
+    const probe = window.setTimeout(() => {
+      void invoke<Repository | null>("git_repo", { path: path.trim() })
+        .then((repository) => {
+          if (disposed) return;
+          const root = repository?.root ?? null;
+          setRepo(root);
+          setWorktree(repository?.worktree ?? "");
+          // Sessions already sharing this repository make the worktree the default rather than the
+          // option; a fresh repository leaves the choice with the main checkout.
+          setWorktreeOn(Boolean(root && sessionsRef.current.some((session) => sharesRepo(session, root))));
+          setBranch(repository?.branch ?? "");
+        })
+        .catch(() => {
+          if (!disposed) {
+            setRepo(null);
+            setWorktree("");
+          }
+        });
+    }, 250);
+    return () => {
+      disposed = true;
+      window.clearTimeout(probe);
+    };
+  }, [isOpen, path]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -88,7 +175,7 @@ export function NewSessionDialog({
       .catch((reason) => {
         if (!disposed) setError(String(reason));
       });
-    // Checked only while the dialog is open, so Lite never probes the system in the background.
+    // Installation and provider setup can change while the app runs, so refresh them on each open.
     for (const option of choices) {
       void invoke<Availability>("agent_availability", { agent: option.agent, provider: option.provider })
         .then((result) => {
@@ -109,6 +196,8 @@ export function NewSessionDialog({
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setDirectory(selected);
         setPath(selected.path);
+        setRepo(undefined);
+        setWorktree("");
       }
     } catch (reason) {
       setError(String(reason));
@@ -131,7 +220,7 @@ export function NewSessionDialog({
   }
 
   function changeOpen(open: boolean) {
-    if (!open && installing) return;
+    if (!open && (installing || creating)) return;
     if (!open && directory) {
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
@@ -140,44 +229,76 @@ export function NewSessionDialog({
   }
 
   async function create() {
-    const folder = await grant();
-    if (!folder) return;
-    const project = defaultSessionName(folder.path);
-    onCreate({
-      id: crypto.randomUUID(),
-      agent: choice.agent,
-      provider: choice.provider,
-      cwd: folder.path,
-      rootId: folder.id,
-      name: project,
-      running: false,
-    });
-    setDirectory(undefined);
-    onOpenChange(false);
+    setCreating(true);
+    try {
+      let folder = await grant();
+      if (!folder) return;
+      let worktree = false;
+      // The probe's answer can lag the folder field, so the granted folder is asked directly:
+      // the worktree and the recorded repository always describe where the session will run.
+      let root: string | null;
+      try {
+        root = (await invoke<Repository | null>("git_repo", { path: folder.path }))?.root ?? null;
+      } catch (reason) {
+        setError(String(reason));
+        return;
+      }
+      // The toggle must still describe this folder: root === repo fails when the folder changed
+      // after the probe that enabled the option, and a worktree is never made on a stale answer.
+      if (root && root === repo && worktreeOn) {
+        try {
+          folder = await invoke<DirectoryGrant>("create_worktree", {
+            rootId: folder.id,
+            branch: branch.trim(),
+          });
+          worktree = true;
+        } catch (reason) {
+          setError(String(reason));
+          return;
+        }
+      }
+      const project = defaultSessionName(folder.path);
+      onCreate({
+        id: crypto.randomUUID(),
+        agent: choice.agent,
+        provider: choice.provider,
+        cwd: folder.path,
+        rootId: folder.id,
+        name: project,
+        running: false,
+        worktree,
+        repo: root || undefined,
+      });
+      setDirectory(undefined);
+      onOpenChange(false);
+    } finally {
+      setCreating(false);
+    }
   }
 
-  async function install() {
-    setInstalling(choice.id);
+  async function install(option: (typeof choices)[number] = choice) {
+    setInstalling(option.id);
     setError("");
     try {
-      await invoke("install_agent", { agent: choice.agent });
+      await invoke("install_agent", { agent: option.agent });
       const results = await Promise.all(
         choices
-          .filter((option) => option.agent === choice.agent)
+          .filter((candidate) => candidate.agent === option.agent)
           .map(
-            async (option) =>
+            async (candidate) =>
               [
-                option.id,
+                candidate.id,
                 await invoke<Availability>("agent_availability", {
-                  agent: option.agent,
-                  provider: option.provider,
+                  agent: candidate.agent,
+                  provider: candidate.provider,
                 }),
               ] as const,
           ),
       );
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
-      const result = results.find(([id]) => id === choice.id)?.[1];
-      if (result && !result.available) setError(result.detail);
+      const result = results.find(([id]) => id === option.id)?.[1];
+      if (result && !result.available && result.installable) setError(result.detail);
+      else setUpdates((current) => ({ ...current, [option.agent]: false }));
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -188,7 +309,10 @@ export function NewSessionDialog({
   // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
   // and a second click on the agent already chosen. An agent that is not installed reads them all as a
   // request to install it, which is the only one of the two it can answer.
-  const ready = Boolean(!installing && (missing || (path.trim() && status)));
+  const ready =
+    !installing &&
+    !creating &&
+    Boolean(missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim())));
   function start() {
     if (missing?.installable) void install();
     else if (missing)
@@ -205,13 +329,13 @@ export function NewSessionDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
-      <DialogContent className="sm:max-w-lg">
-        <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
+      <DialogContent className="sm:min-h-[32rem] sm:max-w-xl">
+        <form onSubmit={submit} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New session</DialogTitle>
             <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
           </DialogHeader>
-          <DialogBody className="space-y-4">
+          <DialogBody className="min-w-0 space-y-4">
             <div className="space-y-1.5">
               <Label htmlFor="project-folder" className={SECTION}>
                 Project folder
@@ -221,8 +345,16 @@ export function NewSessionDialog({
                   id="project-folder"
                   value={path}
                   className="min-w-0 flex-1 font-mono"
-                  placeholder="Type or choose a project folder"
-                  onChange={(event) => setPath(event.target.value)}
+                  placeholder="Type or choose a project folder…"
+                  name="project-folder"
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setPath(event.target.value);
+                    // The worktree section describes the probed folder; while a new one is being
+                    // typed there is nothing true to show, so it hides until the probe answers.
+                    setRepo(undefined);
+                    setWorktree("");
+                  }}
                 />
                 <ActionIconButton
                   variant="outline"
@@ -235,69 +367,122 @@ export function NewSessionDialog({
                 </ActionIconButton>
               </div>
             </div>
-            <fieldset className="space-y-1.5">
-              <legend className={SECTION}>Agent</legend>
-              <div className="space-y-1">
+            {repo ? (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <Label htmlFor="new-worktree" className={SECTION}>
+                      Worktree
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {sharing
+                        ? `${sharing} session${sharing === 1 ? "" : "s"} already work${sharing === 1 ? "s" : ""} in this project`
+                        : "Isolate this session from the main checkout"}
+                    </p>
+                  </div>
+                  <Switch id="new-worktree" checked={worktreeOn} onCheckedChange={setWorktreeOn} />
+                </div>
+                {worktreeOn ? (
+                  <div className="min-w-0 space-y-1.5">
+                    <Label htmlFor="worktree-branch">Branch</Label>
+                    <Input
+                      id="worktree-branch"
+                      value={branch}
+                      className="font-mono"
+                      placeholder="Branch for the worktree…"
+                      name="worktree-branch"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) => setBranch(event.target.value)}
+                    />
+                    <p className="max-w-full truncate font-mono text-xs text-muted-foreground" title={worktree}>
+                      {worktree}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            <div className="space-y-1.5">
+              <p className={SECTION}>Agent</p>
+              <div className="grid min-w-0 grid-cols-2 gap-2">
                 {choices.map((option) => {
+                  const active = choiceId === option.id;
                   const state = availability[option.id];
-                  const active = option.id === choiceId;
+                  const update = updates[option.agent];
+                  const managed = option.agent !== "shell" && state && !state.installable;
+                  const installable = state?.installable;
                   const authProvider = "configured" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
-                  const row = (
-                    <Item
-                      key={option.id}
-                      size="xs"
-                      variant={active ? "outline" : "default"}
-                      className={active ? "border-ring bg-accent" : "hover:bg-muted/60"}
-                      render={
-                        <button
+                  return (
+                    <div key={option.id} className="relative min-w-0">
+                      <Button
+                        type="button"
+                        size="lg"
+                        variant={active ? "secondary" : "outline"}
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${installable ? "pr-20" : managed && update !== false && update !== undefined ? "pr-24" : "pr-3"}`}
+                        aria-pressed={active}
+                        disabled={Boolean(installing)}
+                        title={"note" in option ? option.note : sessionLabel(option)}
+                        onClick={() => (active && ready ? start() : setChoiceId(option.id))}
+                      >
+                        <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+                        <div
+                          className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : managed && update === true ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
+                        >
+                          <span className="block truncate">{sessionLabel(option)}</span>
+                          {state && !state.available ? (
+                            <span className="block truncate text-xs font-normal text-muted-foreground">
+                              {state.installable ? "Not installed" : "Setup required"}
+                            </span>
+                          ) : authProvider ? (
+                            <ProviderAuthDescription provider={authProvider} status={authStatus} />
+                          ) : (
+                            <span className="block truncate text-xs font-normal text-muted-foreground">
+                              {state ? "Available" : "Checking…"}
+                            </span>
+                          )}
+                        </div>
+                      </Button>
+                      {installable ? (
+                        <Button
                           type="button"
-                          aria-pressed={active}
+                          size="sm"
+                          variant="ghost"
+                          className="absolute top-1/2 right-1.5 -translate-y-1/2"
                           disabled={Boolean(installing)}
-                          onClick={() => (active && ready ? start() : setChoiceId(option.id))}
-                        />
-                      }
-                    >
-                      {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
-                      <ItemMedia variant="icon" className="size-7 rounded-md border bg-background">
-                        <ProviderIcon agent={option.agent} provider={option.provider} />
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{sessionLabel(option)}</ItemTitle>
-                        {authProvider ? (
-                          <ProviderAuthDescription provider={authProvider} status={authStatus} />
-                        ) : (
-                          <ItemDescription>{"description" in option ? option.description : undefined}</ItemDescription>
-                        )}
-                      </ItemContent>
-                      <ItemActions>
-                        {state && !state.available ? <Badge variant="outline">Not installed</Badge> : null}
-                        <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
-                      </ItemActions>
-                    </Item>
-                  );
-                  return "note" in option ? (
-                    <Tooltip key={option.id}>
-                      <TooltipTrigger render={row} />
-                      <TooltipContent className="max-w-64">{option.note}</TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    row
+                          onClick={() => void install(option)}
+                        >
+                          {installing === option.id ? <Spinner /> : null}
+                          {installing === option.id ? "Installing…" : "Install"}
+                        </Button>
+                      ) : managed && update !== false && update !== undefined ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="absolute top-1/2 right-1.5 -translate-y-1/2"
+                          disabled={Boolean(installing)}
+                          onClick={() => void install(option)}
+                        >
+                          {installing === option.id ? <Spinner /> : null}
+                          {installing === option.id ? "Updating…" : "Update"}
+                        </Button>
+                      ) : null}
+                    </div>
                   );
                 })}
               </div>
-              {missing ? <p className="text-xs text-muted-foreground">{missing.detail}</p> : null}
-            </fieldset>
+            </div>
             {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" disabled={Boolean(installing)} onClick={() => changeOpen(false)}>
+            <Button variant="outline" disabled={Boolean(installing) || creating} onClick={() => changeOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!ready}>
-              {!status || installing ? <Spinner /> : null}
-              {installing
+              {!status || (installing && missing?.installable) ? <Spinner /> : null}
+              {installing && missing?.installable
                 ? `Installing ${sessionLabel(choice)}…`
                 : missing?.installable
                   ? `Install ${sessionLabel(choice)}`

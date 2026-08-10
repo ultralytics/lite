@@ -786,7 +786,10 @@ function SessionRow({
 
   function removeDragPreview(pointer: NonNullable<typeof dragPointer.current>) {
     pointer.row.style.removeProperty("opacity");
-    pointer.preview?.remove();
+    if (!pointer.preview) return;
+    pointer.preview.style.opacity = "0";
+    pointer.preview.style.scale = "0.98";
+    window.setTimeout(() => pointer.preview?.remove(), 100);
   }
 
   return (
@@ -839,12 +842,18 @@ function SessionRow({
             backgroundColor: "var(--sidebar)",
             borderColor: "var(--border)",
             boxShadow: "0 12px 32px rgb(0 0 0 / 0.28)",
-            opacity: "0.88",
+            opacity: "0",
+            scale: "0.98",
+            transition: "opacity 120ms ease, scale 120ms ease",
             willChange: "transform",
           });
           document.body.append(preview);
           pointer.preview = preview;
           pointer.row.style.opacity = "0.35";
+          window.requestAnimationFrame(() => {
+            preview.style.opacity = "0.88";
+            preview.style.scale = "1.02";
+          });
           onDragStart();
         }
         event.preventDefault();
@@ -1052,6 +1061,23 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
+  // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
+  // cleanup has settled, so nothing can be reopened under its own cleanup.
+  const [closingAllRunning, setClosingAllRunning] = useState(false);
+  // The worktree session waiting on the close dialog's answer, with what its tree looked like when asked.
+  const [closingWorktree, setClosingWorktree] = useState<{
+    session: Session;
+    branch: string;
+    force: boolean;
+    changes: number;
+    changesTruncated: boolean;
+    // The recorded removal target, which is what the dialog must name — session.cwd may have moved.
+    folder: string;
+    // The folder is already gone; the dialog then asks about the branch and record instead.
+    gone: boolean;
+    // The folder's git data could not be read; the dialog offers keep, and delete without force.
+    damaged: boolean;
+  }>();
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   // Sessions whose terminal has written something recently, which is what separates a connected
@@ -1089,6 +1115,17 @@ function App() {
   const runs = useRef(new Map<string, string>());
   const draggingSession = useRef("");
   const sessionDropRef = useRef<{ targetId: string; after: boolean } | undefined>(undefined);
+  // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
+  // covered real changes (true) or only ignored files and submodules (false); read at cleanup.
+  const forceWorktree = useRef(new Map<string, boolean>());
+  // Sessions whose worktree the user chose to keep; cleanup forgets Lite's record instead of removing.
+  const keptWorktrees = useRef(new Set<string>());
+  // Sessions with a close flow in flight: the dialog is singular, so from probe to answer only
+  // one worktree session may be closing at all.
+  const closingIds = useRef(new Set<string>());
+  // Worktree cleanup runs one at a time app-wide: two removals in flight would contend over the
+  // same repository's git locks and turn a valid close into a failed cleanup.
+  const cleanupQueue = useRef<Promise<unknown>>(Promise.resolve());
   const sessionsRef = useRef(sessions);
   const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
@@ -1642,7 +1679,9 @@ function App() {
   // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
   // session it resumed by id is retained only until the shared Undo window expires.
   function restartSession(session: Session, select = true) {
-    if (startingIds.has(session.id)) return;
+    // A close in flight owns this session's fate: restarting now would inherit a worktree the
+    // close dialog is about to take away.
+    if (startingIds.has(session.id) || closingIds.current.has(session.id)) return;
     clearAttention(session.id);
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     const restarted = restartSessionNow(session, fresh, select);
@@ -1746,26 +1785,172 @@ function App() {
     for (const session of sessions) restartSession(session, session.id === selectedId);
   }
 
-  async function cleanupSession(session: Session) {
-    let cleanupError = "";
+  // Runs one worktree cleanup operation after another: the caller gets its own result, the
+  // queue never jams on a failure.
+  function enqueueCleanup<T>(operation: () => Promise<T>): Promise<T> {
+    const run = cleanupQueue.current.then(operation, operation);
+    cleanupQueue.current = run.catch(() => undefined);
+    return run;
+  }
+
+  // Worktree cleanup runs first so a failed removal can restore a session whose provider metadata
+  // and folder grant are still intact.
+  async function cleanupSession(session: Session): Promise<{ error: string; restorable: boolean }> {
+    let error = "";
+    let restorable = false;
+    if (session.worktree) {
+      const keep = keptWorktrees.current.delete(session.id);
+      try {
+        if (keep) {
+          // Kept at the user's choice: Lite forgets it made the worktree; the folder is the user's now.
+          await enqueueCleanup(() => invoke("forget_worktree", { rootId: session.rootId }));
+        } else {
+          // The grant is still needed for this, so the worktree goes before it does. Force and
+          // its scope were the user's answer at close time; the backend re-reads the tree
+          // immediately before removing, so nothing written since the confirmation is taken
+          // against a narrower approval.
+          const approved = forceWorktree.current.delete(session.id);
+          await enqueueCleanup(() =>
+            invoke("remove_worktree", {
+              rootId: session.rootId,
+              force: approved !== undefined,
+              dirtyCovered: approved ?? false,
+            }),
+          );
+        }
+      } catch (reason) {
+        error ||= String(reason);
+        // Restorable while Lite's record exists: a restored tab retries — through the dialog
+        // while the folder stands, through the gone path once it does not, and through the same
+        // keep choice after a failed forget. A failure with no record left (or an unknown state)
+        // is only reported, and the record is never erased for the user by a failure.
+        restorable = await invoke<{ recorded: boolean }>("worktree_state", {
+          rootId: session.rootId,
+        })
+          .then((state) => state.recorded)
+          .catch(() => false);
+      }
+    }
+    if (restorable) {
+      setError(`Session closed, but local cleanup failed: ${error}`);
+      return { error, restorable };
+    }
     try {
       await invoke("delete_session_data", { sessionId: session.id });
     } catch (reason) {
-      cleanupError = String(reason);
+      error ||= String(reason);
     }
     try {
       await invoke("revoke_directory", { rootId: session.rootId });
     } catch (reason) {
-      cleanupError ||= String(reason);
+      error ||= String(reason);
     }
     clearOutput(session.id);
     clearUsageCache(session.id);
-    if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
+    if (error) setError(`Session closed, but local cleanup failed: ${error}`);
+    return { error, restorable };
   }
 
-  // Closing is reversible: the row leaves immediately and its PTY stops, while the provider session
-  // metadata and directory grant remain until the toast closes without being undone.
+  // A worktree session owns the folder it runs in, so closing one first asks whether the folder
+  // and its branch go with the tab. Everything else closes directly.
   function closeSession(session: Session) {
+    if (startingIds.has(session.id)) return;
+    if (!session.worktree) return closeSessionNow(session);
+    // One close flow across the app at a time: the dialog is singular, so from probe to answer
+    // only one worktree session may be closing at all — a second would overwrite the dialog and
+    // strand the first in closingIds.
+    if (closingIds.current.size !== 0) return;
+    closingIds.current.add(session.id);
+    // A close that reaches here makes its own keep/force decision; anything left by an undone
+    // close is void, and the gone and damaged paths below never re-ask.
+    keptWorktrees.current.delete(session.id);
+    forceWorktree.current.delete(session.id);
+    void invoke<{
+      recorded: boolean;
+      gone: boolean;
+      force: boolean;
+      changes: number;
+      changesTruncated: boolean;
+      damaged: boolean;
+      branch: string;
+      path: string;
+    }>("worktree_state", { rootId: session.rootId })
+      .then((state) => {
+        // No record means nothing Lite can clean up: the folder is the user's, the tab just closes.
+        if (!state.recorded) {
+          closingIds.current.delete(session.id);
+          return closeSessionNow({ ...session, worktree: false });
+        }
+        // A folder already gone leaves the branch and the record, and losing those is still the
+        // user's call — not least because a branch that cannot be deleted needs a keep route out.
+        if (state.gone) {
+          if (!state.branch) {
+            closingIds.current.delete(session.id);
+            return closeSessionNow(session);
+          }
+          return setClosingWorktree({
+            session,
+            branch: state.branch,
+            force: false,
+            changes: 0,
+            changesTruncated: false,
+            folder: state.path,
+            gone: true,
+            damaged: false,
+          });
+        }
+        // A folder whose git data cannot be read still gets its keep route: keeping needs no git,
+        // and deletion then runs without force so git's own checks are the gate.
+        if (state.damaged) {
+          return setClosingWorktree({
+            session,
+            branch: state.branch,
+            force: false,
+            changes: 0,
+            changesTruncated: false,
+            folder: state.path,
+            gone: false,
+            damaged: true,
+          });
+        }
+        setClosingWorktree({
+          session,
+          branch: state.branch,
+          force: state.force,
+          changes: state.changes,
+          changesTruncated: state.changesTruncated,
+          folder: state.path,
+          gone: false,
+          damaged: false,
+        });
+      })
+      // The state could not be read, so nothing is known about what closing would delete: the
+      // session stays and the error says why, so closing can be tried again.
+      .catch((reason) => {
+        closingIds.current.delete(session.id);
+        setError(String(reason));
+      });
+  }
+
+  function confirmCloseWorktree(remove: boolean) {
+    if (!closingWorktree) return;
+    const { session, force, changes } = closingWorktree;
+    closingIds.current.delete(session.id);
+    setClosingWorktree(undefined);
+    // Keep-or-delete travels beside the session, not in it: Undo restores the session exactly as
+    // it was, worktree flag included, and cleanup reads the choice from here.
+    if (remove) {
+      if (force) forceWorktree.current.set(session.id, changes > 0);
+    } else {
+      keptWorktrees.current.add(session.id);
+    }
+    closeSessionNow(session, false);
+  }
+
+  // Ordinary closing is reversible: the row leaves immediately and its PTY stops, while the provider
+  // metadata and directory grant remain until the toast closes. A worktree's explicit keep/delete
+  // choice instead runs cleanup as soon as the PTY stops, while the confirmation is still current.
+  function closeSessionNow(session: Session, reversible = true) {
     if (startingIds.has(session.id)) return;
     clearAttention(session.id);
     const index = sessions.findIndex((item) => item.id === session.id);
@@ -1785,6 +1970,8 @@ function App() {
     if (wasSelected) setSelectedId(nextSelectedId);
 
     function restore(running: boolean) {
+      keptWorktrees.current.delete(session.id);
+      forceWorktree.current.delete(session.id);
       setSessions((current) => {
         if (current.some((item) => item.id === session.id)) {
           return current.map((item) => (item.id === session.id ? { ...item, running } : item));
@@ -1811,6 +1998,17 @@ function App() {
         return false;
       },
     );
+    if (!reversible) {
+      const cleanup = async () => {
+        const successful = await stopped;
+        if (!successful) return;
+        const { error, restorable } = await cleanupSession(session);
+        if (error && restorable) restore(false);
+      };
+      pendingCleanups.current.add(cleanup);
+      void cleanup().finally(() => pendingCleanups.current.delete(cleanup));
+      return;
+    }
     sessionUndoToast(
       session,
       "Closed",
@@ -1826,7 +2024,12 @@ function App() {
           }
         });
       },
-      () => cleanupSession(session),
+      async () => {
+        // Only a cleanup whose destructive part failed restores the session: there is still
+        // something to retry, and nothing was lost by bringing the tab back.
+        const { error, restorable } = await cleanupSession(session);
+        if (error && restorable) restore(false);
+      },
     );
   }
 
@@ -2463,44 +2666,163 @@ function App() {
               ) : null}
             </DialogContent>
           </Dialog>
-          <Dialog open={closingAll} onOpenChange={setClosingAll}>
+          <Dialog
+            open={closingAll}
+            onOpenChange={(open) => {
+              if (!open && closingAllRunning) return;
+              setClosingAll(open);
+            }}
+          >
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Close all sessions?</DialogTitle>
                 <DialogDescription>
                   This stops every running session and removes all tabs. Providers keep their own conversation history.
+                  {sessions.some((session) => session.worktree)
+                    ? " Lite-created worktree folders and branches are kept."
+                    : null}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setClosingAll(false)}>
+                <Button variant="outline" disabled={closingAllRunning} onClick={() => setClosingAll(false)}>
                   Keep
                 </Button>
                 <Button
                   variant="destructive"
+                  disabled={closingAllRunning}
                   onClick={() => {
                     attentionRef.current = [];
                     setAttention([]);
-                    void Promise.all(
-                      sessions.map(async (session) => {
-                        runs.current.delete(session.id);
-                        await invoke("stop_session", { sessionId: session.id });
-                        await cleanupSession(session);
-                        setSessions((current) => current.filter((item) => item.id !== session.id));
-                        if (selectedId === session.id)
-                          setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
-                      }),
-                    ).then(() => {
-                      setSelectedId("");
-                    });
-                    setClosingAll(false);
+                    for (const session of sessions) {
+                      if (session.worktree) keptWorktrees.current.add(session.id);
+                    }
+                    // A session whose cleanup failed but is restorable keeps its tab: the record
+                    // and grant survive for a retry, and they need a row to be retried from.
+                    const failed = new Set<string>();
+                    setClosingAllRunning(true);
+                    // Registered like every other cleanup: closing the app mid-run waits for this
+                    // instead of abandoning stops and cleanups half-done.
+                    const close = async () => {
+                      await Promise.all(
+                        sessions.map(async (session) => {
+                          // A session that cannot be stopped is left alone, still live and still
+                          // hearing its PTY; every promise settles, so the dialog always comes back.
+                          const stopped = await invoke("stop_session", { sessionId: session.id }).then(
+                            () => true,
+                            () => false,
+                          );
+                          if (!stopped) {
+                            failed.add(session.id);
+                            return;
+                          }
+                          runs.current.delete(session.id);
+                          const { error, restorable } = await cleanupSession(session);
+                          if (error && restorable) {
+                            failed.add(session.id);
+                            // The PTY is already stopped; the retained tab must not look live.
+                            setSessions((current) =>
+                              current.map((item) => (item.id === session.id ? { ...item, running: false } : item)),
+                            );
+                            return;
+                          }
+                          setSessions((current) => current.filter((item) => item.id !== session.id));
+                        }),
+                      );
+                      setSelectedId(sessions.find((session) => failed.has(session.id))?.id ?? "");
+                      setClosingAllRunning(false);
+                      setClosingAll(false);
+                    };
+                    pendingCleanups.current.add(close);
+                    void close().finally(() => pendingCleanups.current.delete(close));
                   }}
                 >
-                  Close all sessions
+                  {closingAllRunning ? <Spinner /> : null}
+                  {closingAllRunning ? "Closing…" : "Close all sessions"}
                 </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
+          <Dialog
+            open={Boolean(closingWorktree)}
+            onOpenChange={(open) => {
+              if (open) return;
+              if (closingWorktree) closingIds.current.delete(closingWorktree.session.id);
+              setClosingWorktree(undefined);
+            }}
+          >
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Close “{closingWorktree?.session.name}”?</DialogTitle>
+                <DialogDescription>
+                  {closingWorktree?.gone ? (
+                    <>
+                      The worktree folder{" "}
+                      <span className="break-all font-mono">{shortPath(closingWorktree.folder)}</span> is already gone.
+                      Closing the session can also delete its branch{" "}
+                      <span className="break-all font-mono">{closingWorktree.branch}</span> and Lite's record of it.
+                    </>
+                  ) : closingWorktree?.damaged ? (
+                    <>
+                      The git data of worktree folder{" "}
+                      <span className="break-all font-mono">{shortPath(closingWorktree.folder)}</span> could not be read
+                      — it may be damaged. It can be kept as it is, or deletion tried without force: git itself will
+                      refuse if the folder has changes.
+                    </>
+                  ) : (
+                    <>
+                      This session works in its own git worktree. Closing it can also delete the folder{" "}
+                      <span className="break-all font-mono">
+                        {closingWorktree ? shortPath(closingWorktree.folder) : ""}
+                      </span>
+                      {closingWorktree?.branch ? (
+                        <>
+                          {" "}
+                          and its branch <span className="break-all font-mono">{closingWorktree.branch}</span>
+                        </>
+                      ) : (
+                        <>. Its branch will be kept because Lite cannot verify ownership</>
+                      )}
+                      .
+                    </>
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+              {closingWorktree?.changes ? (
+                <DialogBody>
+                  <p className="text-xs text-destructive">
+                    The worktree has {closingWorktree.changes}
+                    {closingWorktree.changesTruncated ? "+" : ""} uncommitted{" "}
+                    {!closingWorktree.changesTruncated && closingWorktree.changes === 1 ? "change" : "changes"} that
+                    will be lost.
+                  </p>
+                </DialogBody>
+              ) : closingWorktree?.force && !closingWorktree?.gone && !closingWorktree?.damaged ? (
+                <DialogBody>
+                  <p className="text-xs text-muted-foreground">
+                    The worktree holds ignored files or submodules, so removing it needs force.
+                  </p>
+                </DialogBody>
+              ) : null}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => confirmCloseWorktree(false)}>
+                  {closingWorktree?.gone ? "Keep branch" : "Keep worktree"}
+                </Button>
+                <Button variant="destructive" onClick={() => confirmCloseWorktree(true)}>
+                  {closingWorktree?.gone
+                    ? "Delete branch"
+                    : closingWorktree?.force
+                      ? "Force delete worktree"
+                      : "Delete worktree"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <NewSessionDialog
+            open={newSessionOpen}
+            onOpenChange={setNewSessionOpen}
+            onCreate={createSession}
+            sessions={sessions}
+          />
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
           <Toaster />
         </div>
