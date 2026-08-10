@@ -2436,15 +2436,22 @@ function App() {
                     for (const session of sessions) {
                       if (session.worktree) keptWorktrees.current.add(session.id);
                     }
+                    // A session whose cleanup failed but is restorable keeps its tab: the record
+                    // and grant survive for a retry, and they need a row to be retried from.
+                    const failed = new Set<string>();
                     void Promise.all(
                       sessions.map(async (session) => {
                         runs.current.delete(session.id);
                         await invoke("stop_session", { sessionId: session.id });
-                        await cleanupSession(session);
+                        const { error, restorable } = await cleanupSession(session);
+                        if (error && restorable) {
+                          failed.add(session.id);
+                          return;
+                        }
                         setSessions((current) => current.filter((item) => item.id !== session.id));
                       }),
                     ).then(() => {
-                      setSelectedId("");
+                      setSelectedId(sessions.find((session) => failed.has(session.id))?.id ?? "");
                     });
                     setClosingAll(false);
                   }}
