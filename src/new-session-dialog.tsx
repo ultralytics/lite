@@ -429,7 +429,7 @@ export function NewSessionDialog({
                       >
                         <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
                         <div
-                          className={`min-w-0 flex-1 text-left ${update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : update === true ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
+                          className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : managed && update === true ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
                           <span className="block truncate">{sessionLabel(option)}</span>
                           {state && !state.available ? (
