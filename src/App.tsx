@@ -5,8 +5,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  ArrowDown,
-  ArrowUp,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -302,7 +300,6 @@ function AppContextMenu({
   onSelectSession,
   onRenameSession,
   onPinSession,
-  onMoveSession,
   onRestartSession,
   onCloseSession,
   onRestartAll,
@@ -315,7 +312,6 @@ function AppContextMenu({
   onSelectSession: (session: Session) => void;
   onRenameSession: (session: Session) => void;
   onPinSession: (session: Session) => void;
-  onMoveSession: (session: Session, direction: -1 | 1) => void;
   onRestartSession: (session: Session) => void;
   onCloseSession: (session: Session) => void;
   onRestartAll: () => void;
@@ -329,12 +325,6 @@ function AppContextMenu({
       ? context.editable.readOnly || context.editable.disabled
       : false;
   const session = sessions.find((item) => item.id === context.sessionId);
-  const sessionIndex = session ? sessions.indexOf(session) : -1;
-  const canMoveUp = sessionIndex > 0 && Boolean(sessions[sessionIndex - 1].pinned) === Boolean(session?.pinned);
-  const canMoveDown =
-    sessionIndex >= 0 &&
-    sessionIndex < sessions.length - 1 &&
-    Boolean(sessions[sessionIndex + 1].pinned) === Boolean(session?.pinned);
   const linkGroup = Boolean(context.url || context.value);
   const surfaceGroup = [
     context.collapseFiles || context.collapsePanel || context.collapseSessions,
@@ -375,14 +365,6 @@ function AppContextMenu({
             <ContextMenuItem onClick={() => onPinSession(session)}>
               {session.pinned ? <PinOff /> : <Pin />}
               {session.pinned ? "Unpin" : "Pin to top"}
-            </ContextMenuItem>
-            <ContextMenuItem disabled={!canMoveUp} onClick={() => onMoveSession(session, -1)}>
-              <ArrowUp />
-              Move up
-            </ContextMenuItem>
-            <ContextMenuItem disabled={!canMoveDown} onClick={() => onMoveSession(session, 1)}>
-              <ArrowDown />
-              Move down
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onRestartSession(session)}>
@@ -930,9 +912,12 @@ function SessionRow({
         <div className="min-w-0 flex-1 text-left">
           {/* Only the visible title owns rename; its hit area stops where its text stops. */}
           <div className="flex min-w-0 items-center gap-1">
+            {session.pinned ? (
+              <Pin className="size-3 shrink-0 fill-current text-primary/70" aria-label="Pinned" />
+            ) : null}
             <button
               type="button"
-              className="block w-fit max-w-full truncate text-xs font-medium"
+              className="block min-w-0 w-fit max-w-full truncate text-xs font-medium"
               onClick={(event) => {
                 event.stopPropagation();
                 if (active && session.running) onRenamingChange(true);
@@ -942,7 +927,6 @@ function SessionRow({
             >
               {session.name}
             </button>
-            {session.pinned ? <Pin className="size-3 shrink-0 text-muted-foreground" aria-label="Pinned" /> : null}
           </div>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
@@ -1550,23 +1534,6 @@ function App() {
     });
   }
 
-  function moveSession(session: Session, direction: -1 | 1) {
-    setSessions((current) => {
-      const index = current.findIndex((item) => item.id === session.id);
-      const target = index + direction;
-      if (
-        index < 0 ||
-        target < 0 ||
-        target >= current.length ||
-        Boolean(current[index].pinned) !== Boolean(current[target].pinned)
-      )
-        return current;
-      const next = [...current];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  }
-
   function reorderSession(draggedId: string, targetId: string, after: boolean) {
     setSessions((current) => {
       const draggedIndex = current.findIndex((session) => session.id === draggedId);
@@ -1940,7 +1907,6 @@ function App() {
           if (shut.sidebar) glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size));
         }}
         onPinSession={pinSession}
-        onMoveSession={moveSession}
         onRestartSession={(session) => void restartSession(session)}
         onCloseSession={closeSession}
         onRestartAll={() => void restartAllSessions()}
