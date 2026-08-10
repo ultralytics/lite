@@ -277,7 +277,7 @@ export function NewSessionDialog({
   // request to install it, which is the only one of the two it can answer.
   const ready = Boolean(
     !installing &&
-      (missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim()))),
+    (missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim()))),
   );
   function start() {
     if (missing?.installable) void install();
