@@ -82,6 +82,7 @@ export function NewSessionDialog({
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
+  const [updatedAgents, setUpdatedAgents] = useState<Set<string>>(new Set());
   // Creation runs the worktree command against the dialog's grant, so closing must wait for it:
   // a Cancel mid-command would revoke the grant the command is still using.
   const [creating, setCreating] = useState(false);
@@ -278,6 +279,7 @@ export function NewSessionDialog({
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === choice.id)?.[1];
       if (result && !result.available && result.installable) setError(result.detail);
+      else setUpdatedAgents((current) => new Set(current).add(choice.agent));
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -425,10 +427,12 @@ export function NewSessionDialog({
               {!missing?.installable && (missing || (choice.agent !== "shell" && status)) ? (
                 <div className="flex min-w-0 items-center justify-between gap-3">
                   <p className="min-w-0 text-xs text-muted-foreground">
-                    {missing?.detail ||
-                      `Lite manages ${sessionLabel({ agent: choice.agent, provider: undefined })} installation and updates.`}
+                    {updatedAgents.has(choice.agent)
+                      ? `${sessionLabel({ agent: choice.agent, provider: undefined })} is up to date.`
+                      : missing?.detail ||
+                        `Lite manages ${sessionLabel({ agent: choice.agent, provider: undefined })} installation and updates.`}
                   </p>
-                  {choice.agent !== "shell" && status ? (
+                  {choice.agent !== "shell" && status && !updatedAgents.has(choice.agent) ? (
                     <Button type="button" size="sm" variant="ghost" disabled={Boolean(installing)} onClick={install}>
                       {installing === choice.id ? <Spinner /> : null}
                       {installing === choice.id ? "Updating…" : "Update"}
