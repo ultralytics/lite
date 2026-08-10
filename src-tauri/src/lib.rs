@@ -473,13 +473,18 @@ fn fail_with_rollback(
     worktree: &Path,
     branch: &str,
 ) -> String {
-    match undo_worktree(git, repo, worktree, branch) {
+    let result = match undo_worktree(git, repo, worktree, branch) {
         Ok(()) => error,
         Err(rollback) => format!(
             "{error}; rollback also failed ({rollback}), the worktree may remain at {}",
             path_text(worktree)
         ),
+    };
+    // The <repo>-worktrees folder Lite made for this goes too — but only ever when empty.
+    if let Some(parent) = worktree.parent() {
+        let _ = fs::remove_dir(parent);
     }
+    result
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -3587,14 +3592,22 @@ async fn create_worktree(
     match command_output(&git, &repo, &args) {
         Ok(_) => {}
         Err(error) if head.is_none() => {
-            command_output(
+            if command_output(
                 &git,
                 &repo,
                 &["worktree", "add", "--orphan", "-b", branch, &target],
             )
-            .map_err(|_| error)?;
+            .is_err()
+            {
+                // The <repo>-worktrees folder Lite made goes too — but only ever when empty.
+                let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
+                return Err(error);
+            }
         }
-        Err(error) => return Err(error),
+        Err(error) => {
+            let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
+            return Err(error);
+        }
     }
     // Lite marks the worktrees it makes inside their administrative folder, where git status
     // cannot see it, and the repository itself in its info folder — git's own place for
@@ -3764,22 +3777,28 @@ fn branch_exists(git: &Path, main: &Path, branch: &str) -> Result<bool, String> 
     }
 }
 
-// Deleting Lite's branch is by name, but the name alone is not proof: a branch removed and
-// recreated for another purpose, or one recreated between worktree removal and here, is not
-// Lite's to take. The branch must exist and still descend from the commit Lite started it at —
-// an agent's own commits on top are descendants and go with it as intended, and a branch Lite
-// started in an empty repository has no ancestor to check. An already-gone or foreign branch is
-// skipped, not an error; anything else leaves the branch behind and says so.
+// Deleting Lite's branch: the name alone is not proof, so the tip is validated first — it must
+// exist and still descend from the commit Lite started it at (an agent's own commits on top are
+// descendants and go with it as intended; a branch Lite started in an empty repository has no
+// ancestor to check). The deletion itself is compare-and-delete: the branch goes only if it
+// still points at the tip that was just validated, so a repoint or recreation in between is
+// never taken with it. An already-gone or foreign branch is skipped, not an error; a validation
+// that cannot answer is reported.
 fn delete_branch(git: &Path, main: &Path, branch: &str, head: &str) -> Result<(), String> {
-    if branch.is_empty() || !branch_exists(git, main, branch)? {
+    if branch.is_empty() {
         return Ok(());
     }
+    let reference = format!("refs/heads/{branch}");
+    let tip = match command_output(git, main, &["rev-parse", "--verify", &reference]) {
+        Ok(tip) => tip,
+        Err(_) => return Ok(()),
+    };
     if !head.is_empty()
-        && command_output(git, main, &["merge-base", "--is-ancestor", head, branch]).is_err()
+        && command_output(git, main, &["merge-base", "--is-ancestor", head, &tip]).is_err()
     {
         return Ok(());
     }
-    command_output(git, main, &["branch", "-D", branch]).map(|_| ())
+    command_output(git, main, &["update-ref", "-d", &reference, &tip]).map(|_| ())
 }
 
 // Whether the repository still registers the path as a worktree. A manual folder deletion

@@ -977,6 +977,9 @@ function App() {
   // Sessions with a close flow in flight: the dialog is singular, so from probe to answer only
   // one worktree session may be closing at all.
   const closingIds = useRef(new Set<string>());
+  // Worktree cleanup runs one at a time app-wide: two removals in flight would contend over the
+  // same repository's git locks and turn a valid close into a failed cleanup.
+  const cleanupQueue = useRef<Promise<unknown>>(Promise.resolve());
   const sessionsRef = useRef(sessions);
   const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
@@ -1562,6 +1565,14 @@ function App() {
     for (const session of sessions) restartSession(session, session.id === selectedId);
   }
 
+  // Runs one worktree cleanup operation after another: the caller gets its own result, the
+  // queue never jams on a failure.
+  function enqueueCleanup<T>(operation: () => Promise<T>): Promise<T> {
+    const run = cleanupQueue.current.then(operation, operation);
+    cleanupQueue.current = run.catch(() => undefined);
+    return run;
+  }
+
   // Worktree cleanup runs first so a failed removal can restore a session whose provider metadata
   // and folder grant are still intact.
   async function cleanupSession(session: Session): Promise<{ error: string; restorable: boolean }> {
@@ -1572,32 +1583,32 @@ function App() {
       try {
         if (keep) {
           // Kept at the user's choice: Lite forgets it made the worktree; the folder is the user's now.
-          await invoke("forget_worktree", { rootId: session.rootId });
+          await enqueueCleanup(() => invoke("forget_worktree", { rootId: session.rootId }));
         } else {
           // The grant is still needed for this, so the worktree goes before it does. Force and
           // its scope were the user's answer at close time; the backend re-reads the tree
           // immediately before removing, so nothing written since the confirmation is taken
           // against a narrower approval.
           const approved = forceWorktree.current.delete(session.id);
-          await invoke("remove_worktree", {
-            rootId: session.rootId,
-            force: approved !== undefined,
-            dirtyCovered: approved ?? false,
-          });
+          await enqueueCleanup(() =>
+            invoke("remove_worktree", {
+              rootId: session.rootId,
+              force: approved !== undefined,
+              dirtyCovered: approved ?? false,
+            }),
+          );
         }
       } catch (reason) {
         error ||= String(reason);
         // Restorable while Lite's record exists: a restored tab retries — through the dialog
-        // while the folder stands, through the gone path once it does not. A failure with no
-        // record left (or an unknown state) is only reported, and the record is never erased
-        // for the user by a failure.
-        if (!keep) {
-          restorable = await invoke<{ recorded: boolean }>("worktree_state", {
-            rootId: session.rootId,
-          })
-            .then((state) => state.recorded)
-            .catch(() => false);
-        }
+        // while the folder stands, through the gone path once it does not, and through the same
+        // keep choice after a failed forget. A failure with no record left (or an unknown state)
+        // is only reported, and the record is never erased for the user by a failure.
+        restorable = await invoke<{ recorded: boolean }>("worktree_state", {
+          rootId: session.rootId,
+        })
+          .then((state) => state.recorded)
+          .catch(() => false);
       }
     }
     if (restorable) {
