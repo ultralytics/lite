@@ -821,7 +821,6 @@ function SessionRow({
           pointer.dragging = true;
           const bounds = pointer.row.getBoundingClientRect();
           const preview = pointer.row.cloneNode(true) as HTMLElement;
-          preview.removeAttribute("data-context-session");
           preview.setAttribute("aria-hidden", "true");
           preview.inert = true;
           Object.assign(preview.style, {
@@ -830,8 +829,6 @@ function SessionRow({
             left: `${bounds.left}px`,
             top: `${bounds.top}px`,
             width: `${bounds.width}px`,
-            height: `${bounds.height}px`,
-            margin: "0",
             pointerEvents: "none",
             backgroundColor: "var(--sidebar)",
             borderColor: "var(--border)",
@@ -880,7 +877,7 @@ function SessionRow({
       }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`relative flex-nowrap transition-[color,background-color,opacity] before:pointer-events-none before:absolute before:z-10 before:inset-x-1 before:h-0.5 before:rounded-full before:bg-primary after:pointer-events-none after:absolute after:z-10 after:inset-x-1 after:h-0.5 after:rounded-full after:bg-primary active:opacity-70 ${drop === "before" ? "before:-top-0.5" : "before:hidden"} ${drop === "after" ? "after:-bottom-0.5" : "after:hidden"} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
+      className={`relative flex-nowrap transition-[color,background-color,opacity] after:pointer-events-none after:absolute after:z-10 after:inset-x-1 after:h-0.5 after:rounded-full after:bg-primary active:opacity-70 ${drop === "before" ? "after:-top-0.5" : drop === "after" ? "after:-bottom-0.5" : "after:hidden"} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge
@@ -1553,21 +1550,6 @@ function App() {
     });
   }
 
-  function dragSessionOver(targetId: string, after: boolean) {
-    const dragged = sessionsRef.current.find((session) => session.id === draggingSession.current);
-    const target = sessionsRef.current.find((session) => session.id === targetId);
-    if (!dragged || !target || Boolean(dragged.pinned) !== Boolean(target.pinned)) {
-      sessionDropRef.current = undefined;
-      setSessionDrop(undefined);
-      return;
-    }
-    sessionDropRef.current = { targetId, after };
-    setSessionDrop((current) => {
-      if (current?.targetId === targetId && current.after === after) return current;
-      return { targetId, after };
-    });
-  }
-
   function dragSessionAt(clientX: number, clientY: number) {
     const row = document
       .elementFromPoint(clientX, clientY)
@@ -1577,7 +1559,18 @@ function App() {
       return setSessionDrop(undefined);
     }
     const bounds = row.getBoundingClientRect();
-    dragSessionOver(row.dataset.contextSession ?? "", clientY >= bounds.top + bounds.height / 2);
+    const drop = {
+      targetId: row.dataset.contextSession ?? "",
+      after: clientY >= bounds.top + bounds.height / 2,
+    };
+    const dragged = sessionsRef.current.find((session) => session.id === draggingSession.current);
+    const target = sessionsRef.current.find((session) => session.id === drop.targetId);
+    if (!dragged || !target || Boolean(dragged.pinned) !== Boolean(target.pinned)) {
+      sessionDropRef.current = undefined;
+      return setSessionDrop(undefined);
+    }
+    sessionDropRef.current = drop;
+    setSessionDrop((current) => (current?.targetId === drop.targetId && current.after === drop.after ? current : drop));
   }
 
   function endSessionDrag() {
@@ -2105,10 +2098,7 @@ function App() {
                               working={working.has(session.id)}
                             />
                           </TooltipTrigger>
-                          <TooltipContent side="right">
-                            {session.name}
-                            {session.pinned ? " · Pinned" : ""}
-                          </TooltipContent>
+                          <TooltipContent side="right">{session.name}</TooltipContent>
                         </Tooltip>
                       ))}
                     </div>
