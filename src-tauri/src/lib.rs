@@ -3478,7 +3478,7 @@ async fn create_worktree(
 // What closing a worktree session needs to know before it asks. recorded is false when Lite has
 // no record for the grant — nothing Lite can clean up, the folder is the user's. gone is true
 // when the worktree folder is verified deleted, so only metadata is left to prune. force says
-// removal will need --force and dirty that files or changes would be lost. The explicit flags keep
+// removal will need --force and changes counts files that would be lost. The explicit flags keep
 // user status configuration from hiding untracked or ignored files.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3486,7 +3486,7 @@ struct WorktreeState {
     recorded: bool,
     gone: bool,
     force: bool,
-    dirty: bool,
+    changes: usize,
     branch: String,
     // The removal target itself, so the close dialog names the folder deletion would actually
     // take: a shell session's cwd may have moved anywhere since the worktree was made.
@@ -3505,7 +3505,7 @@ async fn worktree_state(
         recorded: false,
         gone: false,
         force: false,
-        dirty: false,
+        changes: 0,
         branch: String::new(),
         path: String::new(),
     };
@@ -3536,15 +3536,15 @@ async fn worktree_state(
             "--ignored=matching",
         ],
     )?;
-    let dirty = !status.is_empty();
+    let changes = status.lines().count();
     let submodules = !command_output(&git, &path, &["submodule", "status"])
         .unwrap_or_default()
         .is_empty();
     Ok(WorktreeState {
         recorded: true,
         gone: false,
-        force: dirty || submodules,
-        dirty,
+        force: changes > 0 || submodules,
+        changes,
         branch: recorded.branch,
         path: recorded.path,
     })

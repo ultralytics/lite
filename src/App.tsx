@@ -926,7 +926,7 @@ function App() {
     session: Session;
     branch: string;
     force: boolean;
-    dirty: boolean;
+    changes: number;
     // The recorded removal target, which is what the dialog must name — session.cwd may have moved.
     folder: string;
   }>();
@@ -1576,8 +1576,9 @@ function App() {
           const state = await invoke<{ recorded: boolean; gone: boolean }>("worktree_state", {
             rootId: session.rootId,
           }).catch(() => undefined);
-          restorable = !state || (state.recorded && !state.gone);
-          if (!restorable) await invoke("forget_worktree", { rootId: session.rootId }).catch(() => {});
+          // A surviving record means branch cleanup is still pending even when the worktree folder
+          // is already gone. Keep the session and grant so closing it can retry that same owner.
+          restorable = !state || state.recorded;
         }
       }
     }
@@ -1610,7 +1611,7 @@ function App() {
       recorded: boolean;
       gone: boolean;
       force: boolean;
-      dirty: boolean;
+      changes: number;
       branch: string;
       path: string;
     }>("worktree_state", { rootId: session.rootId })
@@ -1621,7 +1622,7 @@ function App() {
           session,
           branch: state.branch,
           force: state.force,
-          dirty: state.dirty,
+          changes: state.changes,
           folder: state.path,
         });
       })
@@ -2387,10 +2388,11 @@ function App() {
                   .
                 </DialogDescription>
               </DialogHeader>
-              {closingWorktree?.dirty ? (
+              {closingWorktree?.changes ? (
                 <DialogBody>
                   <p className="text-xs text-destructive">
-                    The worktree contains uncommitted changes or ignored files that will be lost.
+                    The worktree contains {closingWorktree.changes} changed or ignored{" "}
+                    {closingWorktree.changes === 1 ? "file" : "files"} that will be lost.
                   </p>
                 </DialogBody>
               ) : closingWorktree?.force ? (
