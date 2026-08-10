@@ -1552,15 +1552,18 @@ function App() {
     for (const session of sessions) restartSession(session, session.id === selectedId);
   }
 
-  // Returns the failure message, empty when everything went away. On failure the grant is kept —
-  // the caller restores the session, and retrying needs its folder permission intact.
-  async function cleanupSession(session: Session): Promise<string> {
-    let cleanupError = "";
+  // Reports the failure message, empty on success, and whether it is restorable: true only when
+  // the destructive part did not complete, so nothing was lost by bringing the session back. A
+  // failure after the worktree is already gone (say, revoking the grant) is surfaced but never
+  // resurrects a tab pointing at a deleted folder. The grant is kept whenever there is an error.
+  async function cleanupSession(session: Session): Promise<{ error: string; restorable: boolean }> {
+    let error = "";
     try {
       await invoke("delete_session_data", { sessionId: session.id });
     } catch (reason) {
-      cleanupError = String(reason);
+      error = String(reason);
     }
+    let restorable = false;
     if (session.worktree) {
       try {
         if (keptWorktrees.current.delete(session.id)) {
@@ -1575,22 +1578,23 @@ function App() {
           });
         }
       } catch (reason) {
-        cleanupError ||= String(reason);
+        error ||= String(reason);
+        restorable = true;
       }
     }
-    if (!cleanupError) {
+    if (!error) {
       try {
         await invoke("revoke_directory", { rootId: session.rootId });
       } catch (reason) {
-        cleanupError ||= String(reason);
+        error ||= String(reason);
       }
     }
-    if (!cleanupError) {
+    if (!error) {
       clearOutput(session.id);
       clearUsageCache(session.id);
     }
-    if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
-    return cleanupError;
+    if (error) setError(`Session closed, but local cleanup failed: ${error}`);
+    return { error, restorable };
   }
 
   // A worktree session owns the folder it runs in, so closing one first asks whether the folder
@@ -1630,9 +1634,12 @@ function App() {
     const { session, force } = closingWorktree;
     setClosingWorktree(undefined);
     // Keep-or-delete travels beside the session, not in it: Undo restores the session exactly as
-    // it was, worktree flag included, and cleanup reads the choice from here.
+    // it was, worktree flag included, and cleanup reads the choice from here. Every new decision
+    // first clears the last one, so a force approval from an undone close cannot outlive the
+    // status check that granted it.
+    keptWorktrees.current.delete(session.id);
+    forceWorktree.current.delete(session.id);
     if (remove) {
-      keptWorktrees.current.delete(session.id);
       if (force) forceWorktree.current.add(session.id);
     } else {
       keptWorktrees.current.add(session.id);
@@ -1701,9 +1708,10 @@ function App() {
         });
       },
       async () => {
-        // Cleanup that could not finish strands whatever it was meant to remove, so the session
-        // comes back instead: the failure is retried from its row rather than orphaned.
-        if (await cleanupSession(session)) restore(false);
+        // Only a cleanup whose destructive part failed restores the session: there is still
+        // something to retry, and nothing was lost by bringing the tab back.
+        const { error, restorable } = await cleanupSession(session);
+        if (error && restorable) restore(false);
       },
     );
   }
@@ -2353,9 +2361,10 @@ function App() {
                         .map(async (session) => {
                           runs.current.delete(session.id);
                           await invoke("stop_session", { sessionId: session.id });
-                          // A session whose cleanup failed keeps its tab: better a row to retry
-                          // from than an orphan nobody can reach.
-                          if (await cleanupSession(session)) {
+                          // A session whose destructive cleanup failed keeps its tab: better a
+                          // row to retry from than an orphan nobody can reach.
+                          const { error, restorable } = await cleanupSession(session);
+                          if (error && restorable) {
                             failed.push(session.id);
                             return;
                           }
