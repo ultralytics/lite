@@ -3307,9 +3307,32 @@ async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<S
     )
 }
 
-// Whether a folder sits inside a repository, and where that repository's root is. The new-session
-// dialog asks before it has granted anything, so this takes the bare path — the same folder the
-// grant would name — and only reads from it.
+// The repository's main checkout, reached from any of its worktrees: the common git dir is the
+// main checkout's .git, so its parent names the folder. This — not the path's own toplevel — is
+// the identity sessions sharing a repository agree on, since a linked worktree's toplevel is the
+// worktree itself. Layouts without a .git folder (bare repositories) fall back to the toplevel.
+fn main_checkout(git: &Path, path: &Path) -> Result<PathBuf, String> {
+    let common = command_output(git, path, &["rev-parse", "--git-common-dir"])?;
+    let common = match Path::new(&common).is_absolute() {
+        true => PathBuf::from(common),
+        false => path.join(common),
+    };
+    let common = fs::canonicalize(common).map_err(|error| error.to_string())?;
+    if common.file_name() == Some(std::ffi::OsStr::new(".git"))
+        && let Some(parent) = common.parent()
+    {
+        return Ok(parent.to_path_buf());
+    }
+    Ok(PathBuf::from(command_output(
+        git,
+        path,
+        &["rev-parse", "--show-toplevel"],
+    )?))
+}
+
+// Whether a folder sits inside a repository, and where that repository's main checkout is. The
+// new-session dialog asks before it has granted anything, so this takes the bare path — the same
+// folder the grant would name — and only reads from it.
 #[tauri::command]
 async fn git_repo(app: AppHandle, path: String) -> Result<Option<String>, String> {
     let path = path.trim();
@@ -3327,7 +3350,7 @@ async fn git_repo(app: AppHandle, path: String) -> Result<Option<String>, String
     // Canonicalized like the grant's path would be, so the root can be compared with session cwds.
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    Ok(command_output(&git, &path, &["rev-parse", "--show-toplevel"]).ok())
+    Ok(main_checkout(&git, &path).ok().map(|root| path_text(&root)))
 }
 
 // A session that shares its project with another gets a worktree of its own: a sibling folder
@@ -3342,11 +3365,9 @@ async fn create_worktree(
 ) -> Result<DirectoryGrant, String> {
     let folder = root_path(&roots, &root_id)?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let repo = PathBuf::from(command_output(
-        &git,
-        &folder,
-        &["rev-parse", "--show-toplevel"],
-    )?);
+    // Anchored at the main checkout even when the session's folder is itself a linked worktree,
+    // so every worktree Lite makes for a repository sits in the same sibling folder.
+    let repo = main_checkout(&git, &folder)?;
     let branch = branch.trim();
     command_output(&git, &repo, &["check-ref-format", "--branch", branch])
         .map_err(|_| format!("“{branch}” is not a valid branch name"))?;
@@ -3387,13 +3408,13 @@ async fn create_worktree(
 }
 
 // Removing a worktree is the mirror of creating one, with two guards that do not trust the
-// caller. The grant must still sit inside the worktree Lite recorded for it: a shell session's
-// grant follows its cd, so the path it holds now may name another folder — possibly another
-// worktree — and only the recorded one is ever removed. And the recorded folder must be a linked
-// worktree (its git dir is not the common git dir), so a main checkout is refused no matter
-// which session asked. Only the branch Lite created with the worktree is deleted — never
-// whatever an agent has since switched the worktree to — and a branch that is already gone is
-// no failure.
+// caller. The removal target is the path Lite recorded for this grant at creation — never the
+// path the grant holds now, which a shell session's cd may have moved anywhere — so only the
+// worktree Lite made can be removed, wherever the session has since wandered. And the recorded
+// folder must be a linked worktree (its git dir is not the common git dir), so a main checkout
+// is refused no matter which session asked. Only the branch Lite created with the worktree is
+// deleted — never whatever an agent has since switched the worktree to — and only an
+// already-gone branch is no failure; any other deletion error is reported.
 #[tauri::command]
 async fn remove_worktree(
     app: AppHandle,
@@ -3407,10 +3428,8 @@ async fn remove_worktree(
     let recorded = fs::read_to_string(&record)
         .map(PathBuf::from)
         .map_err(|_| "This session's worktree is not one Lite created".to_owned())?;
-    let current = root_path(&roots, &root_id)?;
-    if current != recorded && !current.starts_with(&recorded) {
-        return Err("The session's folder is no longer inside its worktree".into());
-    }
+    // The grant only proves the session asking is still the one this record belongs to.
+    root_path(&roots, &root_id)?;
     let path = recorded;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     let git_dir = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])?;
@@ -3435,14 +3454,18 @@ async fn remove_worktree(
     }
     args.push(&target);
     command_output(&git, &main, &args)?;
-    if !branch.is_empty() {
-        let _ = command_output(&git, &main, &["branch", "-D", branch.as_str()]);
-    }
     match fs::remove_file(&record) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.to_string()),
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
     }
+    if !branch.is_empty()
+        && let Err(error) = command_output(&git, &main, &["branch", "-D", branch.as_str()])
+        && !error.contains("not found")
+    {
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[tauri::command]
