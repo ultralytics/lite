@@ -273,7 +273,7 @@ export function NewSessionDialog({
   // request to install it, which is the only one of the two it can answer.
   const ready = Boolean(
     !installing &&
-    (missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim()))),
+      (missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim()))),
   );
   function start() {
     if (missing?.installable) void install();
@@ -291,7 +291,7 @@ export function NewSessionDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:min-h-[32rem] sm:max-w-xl">
         <form onSubmit={submit} className="flex min-h-0 flex-1 flex-col gap-4">
           <DialogHeader>
             <DialogTitle>New session</DialogTitle>
@@ -365,14 +365,14 @@ export function NewSessionDialog({
             ) : null}
             <div className="space-y-1.5">
               <p className={SECTION}>Agent</p>
-              <div className="grid grid-cols-3 gap-1.5">
+              <div className="grid grid-cols-4 gap-2">
                 {choices.map((option) => {
                   const active = choiceId === option.id;
                   return (
                     <Button
                       key={option.id}
                       type="button"
-                      size="sm"
+                      size="lg"
                       variant={active ? "secondary" : "outline"}
                       className="min-w-0 justify-start px-2"
                       aria-pressed={active}
