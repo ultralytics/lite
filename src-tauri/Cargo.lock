@@ -1860,6 +1860,8 @@ name = "lite"
 version = "0.0.16"
 dependencies = [
  "atomicwrites",
+ "objc2-app-kit",
+ "objc2-foundation",
  "portable-pty",
  "serde",
  "serde_json",

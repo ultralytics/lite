@@ -3371,6 +3371,20 @@ fn startup_ready(app: AppHandle) {
 //
 // Only the fields NSAboutPanel actually renders are set. It ignores authors, comments, license and
 // website, so setting those here would look thorough and show nothing.
+// macOS carries one clipboard text in two flavors, and the older is declared in the encoding the system
+// was configured for decades ago. A reader that asks for a string is handed that one and decodes UTF-8
+// as Mac Roman, the webview included, so the bytes are read and decoded here instead.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn read_clipboard() -> Result<String, String> {
+    let text = objc2_app_kit::NSPasteboard::generalPasteboard()
+        .dataForType(&objc2_foundation::NSString::from_str(
+            "public.utf8-plain-text",
+        ))
+        .ok_or("The clipboard holds no text")?;
+    String::from_utf8(text.to_vec()).map_err(|error| error.to_string())
+}
+
 #[cfg(target_os = "macos")]
 fn describe_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     use tauri::menu::{AboutMetadata, Menu, MenuItemKind, PredefinedMenuItem};
@@ -3412,6 +3426,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")]
+            read_clipboard,
             choose_directory,
             follow_directory,
             github_items,

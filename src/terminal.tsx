@@ -216,9 +216,20 @@ export function TerminalView({
       return false;
     });
     resize();
+    // Taken on the way down, because the terminal's own paste waits at the element below and would
+    // otherwise paste the text a second time. It still pastes, brackets and all, the way a program asked.
+    const paste = (event: ClipboardEvent) => {
+      event.stopPropagation();
+      event.preventDefault();
+      void invoke<string>("read_clipboard")
+        .then((text) => terminal.paste(text))
+        .catch(() => undefined);
+    };
+    if (navigator.platform.includes("Mac")) container.addEventListener("paste", paste, true);
 
     return () => {
       window.clearTimeout(settle);
+      container.removeEventListener("paste", paste, true);
       observer.disconnect();
       input.dispose();
       unsubscribe();

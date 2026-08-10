@@ -98,6 +98,7 @@ import { applyTheme, initialTheme, type Theme } from "@/theme";
 import { type Agent, defaultSessionName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
+const MAC = navigator.platform.includes("Mac");
 const STORAGE_KEY = "lite.sessions.v1";
 // The width each side collapses to: one icon button and the room around it.
 const RAIL = 44;
@@ -273,14 +274,10 @@ function writeClipboard(text: string) {
   void navigator.clipboard.writeText(text).catch(() => undefined);
 }
 
-function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
-  const element = context.editable;
-  if (!element) return;
-  element.focus();
-  if (document.execCommand(command)) return;
-  if (command !== "paste") return;
-  void navigator.clipboard
-    .readText()
+// Only the macOS webview decodes clipboard text as Mac Roman, so only there is the text asked for rather
+// than taken from the event, and only there does Lite have a command to ask with.
+function pasteInto(element: HTMLElement) {
+  void invoke<string>("read_clipboard")
     .then((text) => {
       if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
         element.setRangeText(text, element.selectionStart ?? 0, element.selectionEnd ?? 0, "end");
@@ -288,6 +285,14 @@ function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
       } else document.execCommand("insertText", false, text);
     })
     .catch(() => undefined);
+}
+
+function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
+  const element = context.editable;
+  if (!element) return;
+  element.focus();
+  if (command === "paste" && MAC) pasteInto(element);
+  else document.execCommand(command);
 }
 
 function AppContextMenu({
@@ -315,7 +320,7 @@ function AppContextMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState(EMPTY_MENU_CONTEXT);
-  const shortcut = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
+  const shortcut = MAC ? "⌘" : "Ctrl+";
   const readonly =
     context.editable instanceof HTMLInputElement || context.editable instanceof HTMLTextAreaElement
       ? context.editable.readOnly || context.editable.disabled
@@ -984,6 +989,20 @@ function App() {
   // restored sessions and the update check remain deliberately non-blocking.
   useEffect(() => {
     void invoke("startup_ready");
+  }, []);
+
+  // Every field pastes what the clipboard holds rather than what the webview made of it. A terminal
+  // paste never arrives here: the terminal owns its own, and takes the event on the way down.
+  useEffect(() => {
+    if (!MAC) return;
+    const paste = (event: ClipboardEvent) => {
+      const element = event.target;
+      if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return;
+      event.preventDefault();
+      pasteInto(element);
+    };
+    document.addEventListener("paste", paste);
+    return () => document.removeEventListener("paste", paste);
   }, []);
 
   useEffect(() => {
