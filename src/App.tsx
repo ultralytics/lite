@@ -1552,7 +1552,9 @@ function App() {
     for (const session of sessions) restartSession(session, session.id === selectedId);
   }
 
-  async function cleanupSession(session: Session) {
+  // Returns the failure message, empty when everything went away. On failure the grant is kept —
+  // the caller restores the session, and retrying needs its folder permission intact.
+  async function cleanupSession(session: Session): Promise<string> {
     let cleanupError = "";
     try {
       await invoke("delete_session_data", { sessionId: session.id });
@@ -1576,14 +1578,19 @@ function App() {
         cleanupError ||= String(reason);
       }
     }
-    try {
-      await invoke("revoke_directory", { rootId: session.rootId });
-    } catch (reason) {
-      cleanupError ||= String(reason);
+    if (!cleanupError) {
+      try {
+        await invoke("revoke_directory", { rootId: session.rootId });
+      } catch (reason) {
+        cleanupError ||= String(reason);
+      }
     }
-    clearOutput(session.id);
-    clearUsageCache(session.id);
+    if (!cleanupError) {
+      clearOutput(session.id);
+      clearUsageCache(session.id);
+    }
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
+    return cleanupError;
   }
 
   // A worktree session owns the folder it runs in, so closing one first asks whether the folder
@@ -1693,7 +1700,11 @@ function App() {
           }
         });
       },
-      () => cleanupSession(session),
+      async () => {
+        // Cleanup that could not finish strands whatever it was meant to remove, so the session
+        // comes back instead: the failure is retried from its row rather than orphaned.
+        if (await cleanupSession(session)) restore(false);
+      },
     );
   }
 
@@ -2335,19 +2346,26 @@ function App() {
                     // Worktree sessions stay: their folders are Lite's to remove, and that choice
                     // is each session's own dialog, never a bulk default.
                     const kept = sessions.filter((session) => session.worktree);
+                    const failed: string[] = [];
                     void Promise.all(
                       sessions
                         .filter((session) => !session.worktree)
                         .map(async (session) => {
                           runs.current.delete(session.id);
                           await invoke("stop_session", { sessionId: session.id });
-                          await cleanupSession(session);
+                          // A session whose cleanup failed keeps its tab: better a row to retry
+                          // from than an orphan nobody can reach.
+                          if (await cleanupSession(session)) {
+                            failed.push(session.id);
+                            return;
+                          }
                           setSessions((current) => current.filter((item) => item.id !== session.id));
                           if (selectedId === session.id) setSelectedId(kept[0]?.id ?? "");
                         }),
                     ).then(() => {
+                      const remaining = sessions.filter((session) => session.worktree || failed.includes(session.id));
                       setSelectedId((current) =>
-                        kept.some((session) => session.id === current) ? current : (kept[0]?.id ?? ""),
+                        remaining.some((session) => session.id === current) ? current : (remaining[0]?.id ?? ""),
                       );
                     });
                     setClosingAll(false);
