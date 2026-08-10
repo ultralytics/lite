@@ -1225,7 +1225,7 @@ fn file_tail(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&tail).into_owned())
 }
 
-// The newest token count in a thread's rollout file, less the baseline Codex itself discounts.
+// Codex defines context as raw total tokens, including reasoning, less its discounted baseline.
 fn codex_context(path: &Path) -> Option<UsageSnapshot> {
     const BASELINE_TOKENS: u64 = 12_000;
     let (tokens, window) = file_tail(path)?
