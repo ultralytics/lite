@@ -477,18 +477,13 @@ fn fail_with_rollback(
     worktree: &Path,
     branch: &str,
 ) -> String {
-    let result = match undo_worktree(git, repo, worktree, branch) {
+    match undo_worktree(git, repo, worktree, branch) {
         Ok(()) => error,
         Err(rollback) => format!(
             "{error}; rollback also failed ({rollback}), the worktree may remain at {}",
             path_text(worktree)
         ),
-    };
-    // The <repo>-worktrees folder Lite made for this goes too — but only ever when empty.
-    if let Some(parent) = worktree.parent() {
-        let _ = fs::remove_dir(parent);
     }
-    result
 }
 
 // Codex threads are UUIDs and Kimi sessions are short opaque ids, so both are held to a safe file-name charset.
@@ -3511,11 +3506,53 @@ fn main_checkout(git: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(common)
 }
 
-// Whether a folder sits inside a repository, and where that repository's main checkout is. The
-// new-session dialog asks before it has granted anything, so this takes the bare path — the same
-// folder the grant would name — and only reads from it.
+fn next_worktree(git: &Path, repo: &Path) -> Result<PathBuf, String> {
+    let parent = repo
+        .parent()
+        .ok_or("The repository root has no parent folder")?;
+    let name = repo
+        .file_name()
+        .ok_or("The repository root names no folder")?
+        .to_string_lossy();
+    let registered = command_output(git, repo, &["worktree", "list", "--porcelain"])?;
+    for index in 1.. {
+        let candidate = parent.join(format!("{name}-worktree-{index}"));
+        let registration = format!("worktree {}", path_text(&candidate));
+        if !candidate.exists() && !registered.lines().any(|line| line == registration) {
+            return Ok(candidate);
+        }
+    }
+    unreachable!()
+}
+
+fn owned_worktree(git: &Path, repo: &Path, root_id: &str, branch: &str) -> Option<PathBuf> {
+    command_output(git, repo, &["worktree", "list", "--porcelain"])
+        .ok()?
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .find(|worktree| {
+            command_output(git, worktree, &["symbolic-ref", "--short", "HEAD"])
+                .is_ok_and(|current| current == branch)
+                && command_output(git, worktree, &["rev-parse", "--absolute-git-dir"])
+                    .ok()
+                    .and_then(|admin| fs::read_to_string(PathBuf::from(admin).join("lite")).ok())
+                    .is_some_and(|owner| owner.trim() == root_id)
+        })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Repository {
+    root: String,
+    worktree: String,
+}
+
+// Whether a folder sits inside a repository, where its main checkout is, and the next sibling path
+// available for a Lite worktree. The new-session dialog asks before it has granted anything, so this
+// takes the bare path — the same folder the grant would name — and only reads from it.
 #[tauri::command]
-async fn git_repo(app: AppHandle, path: String) -> Result<Option<String>, String> {
+async fn git_repo(app: AppHandle, path: String) -> Result<Option<Repository>, String> {
     let path = path.trim();
     let path = match path.strip_prefix('~') {
         Some(rest) => app
@@ -3531,12 +3568,17 @@ async fn git_repo(app: AppHandle, path: String) -> Result<Option<String>, String
     // Canonicalized like the grant's path would be, so the root can be compared with session cwds.
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    Ok(main_checkout(&git, &path).ok().map(|root| path_text(&root)))
+    let Ok(root) = main_checkout(&git, &path) else {
+        return Ok(None);
+    };
+    Ok(Some(Repository {
+        worktree: path_text(&next_worktree(&git, &root)?),
+        root: path_text(&root),
+    }))
 }
 
-// A session that shares its project with another gets a worktree of its own: a sibling folder
-// named after the repository, holding a folder named after the branch. The branch is new, so the
-// name the dialog suggests is validated the way git would before anything is created.
+// A session that shares its project with another gets the next numbered sibling folder. The branch
+// is new, so the name the dialog suggests is validated the way git would before anything is created.
 #[tauri::command]
 async fn create_worktree(
     app: AppHandle,
@@ -3546,35 +3588,18 @@ async fn create_worktree(
 ) -> Result<DirectoryGrant, String> {
     let folder = root_path(&roots, &root_id)?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    // Anchored at the main checkout even when the session's folder is itself a linked worktree,
-    // so every worktree Lite makes for a repository sits in the same sibling folder.
+    // Anchored at the main checkout even when the session's folder is itself a linked worktree.
     let repo = main_checkout(&git, &folder)?;
     let branch = branch.trim();
     command_output(&git, &repo, &["check-ref-format", "--branch", branch])
         .map_err(|_| format!("“{branch}” is not a valid branch name"))?;
-    let name = repo
-        .file_name()
-        .ok_or("The repository root names no folder")?;
-    let worktree = repo
-        .parent()
-        .ok_or("The repository root has no parent folder")?
-        .join(format!("{}-worktrees", name.to_string_lossy()))
-        .join(branch.replace('/', "-"));
-    if worktree.exists() {
-        // An earlier attempt that failed after worktree add — and whose rollback also failed —
-        // left Lite's own behind: the mark says it is this grant's, so the retry adopts it and
-        // finishes the job instead of dying on the path it made. Anything else at the path is
-        // not Lite's, and still refused.
-        let marked = command_output(&git, &worktree, &["rev-parse", "--absolute-git-dir"])
-            .ok()
-            .and_then(|admin| fs::read_to_string(PathBuf::from(admin).join("lite")).ok())
-            .is_some_and(|owner| owner.trim() == root_id);
-        if !marked {
-            return Err(format!("{} already exists", path_text(&worktree)));
-        }
-    } else if let Some(parent) = worktree.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
+    // A retry resumes the worktree this grant already marked; a new create takes the next free
+    // numbered sibling. Nothing else at a candidate path is ever adopted.
+    let owned = owned_worktree(&git, &repo, &root_id, branch);
+    let worktree = match owned.as_ref() {
+        Some(worktree) => worktree.clone(),
+        None => next_worktree(&git, &repo)?,
+    };
     // A new branch starts where the selected folder is, not where the main checkout happens to
     // be: a worktree made from a feature worktree keeps the feature's commits. An empty
     // repository has no HEAD; current git starts the unborn branch without a start point, older
@@ -3585,7 +3610,7 @@ async fn create_worktree(
     if let Some(head) = head.as_deref() {
         args.push(head);
     }
-    if !worktree.exists() {
+    if owned.is_none() {
         match command_output(&git, &repo, &args) {
             Ok(_) => {}
             Err(error) if head.is_none() => {
@@ -3596,15 +3621,10 @@ async fn create_worktree(
                 )
                 .is_err()
                 {
-                    // The <repo>-worktrees folder Lite made goes too — but only ever when empty.
-                    let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
                     return Err(error);
                 }
             }
-            Err(error) => {
-                let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
-                return Err(error);
-            }
+            Err(error) => return Err(error),
         }
     }
     // Lite marks the worktrees it makes inside their administrative folder, where git status

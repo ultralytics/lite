@@ -37,13 +37,6 @@ function suggestedBranch(repo: string) {
   return `lite/${name}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-function worktreePath(repo: string, branch: string) {
-  const name = folderName(repo);
-  const index = repo.length - name.length - 1;
-  const separator = repo[index] || "/";
-  return `${repo.slice(0, index)}${separator}${name}-worktrees${separator}${branch.replace(/\//g, "-")}`;
-}
-
 // Two sessions share a project when they sit in the same repository — which a worktree's path
 // cannot say, since Lite worktrees live beside the checkout rather than under it, so the repo
 // recorded at creation answers. Sessions older than that record fall back to their path.
@@ -55,6 +48,11 @@ function sharesRepo(session: Session, repo: string) {
 interface DirectoryGrant {
   id: string;
   path: string;
+}
+
+interface Repository {
+  root: string;
+  worktree: string;
 }
 
 interface Availability {
@@ -88,6 +86,7 @@ export function NewSessionDialog({
   const [error, setError] = useState("");
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
   const [repo, setRepo] = useState<string | null>();
+  const [worktree, setWorktree] = useState("");
   const [worktreeOn, setWorktreeOn] = useState(false);
   const [branch, setBranch] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
@@ -124,23 +123,29 @@ export function NewSessionDialog({
   useEffect(() => {
     if (!isOpen || !path.trim()) {
       setRepo(null);
+      setWorktree("");
       setWorktreeOn(false);
       return;
     }
     setRepo(undefined);
     let disposed = false;
     const probe = window.setTimeout(() => {
-      void invoke<string | null>("git_repo", { path: path.trim() })
-        .then((root) => {
+      void invoke<Repository | null>("git_repo", { path: path.trim() })
+        .then((repository) => {
           if (disposed) return;
+          const root = repository?.root ?? null;
           setRepo(root);
+          setWorktree(repository?.worktree ?? "");
           // Sessions already sharing this repository make the worktree the default rather than the
           // option; a fresh repository leaves the choice with the main checkout.
           setWorktreeOn(Boolean(root && sessionsRef.current.some((session) => sharesRepo(session, root))));
           setBranch(root ? suggestedBranch(root) : "");
         })
         .catch(() => {
-          if (!disposed) setRepo(null);
+          if (!disposed) {
+            setRepo(null);
+            setWorktree("");
+          }
         });
     }, 250);
     return () => {
@@ -195,6 +200,7 @@ export function NewSessionDialog({
         setDirectory(selected);
         setPath(selected.path);
         setRepo(undefined);
+        setWorktree("");
       }
     } catch (reason) {
       setError(String(reason));
@@ -235,7 +241,7 @@ export function NewSessionDialog({
       // the worktree and the recorded repository always describe where the session will run.
       let root: string | null;
       try {
-        root = await invoke<string | null>("git_repo", { path: folder.path });
+        root = (await invoke<Repository | null>("git_repo", { path: folder.path }))?.root ?? null;
       } catch (reason) {
         setError(String(reason));
         return;
@@ -350,6 +356,7 @@ export function NewSessionDialog({
                     // The worktree section describes the probed folder; while a new one is being
                     // typed there is nothing true to show, so it hides until the probe answers.
                     setRepo(undefined);
+                    setWorktree("");
                   }}
                 />
                 <ActionIconButton
@@ -391,11 +398,8 @@ export function NewSessionDialog({
                       spellCheck={false}
                       onChange={(event) => setBranch(event.target.value)}
                     />
-                    <p
-                      className="max-w-full truncate font-mono text-xs text-muted-foreground"
-                      title={worktreePath(repo, branch)}
-                    >
-                      {worktreePath(repo, branch)}
+                    <p className="max-w-full truncate font-mono text-xs text-muted-foreground" title={worktree}>
+                      {worktree}
                     </p>
                   </div>
                 ) : null}
