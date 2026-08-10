@@ -203,7 +203,6 @@ export function NewSessionDialog({
     let folder = await grant();
     if (!folder) return;
     let worktree = false;
-    let createdBranch = "";
     // The probe's answer can lag the folder field, so the granted folder is asked directly:
     // the worktree and the recorded repository always describe where the session will run.
     const root = await invoke<string | null>("git_repo", { path: folder.path }).catch(() => null);
@@ -211,15 +210,10 @@ export function NewSessionDialog({
     // after the probe that enabled the option, and a worktree is never made on a stale answer.
     if (root && root === repo && worktreeOn) {
       try {
-        createdBranch = branch.trim() || suggestedBranch(root);
-        const granted = await invoke<DirectoryGrant>("create_worktree", {
+        folder = await invoke<DirectoryGrant>("create_worktree", {
           rootId: folder.id,
-          branch: createdBranch,
+          branch: branch.trim() || suggestedBranch(root),
         });
-        // The worktree's grant replaces the repository's: the session belongs to the folder it
-        // runs in, and the main checkout was only the way to make it.
-        void invoke("revoke_directory", { rootId: folder.id });
-        folder = granted;
         worktree = true;
       } catch (reason) {
         setError(String(reason));
@@ -237,7 +231,6 @@ export function NewSessionDialog({
       running: false,
       worktree,
       repo: root || undefined,
-      branch: createdBranch || undefined,
     });
     setDirectory(undefined);
     onOpenChange(false);

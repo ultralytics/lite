@@ -95,7 +95,7 @@ import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
-import { type Agent, defaultSessionName, type GitStatus, repoName, type Session, sessionLabel } from "@/types";
+import { type Agent, defaultSessionName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -925,7 +925,6 @@ function App() {
   const [closingWorktree, setClosingWorktree] = useState<{
     session: Session;
     branch: string;
-    changes: number;
     force: boolean;
     dirty: boolean;
     // The recorded removal target, which is what the dialog must name — session.cwd may have moved.
@@ -1552,21 +1551,15 @@ function App() {
     for (const session of sessions) restartSession(session, session.id === selectedId);
   }
 
-  // Reports the failure message, empty on success, and whether it is restorable: true only when
-  // the destructive part did not complete, so nothing was lost by bringing the session back. A
-  // failure after the worktree is already gone (say, revoking the grant) is surfaced but never
-  // resurrects a tab pointing at a deleted folder. The grant is kept whenever there is an error.
+  // Worktree cleanup runs first so a failed removal can restore a session whose provider metadata
+  // and folder grant are still intact.
   async function cleanupSession(session: Session): Promise<{ error: string; restorable: boolean }> {
     let error = "";
-    try {
-      await invoke("delete_session_data", { sessionId: session.id });
-    } catch (reason) {
-      error = String(reason);
-    }
     let restorable = false;
     if (session.worktree) {
+      const keep = keptWorktrees.current.delete(session.id);
       try {
-        if (keptWorktrees.current.delete(session.id)) {
+        if (keep) {
           // Kept at the user's choice: Lite forgets it made the worktree; the folder is the user's now.
           await invoke("forget_worktree", { rootId: session.rootId });
         } else {
@@ -1579,20 +1572,31 @@ function App() {
         }
       } catch (reason) {
         error ||= String(reason);
-        restorable = true;
+        if (!keep) {
+          const state = await invoke<{ recorded: boolean; gone: boolean }>("worktree_state", {
+            rootId: session.rootId,
+          }).catch(() => undefined);
+          restorable = !state || (state.recorded && !state.gone);
+          if (!restorable) await invoke("forget_worktree", { rootId: session.rootId }).catch(() => {});
+        }
       }
     }
-    if (!error) {
-      try {
-        await invoke("revoke_directory", { rootId: session.rootId });
-      } catch (reason) {
-        error ||= String(reason);
-      }
+    if (restorable) {
+      setError(`Session closed, but local cleanup failed: ${error}`);
+      return { error, restorable };
     }
-    if (!error) {
-      clearOutput(session.id);
-      clearUsageCache(session.id);
+    try {
+      await invoke("delete_session_data", { sessionId: session.id });
+    } catch (reason) {
+      error ||= String(reason);
     }
+    try {
+      await invoke("revoke_directory", { rootId: session.rootId });
+    } catch (reason) {
+      error ||= String(reason);
+    }
+    clearOutput(session.id);
+    clearUsageCache(session.id);
     if (error) setError(`Session closed, but local cleanup failed: ${error}`);
     return { error, restorable };
   }
@@ -1602,30 +1606,25 @@ function App() {
   function closeSession(session: Session) {
     if (startingIds.has(session.id)) return;
     if (!session.worktree) return closeSessionNow(session);
-    // Force is the backend's call, made against the removal target with checks user git config
-    // cannot hide; the status count only puts a number on the warning.
-    Promise.all([
-      invoke<{ recorded: boolean; gone: boolean; force: boolean; dirty: boolean; path: string }>("worktree_state", {
-        rootId: session.rootId,
-      }),
-      invoke<GitStatus | null>("git_status", { rootId: session.rootId }).catch(() => null),
-    ])
-      .then(([state, status]) => {
-        // No record means nothing Lite can clean up: the folder is the user's, the tab just closes.
+    void invoke<{
+      recorded: boolean;
+      gone: boolean;
+      force: boolean;
+      dirty: boolean;
+      branch: string;
+      path: string;
+    }>("worktree_state", { rootId: session.rootId })
+      .then((state) => {
         if (!state.recorded) return closeSessionNow({ ...session, worktree: false });
-        // A folder verified gone leaves only metadata behind; cleanup prunes it without asking.
         if (state.gone) return closeSessionNow(session);
         setClosingWorktree({
           session,
-          branch: session.branch ?? "",
-          changes: status?.changes.length ?? 0,
+          branch: state.branch,
           force: state.force,
           dirty: state.dirty,
           folder: state.path,
         });
       })
-      // The state could not be read, so nothing is known about what closing would delete: the
-      // session stays and the error says why, so closing can be tried again.
       .catch((reason) => setError(String(reason)));
   }
 
@@ -1633,10 +1632,6 @@ function App() {
     if (!closingWorktree) return;
     const { session, force } = closingWorktree;
     setClosingWorktree(undefined);
-    // Keep-or-delete travels beside the session, not in it: Undo restores the session exactly as
-    // it was, worktree flag included, and cleanup reads the choice from here. Every new decision
-    // first clears the last one, so a force approval from an undone close cannot outlive the
-    // status check that granted it.
     keptWorktrees.current.delete(session.id);
     forceWorktree.current.delete(session.id);
     if (remove) {
@@ -1669,6 +1664,8 @@ function App() {
     if (wasSelected) setSelectedId(nextSelectedId);
 
     function restore(running: boolean) {
+      keptWorktrees.current.delete(session.id);
+      forceWorktree.current.delete(session.id);
       setSessions((current) => {
         if (current.some((item) => item.id === session.id)) {
           return current.map((item) => (item.id === session.id ? { ...item, running } : item));
@@ -2338,7 +2335,7 @@ function App() {
                 <DialogDescription>
                   This stops every running session and removes all tabs. Providers keep their own conversation history.
                   {sessions.some((session) => session.worktree)
-                    ? " Sessions in Lite-created worktrees stay open; close them individually to decide what happens to their folders."
+                    ? " Lite-created worktree folders and branches are kept."
                     : null}
                 </DialogDescription>
               </DialogHeader>
@@ -2351,31 +2348,18 @@ function App() {
                   onClick={() => {
                     attentionRef.current = [];
                     setAttention([]);
-                    // Worktree sessions stay: their folders are Lite's to remove, and that choice
-                    // is each session's own dialog, never a bulk default.
-                    const kept = sessions.filter((session) => session.worktree);
-                    const failed: string[] = [];
+                    for (const session of sessions) {
+                      if (session.worktree) keptWorktrees.current.add(session.id);
+                    }
                     void Promise.all(
-                      sessions
-                        .filter((session) => !session.worktree)
-                        .map(async (session) => {
-                          runs.current.delete(session.id);
-                          await invoke("stop_session", { sessionId: session.id });
-                          // A session whose destructive cleanup failed keeps its tab: better a
-                          // row to retry from than an orphan nobody can reach.
-                          const { error, restorable } = await cleanupSession(session);
-                          if (error && restorable) {
-                            failed.push(session.id);
-                            return;
-                          }
-                          setSessions((current) => current.filter((item) => item.id !== session.id));
-                          if (selectedId === session.id) setSelectedId(kept[0]?.id ?? "");
-                        }),
+                      sessions.map(async (session) => {
+                        runs.current.delete(session.id);
+                        await invoke("stop_session", { sessionId: session.id });
+                        await cleanupSession(session);
+                        setSessions((current) => current.filter((item) => item.id !== session.id));
+                      }),
                     ).then(() => {
-                      const remaining = sessions.filter((session) => session.worktree || failed.includes(session.id));
-                      setSelectedId((current) =>
-                        remaining.some((session) => session.id === current) ? current : (remaining[0]?.id ?? ""),
-                      );
+                      setSelectedId("");
                     });
                     setClosingAll(false);
                   }}
@@ -2404,9 +2388,7 @@ function App() {
               {closingWorktree?.dirty ? (
                 <DialogBody>
                   <p className="text-xs text-destructive">
-                    {closingWorktree.changes > 0
-                      ? `The worktree has ${closingWorktree.changes} uncommitted change${closingWorktree.changes === 1 ? "" : "s"} that will be lost.`
-                      : "The worktree has uncommitted changes that will be lost."}
+                    The worktree contains uncommitted changes or ignored files that will be lost.
                   </p>
                 </DialogBody>
               ) : closingWorktree?.force ? (
