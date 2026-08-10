@@ -3585,11 +3585,12 @@ async fn remove_worktree(
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     if !path.is_dir() {
         // The folder went away on its own; what remains is administrative. Prune forgets the
-        // worktree, and the branch Lite made goes with the record either way.
+        // worktree, and the branch goes before the record: a deletion that fails keeps the
+        // record, so the restored session's next close can retry instead of orphaning the branch.
         let main = PathBuf::from(&recorded.main);
         let _ = command_output(&git, &main, &["worktree", "prune"]);
-        forget_record(&record)?;
-        return delete_branch(&git, &main, &branch);
+        delete_branch(&git, &main, &branch)?;
+        return forget_record(&record);
     }
     let git_dir = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])?;
     let common_dir = command_output(&git, &path, &["rev-parse", "--git-common-dir"])?;
@@ -3612,8 +3613,8 @@ async fn remove_worktree(
     }
     args.push(&target);
     command_output(&git, &main, &args)?;
-    forget_record(&record)?;
-    delete_branch(&git, &main, &branch)
+    delete_branch(&git, &main, &branch)?;
+    forget_record(&record)
 }
 
 #[tauri::command]
