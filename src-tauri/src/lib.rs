@@ -3440,10 +3440,20 @@ async fn create_worktree(
     if let Some(parent) = worktree.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
+    // The new branch starts where the selected folder is, not where the main checkout happens to
+    // be: a worktree made from a feature worktree keeps the feature's commits.
+    let head = command_output(&git, &folder, &["rev-parse", "HEAD"])?;
     command_output(
         &git,
         &repo,
-        &["worktree", "add", &path_text(&worktree), "-b", branch],
+        &[
+            "worktree",
+            "add",
+            &path_text(&worktree),
+            "-b",
+            branch,
+            &head,
+        ],
     )?;
     let grant = match grant_directory(&app, &roots, worktree.clone(), None) {
         Ok(grant) => grant,
