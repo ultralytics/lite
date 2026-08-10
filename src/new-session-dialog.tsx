@@ -1,11 +1,10 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Check, FolderOpen, GitBranch } from "lucide-react";
+import { FolderOpen } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
-import { Badge } from "@/components/ui/badge";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,11 +16,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import { Switch } from "@/components/ui/switch";
+import { AUTH_PROVIDERS } from "@/provider-auth";
 import { defaultSessionName, folderName, type Session, sessionLabel } from "@/types";
 
 const choices = [
@@ -39,6 +37,13 @@ function suggestedBranch(repo: string) {
   const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
   const name = folderName(repo).replace(/[^A-Za-z0-9_-]/g, "-") || "project";
   return `lite/${name}-${stamp.slice(0, 8)}-${stamp.slice(8)}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function worktreePath(repo: string, branch: string) {
+  const name = folderName(repo);
+  const index = repo.length - name.length - 1;
+  const separator = repo[index] || "/";
+  return `${repo.slice(0, index)}${separator}${name}-worktrees${separator}${branch.replace(/\//g, "-")}`;
 }
 
 // Two sessions share a project when they sit in the same repository — which a worktree's path
@@ -75,7 +80,6 @@ export function NewSessionDialog({
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
-  const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
   const [error, setError] = useState("");
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
@@ -129,7 +133,6 @@ export function NewSessionDialog({
     let disposed = false;
     setError("");
     setAvailability({});
-    setAuth(undefined);
     void invoke<DirectoryGrant | null>("default_directory")
       .then((selected) => {
         if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
@@ -137,13 +140,6 @@ export function NewSessionDialog({
           setDirectory(selected);
           setPath(selected.path);
         }
-      })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
-      });
-    void invoke<ProviderAuth[]>("provider_auth")
-      .then((result) => {
-        if (!disposed) setAuth(result);
       })
       .catch((reason) => {
         if (!disposed) setError(String(reason));
@@ -277,7 +273,7 @@ export function NewSessionDialog({
   // request to install it, which is the only one of the two it can answer.
   const ready = Boolean(
     !installing &&
-    (missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim()))),
+      (missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim()))),
   );
   function start() {
     if (missing?.installable) void install();
@@ -333,102 +329,65 @@ export function NewSessionDialog({
               </div>
             </div>
             {repo ? (
-              <fieldset className="space-y-1.5">
-                <legend className={SECTION}>Git worktree</legend>
-                <Item
-                  size="xs"
-                  variant={worktreeOn ? "outline" : "default"}
-                  className={worktreeOn ? "border-ring bg-accent" : "hover:bg-muted/60"}
-                  render={
-                    <button
-                      type="button"
-                      aria-pressed={worktreeOn}
-                      onClick={() => setWorktreeOn((current) => !current)}
-                    />
-                  }
-                >
-                  <ItemMedia variant="icon" className="size-7 rounded-md border bg-background">
-                    <GitBranch />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Start in a new worktree</ItemTitle>
-                    {sharing ? (
-                      <ItemDescription>
-                        {`${sharing} session${sharing === 1 ? "" : "s"} already work${sharing === 1 ? "s" : ""} in this project — a worktree keeps them separate`}
-                      </ItemDescription>
-                    ) : null}
-                  </ItemContent>
-                  <ItemActions>
-                    <Check className={`size-4 shrink-0 ${worktreeOn ? "" : "invisible"}`} />
-                  </ItemActions>
-                </Item>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <Label htmlFor="new-worktree" className={SECTION}>
+                      Worktree
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      {sharing
+                        ? `${sharing} session${sharing === 1 ? "" : "s"} already work${sharing === 1 ? "s" : ""} in this project`
+                        : "Isolate this session from the main checkout"}
+                    </p>
+                  </div>
+                  <Switch id="new-worktree" checked={worktreeOn} onCheckedChange={setWorktreeOn} />
+                </div>
                 {worktreeOn ? (
-                  <Input
-                    value={branch}
-                    className="font-mono"
-                    placeholder="Branch for the worktree…"
-                    aria-label="Branch for the worktree"
-                    name="worktree-branch"
-                    autoComplete="off"
-                    spellCheck={false}
-                    onChange={(event) => setBranch(event.target.value)}
-                  />
+                  <div className="space-y-1.5">
+                    <Label htmlFor="worktree-branch">Branch</Label>
+                    <Input
+                      id="worktree-branch"
+                      value={branch}
+                      className="font-mono"
+                      placeholder="Branch for the worktree…"
+                      name="worktree-branch"
+                      autoComplete="off"
+                      spellCheck={false}
+                      onChange={(event) => setBranch(event.target.value)}
+                    />
+                    <p className="truncate font-mono text-xs text-muted-foreground" title={worktreePath(repo, branch)}>
+                      {worktreePath(repo, branch)}
+                    </p>
+                  </div>
                 ) : null}
-              </fieldset>
+              </div>
             ) : null}
-            <fieldset className="space-y-1.5">
-              <legend className={SECTION}>Agent</legend>
-              <div className="space-y-1">
+            <div className="space-y-1.5">
+              <p className={SECTION}>Agent</p>
+              <div className="grid grid-cols-3 gap-1.5">
                 {choices.map((option) => {
-                  const state = availability[option.id];
-                  const active = option.id === choiceId;
-                  const authProvider = "configured" in option ? option : undefined;
-                  const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
-                  const row = (
-                    <Item
+                  const active = choiceId === option.id;
+                  return (
+                    <Button
                       key={option.id}
-                      size="xs"
-                      variant={active ? "outline" : "default"}
-                      className={active ? "border-ring bg-accent" : "hover:bg-muted/60"}
-                      render={
-                        <button
-                          type="button"
-                          aria-pressed={active}
-                          disabled={Boolean(installing)}
-                          onClick={() => (active && ready ? start() : setChoiceId(option.id))}
-                        />
-                      }
+                      type="button"
+                      size="sm"
+                      variant={active ? "secondary" : "outline"}
+                      className="min-w-0 justify-start px-2"
+                      aria-pressed={active}
+                      disabled={Boolean(installing)}
+                      title={sessionLabel(option)}
+                      onClick={() => setChoiceId(option.id)}
                     >
-                      {/* The same tile the session wears in the sidebar, so the choice looks like its result. */}
-                      <ItemMedia variant="icon" className="size-7 rounded-md border bg-background">
-                        <ProviderIcon agent={option.agent} provider={option.provider} />
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{sessionLabel(option)}</ItemTitle>
-                        {authProvider ? (
-                          <ProviderAuthDescription provider={authProvider} status={authStatus} />
-                        ) : (
-                          <ItemDescription>{"description" in option ? option.description : undefined}</ItemDescription>
-                        )}
-                      </ItemContent>
-                      <ItemActions>
-                        {state && !state.available ? <Badge variant="outline">Not installed</Badge> : null}
-                        <Check className={`size-4 shrink-0 ${active ? "" : "invisible"}`} />
-                      </ItemActions>
-                    </Item>
-                  );
-                  return "note" in option ? (
-                    <Tooltip key={option.id}>
-                      <TooltipTrigger render={row} />
-                      <TooltipContent className="max-w-64">{option.note}</TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    row
+                      <ProviderIcon agent={option.agent} provider={option.provider} />
+                      <span className="truncate">{sessionLabel(option)}</span>
+                    </Button>
                   );
                 })}
               </div>
               {missing ? <p className="text-xs text-muted-foreground">{missing.detail}</p> : null}
-            </fieldset>
+            </div>
             {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </DialogBody>
