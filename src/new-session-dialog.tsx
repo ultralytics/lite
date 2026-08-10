@@ -376,7 +376,7 @@ export function NewSessionDialog({
             ) : null}
             <div className="space-y-1.5">
               <p className={SECTION}>Agent</p>
-              <div className="grid min-w-0 grid-cols-4 gap-2">
+              <div className="grid min-w-0 grid-cols-2 gap-2">
                 {choices.map((option) => {
                   const active = choiceId === option.id;
                   const state = availability[option.id];
