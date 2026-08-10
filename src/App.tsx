@@ -922,7 +922,13 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
   // The worktree session waiting on the close dialog's answer, with what its tree looked like when asked.
-  const [closingWorktree, setClosingWorktree] = useState<{ session: Session; branch: string; changes: number }>();
+  const [closingWorktree, setClosingWorktree] = useState<{
+    session: Session;
+    branch: string;
+    changes: number;
+    force: boolean;
+    dirty: boolean;
+  }>();
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   // Sessions whose terminal has written something recently, which is what separates a connected
@@ -1576,12 +1582,19 @@ function App() {
   function closeSession(session: Session) {
     if (startingIds.has(session.id)) return;
     if (!session.worktree) return closeSessionNow(session);
-    invoke<GitStatus | null>("git_status", { rootId: session.rootId })
-      .then((status) =>
+    // Force is the backend's call, made against the removal target with checks user git config
+    // cannot hide; the status count only puts a number on the warning.
+    Promise.all([
+      invoke<{ force: boolean; dirty: boolean }>("worktree_state", { rootId: session.rootId }),
+      invoke<GitStatus | null>("git_status", { rootId: session.rootId }).catch(() => null),
+    ])
+      .then(([state, status]) =>
         setClosingWorktree({
           session,
           branch: session.branch ?? "",
           changes: status?.changes.length ?? 0,
+          force: state.force,
+          dirty: state.dirty,
         }),
       )
       // A folder that is already gone has nothing left to ask about; the session closes plainly.
@@ -1590,9 +1603,9 @@ function App() {
 
   function confirmCloseWorktree(remove: boolean) {
     if (!closingWorktree) return;
-    const { session, changes } = closingWorktree;
+    const { session, force } = closingWorktree;
     setClosingWorktree(undefined);
-    if (remove && changes > 0) forceWorktree.current.add(session.id);
+    if (remove && force) forceWorktree.current.add(session.id);
     closeSessionNow(remove ? session : { ...session, worktree: false });
   }
 
@@ -2330,10 +2343,18 @@ function App() {
                   .
                 </DialogDescription>
               </DialogHeader>
-              {closingWorktree?.changes ? (
+              {closingWorktree?.dirty ? (
                 <DialogBody>
                   <p className="text-xs text-destructive">
-                    {`The worktree has ${closingWorktree.changes} uncommitted change${closingWorktree.changes === 1 ? "" : "s"} that will be lost.`}
+                    {closingWorktree.changes > 0
+                      ? `The worktree has ${closingWorktree.changes} uncommitted change${closingWorktree.changes === 1 ? "" : "s"} that will be lost.`
+                      : "The worktree has uncommitted changes that will be lost."}
+                  </p>
+                </DialogBody>
+              ) : closingWorktree?.force ? (
+                <DialogBody>
+                  <p className="text-xs text-muted-foreground">
+                    The worktree holds ignored files or submodules, so removing it needs force.
                   </p>
                 </DialogBody>
               ) : null}
@@ -2342,7 +2363,7 @@ function App() {
                   Keep worktree
                 </Button>
                 <Button variant="destructive" onClick={() => confirmCloseWorktree(true)}>
-                  {closingWorktree?.changes ? "Force delete worktree" : "Delete worktree"}
+                  {closingWorktree?.force ? "Force delete worktree" : "Delete worktree"}
                 </Button>
               </DialogFooter>
             </DialogContent>

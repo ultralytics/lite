@@ -3429,6 +3429,56 @@ async fn create_worktree(
     Ok(grant)
 }
 
+// What closing a worktree session needs to know before it asks: whether removal will need
+// --force, and whether anything precious is in the way. Both are asked in a form user status
+// configuration cannot hide (an explicit --untracked-files beats status.showUntrackedFiles):
+// dirty counts changes git tracks or reports, ignored files and submodules only force removal —
+// git refuses both without it — but are nothing to warn about losing.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorktreeState {
+    force: bool,
+    dirty: bool,
+}
+
+// The state of the recorded worktree — the removal target — not of wherever the session's grant
+// points now. Answers for the close dialog; the removal itself re-validates regardless.
+#[tauri::command]
+async fn worktree_state(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    root_id: String,
+) -> Result<WorktreeState, String> {
+    uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
+    let record = worktrees_path(&app)?.join(&root_id);
+    let recorded: WorktreeRecord = fs::read(&record)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or("This session's worktree is not one Lite created".to_owned())?;
+    root_path(&roots, &root_id)?;
+    let path = PathBuf::from(&recorded.path);
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let status = command_output(
+        &git,
+        &path,
+        &[
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignored=matching",
+        ],
+    )?;
+    let dirty = status.lines().any(|line| !line.starts_with("!!"));
+    let ignored = status.lines().any(|line| line.starts_with("!!"));
+    let submodules = !command_output(&git, &path, &["submodule", "status"])
+        .unwrap_or_default()
+        .is_empty();
+    Ok(WorktreeState {
+        force: dirty || ignored || submodules,
+        dirty,
+    })
+}
+
 // Removing a worktree is the mirror of creating one, with two guards that do not trust the
 // caller. Everything the removal touches — the folder and the branch — comes from the record
 // Lite wrote at creation, never from arguments: the caller names only the grant, and the path
@@ -3804,6 +3854,7 @@ pub fn run() {
             git_remote,
             git_repo,
             create_worktree,
+            worktree_state,
             remove_worktree,
             read_usage,
             agent_availability,
