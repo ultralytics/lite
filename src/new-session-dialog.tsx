@@ -39,6 +39,14 @@ function suggestedBranch(repo: string) {
   return `lite/${folderName(repo) || "project"}-${stamp.slice(0, 8)}-${stamp.slice(8)}`;
 }
 
+// Two sessions share a project when they sit in the same repository — which a worktree's path
+// cannot say, since Lite worktrees live beside the checkout rather than under it, so the repo
+// recorded at creation answers. Sessions older than that record fall back to their path.
+function sharesRepo(session: Session, repo: string) {
+  if (session.repo) return session.repo === repo;
+  return session.cwd === repo || session.cwd.startsWith(`${repo}/`) || session.cwd.startsWith(`${repo}\\`);
+}
+
 interface DirectoryGrant {
   id: string;
   path: string;
@@ -54,12 +62,12 @@ export function NewSessionDialog({
   open: isOpen,
   onOpenChange,
   onCreate,
-  existingCwds,
+  sessions,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
-  existingCwds: string[];
+  sessions: Session[];
 }) {
   const [choiceId, setChoiceId] = useState(choices[0].id);
   const [directory, setDirectory] = useState<DirectoryGrant>();
@@ -77,11 +85,11 @@ export function NewSessionDialog({
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
   // Sessions already working in this repository, which is the case a worktree exists for.
-  const sharing = repo ? existingCwds.filter((cwd) => cwd === repo || cwd.startsWith(`${repo}/`)).length : 0;
+  const sharing = repo ? sessions.filter((session) => sharesRepo(session, repo)).length : 0;
   // The probe reads this rather than depending on it: a session updating elsewhere must not reset
   // the toggle the user has already answered.
-  const existingCwdsRef = useRef(existingCwds);
-  existingCwdsRef.current = existingCwds;
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
 
   // A typed path settles for a moment before it is probed, so a folder is never looked up once per
   // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
@@ -100,9 +108,7 @@ export function NewSessionDialog({
           setRepo(root ?? "");
           // Sessions already sharing this repository make the worktree the default rather than the
           // option; a fresh repository leaves the choice with the main checkout.
-          setWorktreeOn(
-            Boolean(root && existingCwdsRef.current.some((cwd) => cwd === root || cwd.startsWith(`${root}/`))),
-          );
+          setWorktreeOn(Boolean(root && sessionsRef.current.some((session) => sharesRepo(session, root))));
           setBranch(root ? suggestedBranch(root) : "");
         })
         .catch(() => {
@@ -217,6 +223,8 @@ export function NewSessionDialog({
       name: project,
       running: false,
       worktree,
+      repo: repo || undefined,
+      branch: worktree ? branch.trim() : undefined,
     });
     setDirectory(undefined);
     onOpenChange(false);

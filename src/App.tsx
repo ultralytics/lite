@@ -995,8 +995,6 @@ function App() {
     );
   }, [sessions, query]);
   visibleRef.current = visible;
-  // What the new-session dialog measures "already working here" against.
-  const existingCwds = useMemo(() => sessions.map((session) => session.cwd), [sessions]);
   sessionsRef.current = sessions;
   themeRef.current = theme;
   selectedRef.current = selected;
@@ -1558,6 +1556,7 @@ function App() {
         await invoke("remove_worktree", {
           rootId: session.rootId,
           force: forceWorktree.current.delete(session.id),
+          branch: session.branch ?? "",
         });
       } catch (reason) {
         cleanupError ||= String(reason);
@@ -1582,7 +1581,7 @@ function App() {
       .then((status) =>
         setClosingWorktree({
           session,
-          branch: status?.branch ?? "",
+          branch: session.branch ?? "",
           changes: status?.changes.length ?? 0,
         }),
       )
@@ -2353,7 +2352,7 @@ function App() {
             open={newSessionOpen}
             onOpenChange={setNewSessionOpen}
             onCreate={createSession}
-            existingCwds={existingCwds}
+            sessions={sessions}
           />
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
           <Toaster />

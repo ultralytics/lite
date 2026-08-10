@@ -20,6 +20,12 @@ export interface Session {
   // Lite created this session its own git worktree, so closing the session offers to remove it.
   // A worktree the user made by hand never carries this flag and is never offered for deletion.
   worktree?: boolean;
+  // The repository the session's folder sits in, recorded at creation: worktrees live outside the
+  // main checkout, so this — not the path — is how sessions sharing a repository recognize each other.
+  repo?: string;
+  // The branch Lite created with the worktree, so removing the worktree deletes exactly that branch
+  // and never whatever an agent has since switched the worktree to.
+  branch?: string;
 }
 
 const agentLabels: Record<Agent, string> = {

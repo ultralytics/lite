@@ -3348,13 +3348,15 @@ async fn create_worktree(
 
 // Removing a worktree is the mirror of creating one, with one guard that does not trust the
 // caller: the granted folder must be a linked worktree (its git dir is not the common git dir),
-// so a main checkout is refused no matter which session asked. The branch is read before the
-// removal that would orphan it, and goes with the folder it only ever named.
+// so a main checkout is refused no matter which session asked. Only the branch Lite created with
+// the worktree is deleted — never whatever an agent has since switched the worktree to — and a
+// branch that is already gone is no failure.
 #[tauri::command]
 async fn remove_worktree(
     roots: State<'_, Roots>,
     root_id: String,
     force: bool,
+    branch: String,
 ) -> Result<(), String> {
     let path = root_path(&roots, &root_id)?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
@@ -3373,7 +3375,6 @@ async fn remove_worktree(
         .parent()
         .ok_or("The repository's git folder has no parent")?
         .to_path_buf();
-    let branch = command_output(&git, &path, &["branch", "--show-current"])?;
     let target = path_text(&path);
     let mut args = vec!["worktree", "remove"];
     if force {
@@ -3382,7 +3383,7 @@ async fn remove_worktree(
     args.push(&target);
     command_output(&git, &main, &args)?;
     if !branch.is_empty() {
-        command_output(&git, &main, &["branch", "-D", branch.as_str()])?;
+        let _ = command_output(&git, &main, &["branch", "-D", branch.as_str()]);
     }
     Ok(())
 }
