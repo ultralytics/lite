@@ -103,7 +103,7 @@ export function ProviderAuthDescription({
   const hint = status?.keyHint ?? status?.cliKeyHint;
   const configured = status?.keyHint || status?.cliKeyHint ? "Using API key" : provider.configured;
   return (
-    <ItemDescription className="truncate">
+    <ItemDescription className="truncate text-xs leading-4">
       {status && (hint || status.cliAuthMethod) ? (
         <span className="flex items-center gap-1.5">
           <Check className="size-3.5 shrink-0" />

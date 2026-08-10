@@ -889,7 +889,7 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
 
-  // The panel is only built when the tab is opened and again whenever it is refreshed, so asking
+  // The panel is only built when the tab is requested and again whenever it is refreshed, so asking
   // GitHub here asks it exactly on those two occasions and never between them.
   useEffect(() => {
     if (!named.urls.length && !named.guessed.length) return setItems([]);
@@ -1100,8 +1100,7 @@ export function Inspector({
   // the tabs rereads whichever is open, by rebuilding it, and only that one ever reads the disk.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
 
-  function selectTab(value: string) {
-    setTab(value);
+  function visitTab(value: string) {
     setVisited((current) => {
       if (current.has(value)) return current;
       const next = new Set(current);
@@ -1110,9 +1109,14 @@ export function Inspector({
     });
   }
 
+  function selectTab(value: string) {
+    setTab(value);
+    visitTab(value);
+  }
+
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
   // on. What it was showing is hidden rather than thrown away, so the file you had open is still open
-  // when it comes back, and a hidden panel reads nothing because nothing here reads without being asked.
+  // when it comes back. Hovering or focusing Git explicitly asks that panel to prepare before the click.
   const rail = (
     <div
       data-context-surface
@@ -1136,6 +1140,8 @@ export function Inspector({
           tooltip={label}
           tooltipSide="left"
           aria-label={label}
+          onPointerEnter={value === "git" ? () => visitTab(value) : undefined}
+          onFocus={value === "git" ? () => visitTab(value) : undefined}
           onClick={() => {
             selectTab(value);
             onExpand();
@@ -1165,7 +1171,16 @@ export function Inspector({
             <TabsList variant="line">
               {TABS.map(({ value, label, icon: Icon }) => (
                 <Tooltip key={value}>
-                  <TooltipTrigger render={<TabsTrigger value={value} aria-label={label} />}>
+                  <TooltipTrigger
+                    render={
+                      <TabsTrigger
+                        value={value}
+                        aria-label={label}
+                        onPointerEnter={value === "git" ? () => visitTab(value) : undefined}
+                        onFocus={value === "git" ? () => visitTab(value) : undefined}
+                      />
+                    }
+                  >
                     <Icon />
                   </TooltipTrigger>
                   <TooltipContent>{label}</TooltipContent>
