@@ -448,11 +448,15 @@ async fn forget_worktree(
     grant_known(&roots, &root_id)?;
     let record = worktrees_path(&app)?.join(&root_id);
     // The folder is the user's now, and Lite's marks go with the record: nothing says the
-    // worktree or its repository was ever Lite's to remove.
+    // worktree or its repository was ever Lite's to remove. Prune is safe here — it only drops
+    // registrations whose folders are missing, so a kept worktree that is still in place keeps
+    // its registration, while a manually deleted one stops claiming the branch.
     if let Some(recorded) = read_worktree_record(&record) {
         let _ = fs::remove_file(PathBuf::from(&recorded.admin).join("lite"));
         let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-        remove_repo_mark(&git, &PathBuf::from(&recorded.main), &root_id);
+        let main = PathBuf::from(&recorded.main);
+        remove_repo_mark(&git, &main, &root_id);
+        let _ = command_output(&git, &main, &["worktree", "prune"]);
     }
     forget_record(&record)
 }
@@ -3557,9 +3561,18 @@ async fn create_worktree(
         .join(format!("{}-worktrees", name.to_string_lossy()))
         .join(branch.replace('/', "-"));
     if worktree.exists() {
-        return Err(format!("{} already exists", path_text(&worktree)));
-    }
-    if let Some(parent) = worktree.parent() {
+        // An earlier attempt that failed after worktree add — and whose rollback also failed —
+        // left Lite's own behind: the mark says it is this grant's, so the retry adopts it and
+        // finishes the job instead of dying on the path it made. Anything else at the path is
+        // not Lite's, and still refused.
+        let marked = command_output(&git, &worktree, &["rev-parse", "--absolute-git-dir"])
+            .ok()
+            .and_then(|admin| fs::read_to_string(PathBuf::from(admin).join("lite")).ok())
+            .is_some_and(|owner| owner.trim() == root_id);
+        if !marked {
+            return Err(format!("{} already exists", path_text(&worktree)));
+        }
+    } else if let Some(parent) = worktree.parent() {
         fs::create_dir_all(parent).map_err(|error| error.to_string())?;
     }
     // A new branch starts where the selected folder is, not where the main checkout happens to
@@ -3572,24 +3585,26 @@ async fn create_worktree(
     if let Some(head) = head.as_deref() {
         args.push(head);
     }
-    match command_output(&git, &repo, &args) {
-        Ok(_) => {}
-        Err(error) if head.is_none() => {
-            if command_output(
-                &git,
-                &repo,
-                &["worktree", "add", "--orphan", "-b", branch, &target],
-            )
-            .is_err()
-            {
-                // The <repo>-worktrees folder Lite made goes too — but only ever when empty.
+    if !worktree.exists() {
+        match command_output(&git, &repo, &args) {
+            Ok(_) => {}
+            Err(error) if head.is_none() => {
+                if command_output(
+                    &git,
+                    &repo,
+                    &["worktree", "add", "--orphan", "-b", branch, &target],
+                )
+                .is_err()
+                {
+                    // The <repo>-worktrees folder Lite made goes too — but only ever when empty.
+                    let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
+                    return Err(error);
+                }
+            }
+            Err(error) => {
                 let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
                 return Err(error);
             }
-        }
-        Err(error) => {
-            let _ = fs::remove_dir(worktree.parent().unwrap_or(&worktree));
-            return Err(error);
         }
     }
     // Lite marks the worktrees it makes inside their administrative folder, where git status
