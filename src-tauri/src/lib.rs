@@ -2520,7 +2520,9 @@ async fn spawn_session(
     }
     command.cwd(path_text(&cwd));
     command.env("TERM", "xterm-256color");
-    // A launched app inherits no locale, so a session reads its own UTF-8 as Mac Roman: `─` copies as `‚îÄ`.
+    // A launched app inherits no locale, so a session reads its own UTF-8 as Mac Roman: `─` copies as
+    // `‚îÄ`. Only macOS names the encoding on its own, elsewhere it belongs to an installed locale.
+    #[cfg(target_os = "macos")]
     command.env("LC_CTYPE", "UTF-8");
     // The conventional hint for which way a terminal is shaded, so a CLI picks a readable palette.
     command.env(
