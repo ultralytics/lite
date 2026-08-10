@@ -927,6 +927,7 @@ function App() {
     branch: string;
     force: boolean;
     changes: number;
+    changesTruncated: boolean;
     // The recorded removal target, which is what the dialog must name — session.cwd may have moved.
     folder: string;
   }>();
@@ -1612,6 +1613,7 @@ function App() {
       gone: boolean;
       force: boolean;
       changes: number;
+      changesTruncated: boolean;
       branch: string;
       path: string;
     }>("worktree_state", { rootId: session.rootId })
@@ -1623,6 +1625,7 @@ function App() {
           branch: state.branch,
           force: state.force,
           changes: state.changes,
+          changesTruncated: state.changesTruncated,
           folder: state.path,
         });
       })
@@ -2391,8 +2394,10 @@ function App() {
               {closingWorktree?.changes ? (
                 <DialogBody>
                   <p className="text-xs text-destructive">
-                    The worktree contains {closingWorktree.changes} changed or ignored{" "}
-                    {closingWorktree.changes === 1 ? "file" : "files"} that will be lost.
+                    The worktree contains {closingWorktree.changes}
+                    {closingWorktree.changesTruncated ? "+" : ""} changed or ignored{" "}
+                    {!closingWorktree.changesTruncated && closingWorktree.changes === 1 ? "file" : "files"} that will be
+                    lost.
                   </p>
                 </DialogBody>
               ) : closingWorktree?.force ? (

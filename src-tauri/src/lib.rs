@@ -3208,6 +3208,37 @@ async fn read_text_file(
     String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text".into())
 }
 
+fn bounded_git_lines(
+    git: &Path,
+    path: &Path,
+    args: &[&str],
+) -> Result<(Vec<String>, bool), String> {
+    let mut child = Command::new(git)
+        .arg("-C")
+        .arg(path_text(path))
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or("Could not read Git status")?;
+    let mut lines = BufReader::new(stdout)
+        .lines()
+        .take(MAX_GIT_CHANGES + 1)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    let truncated = lines.len() > MAX_GIT_CHANGES;
+    if truncated {
+        lines.truncate(MAX_GIT_CHANGES);
+        let _ = child.kill();
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if !status.success() && !truncated {
+        return Err("Could not read Git status".into());
+    }
+    Ok((lines, truncated))
+}
+
 #[tauri::command]
 async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<GitStatus>, String> {
     let path = root_path(&roots, &root_id)?;
@@ -3218,29 +3249,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         Err(_) => return Ok(None),
     };
     let branch = command_output(&git, &path, &["branch", "--show-current"])?;
-    let mut child = Command::new(&git)
-        .arg("-C")
-        .arg(path_text(&path))
-        .args(["status", "--short"])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    let stdout = child.stdout.take().ok_or("Could not read Git status")?;
-    let mut changes = BufReader::new(stdout)
-        .lines()
-        .take(MAX_GIT_CHANGES + 1)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    let changes_truncated = changes.len() > MAX_GIT_CHANGES;
-    if changes_truncated {
-        changes.truncate(MAX_GIT_CHANGES);
-        let _ = child.kill();
-    }
-    let status = child.wait().map_err(|error| error.to_string())?;
-    if !status.success() && !changes_truncated {
-        return Err("Could not read Git status".into());
-    }
+    let (changes, changes_truncated) = bounded_git_lines(&git, &path, &["status", "--short"])?;
     let line_diffs = Command::new(&git)
         .arg("-C")
         .arg(&root)
@@ -3481,6 +3490,7 @@ struct WorktreeState {
     gone: bool,
     force: bool,
     changes: usize,
+    changes_truncated: bool,
     branch: String,
     // The removal target itself, so the close dialog names the folder deletion would actually
     // take: a shell session's cwd may have moved anywhere since the worktree was made.
@@ -3500,6 +3510,7 @@ async fn worktree_state(
         gone: false,
         force: false,
         changes: 0,
+        changes_truncated: false,
         branch: String::new(),
         path: String::new(),
     };
@@ -3520,7 +3531,7 @@ async fn worktree_state(
     }
     let path = PathBuf::from(&recorded.path);
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let status = command_output(
+    let (changes, changes_truncated) = bounded_git_lines(
         &git,
         &path,
         &[
@@ -3530,7 +3541,7 @@ async fn worktree_state(
             "--ignored=matching",
         ],
     )?;
-    let changes = status.lines().count();
+    let changes = changes.len();
     let submodules = !command_output(&git, &path, &["submodule", "status"])
         .unwrap_or_default()
         .is_empty();
@@ -3539,6 +3550,7 @@ async fn worktree_state(
         gone: false,
         force: changes > 0 || submodules,
         changes,
+        changes_truncated,
         branch: recorded.branch,
         path: recorded.path,
     })

@@ -392,7 +392,7 @@ export function NewSessionDialog({
                       aria-pressed={active}
                       disabled={Boolean(installing)}
                       title={"note" in option ? option.note : sessionLabel(option)}
-                      onClick={() => setChoiceId(option.id)}
+                      onClick={() => (active && ready ? start() : setChoiceId(option.id))}
                     >
                       <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
                       <div className="min-w-0 flex-1 text-left">
