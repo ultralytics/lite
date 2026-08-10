@@ -784,7 +784,9 @@ function SessionRow({
         x: number;
         y: number;
         target: Element;
+        row: HTMLElement;
         dragging: boolean;
+        preview?: HTMLElement;
       }
     | undefined
   >(undefined);
@@ -795,6 +797,14 @@ function SessionRow({
     if (next) onRename(next);
     else setName(session.name);
     onRenamingChange(false);
+  }
+
+  function removeDragPreview(pointer: NonNullable<typeof dragPointer.current>) {
+    pointer.row.style.removeProperty("opacity");
+    if (!pointer.preview) return;
+    pointer.preview.style.opacity = "0";
+    pointer.preview.style.scale = "0.98";
+    window.setTimeout(() => pointer.preview?.remove(), 100);
   }
 
   return (
@@ -817,6 +827,7 @@ function SessionRow({
           x: event.clientX,
           y: event.clientY,
           target,
+          row: event.currentTarget,
           dragging: false,
         };
       }}
@@ -826,9 +837,40 @@ function SessionRow({
         if (!pointer.dragging) {
           if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) < 4) return;
           pointer.dragging = true;
+          const bounds = pointer.row.getBoundingClientRect();
+          const preview = pointer.row.cloneNode(true) as HTMLElement;
+          preview.removeAttribute("data-context-session");
+          preview.setAttribute("aria-hidden", "true");
+          preview.inert = true;
+          Object.assign(preview.style, {
+            position: "fixed",
+            zIndex: "100",
+            left: `${bounds.left}px`,
+            top: `${bounds.top}px`,
+            width: `${bounds.width}px`,
+            height: `${bounds.height}px`,
+            margin: "0",
+            pointerEvents: "none",
+            backgroundColor: "var(--sidebar)",
+            borderColor: "var(--border)",
+            boxShadow: "0 12px 32px rgb(0 0 0 / 0.28)",
+            opacity: "0",
+            scale: "0.98",
+            transition: "opacity 120ms ease, scale 120ms ease",
+            willChange: "transform",
+          });
+          document.body.append(preview);
+          pointer.preview = preview;
+          pointer.row.style.opacity = "0.35";
+          window.requestAnimationFrame(() => {
+            preview.style.opacity = "0.88";
+            preview.style.scale = "1.02";
+          });
           onDragStart();
         }
         event.preventDefault();
+        if (pointer.preview)
+          pointer.preview.style.transform = `translate3d(${event.clientX - pointer.x}px, ${event.clientY - pointer.y}px, 0)`;
         onDragMove(event.clientX, event.clientY);
       }}
       onPointerUp={(event) => {
@@ -838,6 +880,7 @@ function SessionRow({
         dragPointer.current = undefined;
         if (!pointer.dragging) return;
         event.preventDefault();
+        removeDragPreview(pointer);
         suppressClick.current = true;
         onDragEnd();
         window.setTimeout(() => {
@@ -848,7 +891,10 @@ function SessionRow({
         const pointer = dragPointer.current;
         if (!pointer || pointer.id !== event.pointerId) return;
         dragPointer.current = undefined;
-        if (pointer.dragging) onDragCancel();
+        if (pointer.dragging) {
+          removeDragPreview(pointer);
+          onDragCancel();
+        }
       }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
