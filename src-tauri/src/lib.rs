@@ -3831,13 +3831,13 @@ fn branch_exists(git: &Path, main: &Path, branch: &str) -> Result<bool, String> 
 
 // Deleting Lite's branch: the name alone is not proof, so the tip is validated first — it must
 // exist and still descend from the commit Lite started it at (an agent's own commits on top are
-// descendants and go with it as intended; a branch Lite started in an empty repository has no
-// ancestor to check). The deletion itself is compare-and-delete: the branch goes only if it
-// still points at the tip that was just validated, so a repoint or recreation in between is
-// never taken with it. An already-gone or foreign branch is skipped, not an error; a validation
-// that cannot answer is reported.
+// descendants and go with it as intended). A branch started in an empty repository is retained
+// because it has no immutable ancestor to prove ownership. The deletion itself is compare-and-delete:
+// the branch goes only if it still points at the tip that was just validated, so a repoint or
+// recreation in between is never taken with it. An already-gone or foreign branch is skipped, not
+// an error; a validation that cannot answer is reported.
 fn delete_branch(git: &Path, main: &Path, branch: &str, head: &str) -> Result<(), String> {
-    if branch.is_empty() {
+    if branch.is_empty() || head.is_empty() {
         return Ok(());
     }
     let reference = format!("refs/heads/{branch}");
