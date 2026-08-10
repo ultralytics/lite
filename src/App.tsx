@@ -1556,7 +1556,6 @@ function App() {
         await invoke("remove_worktree", {
           rootId: session.rootId,
           force: forceWorktree.current.delete(session.id),
-          branch: session.branch ?? "",
         });
       } catch (reason) {
         cleanupError ||= String(reason);

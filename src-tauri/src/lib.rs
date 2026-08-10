@@ -348,11 +348,33 @@ fn worktrees_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("worktrees"))
 }
 
-fn record_worktree(app: &AppHandle, root_id: &str, worktree: &Path) -> Result<(), String> {
+// What Lite records about each worktree it creates: the folder, and the branch it made for it —
+// both used at removal time and neither trusted to the caller again.
+#[derive(Deserialize, Serialize)]
+struct WorktreeRecord {
+    path: String,
+    branch: String,
+}
+
+fn record_worktree(
+    app: &AppHandle,
+    root_id: &str,
+    worktree: &Path,
+    branch: &str,
+) -> Result<(), String> {
     uuid::Uuid::parse_str(root_id).map_err(|_| "Invalid grant ID")?;
     let directory = worktrees_path(app)?;
     fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-    write_atomic(&directory.join(root_id), path_text(worktree).as_bytes())
+    let record = WorktreeRecord {
+        path: path_text(worktree),
+        branch: branch.to_owned(),
+    };
+    write_atomic(
+        &directory.join(root_id),
+        serde_json::to_vec(&record)
+            .map_err(|error| error.to_string())?
+            .as_slice(),
+    )
 }
 
 // worktree add has already run when these are reached, so a failure after it puts the folder and
@@ -3397,7 +3419,7 @@ async fn create_worktree(
             return Err(error);
         }
     };
-    if let Err(error) = record_worktree(&app, &grant.id, &worktree) {
+    if let Err(error) = record_worktree(&app, &grant.id, &worktree, branch) {
         let _ = update_roots(&app, &roots, |roots| {
             roots.remove(&grant.id);
         });
@@ -3408,29 +3430,29 @@ async fn create_worktree(
 }
 
 // Removing a worktree is the mirror of creating one, with two guards that do not trust the
-// caller. The removal target is the path Lite recorded for this grant at creation — never the
-// path the grant holds now, which a shell session's cd may have moved anywhere — so only the
-// worktree Lite made can be removed, wherever the session has since wandered. And the recorded
-// folder must be a linked worktree (its git dir is not the common git dir), so a main checkout
-// is refused no matter which session asked. Only the branch Lite created with the worktree is
-// deleted — never whatever an agent has since switched the worktree to — and only an
-// already-gone branch is no failure; any other deletion error is reported.
+// caller. Everything the removal touches — the folder and the branch — comes from the record
+// Lite wrote at creation, never from arguments: the caller names only the grant, and the path
+// the grant holds now (which a shell session's cd may have moved anywhere) is never a target.
+// And the recorded folder must be a linked worktree (its git dir is not the common git dir), so
+// a main checkout is refused no matter which session asked. An already-gone branch is no
+// failure; any other deletion error is reported.
 #[tauri::command]
 async fn remove_worktree(
     app: AppHandle,
     roots: State<'_, Roots>,
     root_id: String,
     force: bool,
-    branch: String,
 ) -> Result<(), String> {
     uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
     let record = worktrees_path(&app)?.join(&root_id);
-    let recorded = fs::read_to_string(&record)
-        .map(PathBuf::from)
-        .map_err(|_| "This session's worktree is not one Lite created".to_owned())?;
+    let recorded: WorktreeRecord = fs::read(&record)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .ok_or("This session's worktree is not one Lite created".to_owned())?;
     // The grant only proves the session asking is still the one this record belongs to.
     root_path(&roots, &root_id)?;
-    let path = recorded;
+    let path = PathBuf::from(&recorded.path);
+    let branch = recorded.branch;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     let git_dir = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])?;
     let common_dir = command_output(&git, &path, &["rev-parse", "--git-common-dir"])?;
