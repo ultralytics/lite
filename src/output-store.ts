@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { Theme } from "@/theme";
 
-const MAX_BYTES = 1_000_000;
+export const MAX_OUTPUT_BYTES = 1_000_000;
 
 interface Buffer {
   chunks: Uint8Array[];
@@ -79,7 +79,7 @@ export function appendOutput(sessionId: string, data: number[]) {
   };
   buffer.chunks.push(bytes);
   buffer.size += bytes.byteLength;
-  while (buffer.size > MAX_BYTES && buffer.chunks.length > 1) {
+  while (buffer.size > MAX_OUTPUT_BYTES && buffer.chunks.length > 1) {
     const discarded = buffer.chunks.shift();
     if (discarded) buffer.size -= discarded.byteLength;
   }

@@ -972,46 +972,31 @@ fn github_item_parts(url: &str) -> Option<(String, String, String)> {
     Some((owner.to_owned(), repository.to_owned(), number.to_owned()))
 }
 
-// A reference waiting on GitHub's answer: the URL a session printed, or the URL guessed from a bare
-// "#12" it printed, which is only shown once GitHub confirms it names real work.
+// An explicit reference waiting on GitHub's answer.
 struct Lookup {
     owner: String,
     repository: String,
     number: String,
     url: String,
-    guessed: bool,
 }
 
 // A session prints as many references as it prints, and all of them are asked about in one request;
 // the cap is what one request comfortably carries rather than how long the panel is allowed to wait.
 const CHECKED_GITHUB_ITEMS: usize = 100;
 
-// A pull request or issue reference is read back out of what a session printed, so a number mistyped
-// into the terminal reaches here looking exactly like one that exists. GitHub is the only thing that
-// can tell the two apart, and gh is how Lite asks: it is the tool that printed most of these links, it
-// carries whatever sign-in the person using it has, and asking it is not the same as reading that
-// sign-in. Every reference goes into a single GraphQL request — one alias each — because a call is a
-// process and a network round trip, and a session's worth of them in a row is a panel that waits on
-// the network instead of saying what the session did. issueOrPullRequest answers for both kinds at
-// once, which is what lets a bare "#12" be asked about without knowing which it names; the canonical
-// URL in the answer replaces the guessed kind, and a printed link naming the wrong kind follows the
-// same redirect GitHub itself answers that link with. A reference is only dropped on evidence that it names
-// nothing, and the same response carries that evidence: a repository that resolves while its item does
-// not was read and searched. A repository that does not resolve proves nothing — GitHub hides a
-// private repository this sign-in cannot see as readily as one that never existed — so its printed
-// links stay, shown the way they were printed, as they do whenever gh is missing or the laptop is
-// offline. A guessed number is different: it is as easily a line number as a pull request, so without
-// GitHub's confirmation it stays out of the panel entirely.
-fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem> {
+// gh carries the user's sign-in without Lite reading it. Every explicit reference goes into one
+// GraphQL request, because a process and network round trip per item would make the panel wait. A
+// reference is dropped only when GitHub confirms the repository exists and the item does not;
+// otherwise an unavailable or private item remains visible as the command or link named it.
+fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
     let mut lookups: Vec<Lookup> = Vec::new();
     let mut seen = HashSet::new();
-    let printed = urls.into_iter().map(|url| (url, false));
-    for (url, guessed) in printed.chain(guessed.into_iter().map(|url| (url, true))) {
+    for url in urls {
         let Some((owner, repository, number)) = github_item_parts(&url) else {
             continue;
         };
-        // A repository is named case-insensitively, so "#12" and a link to it are one reference; the
-        // printed links come first, which keeps a guess from ever shadowing one.
+        // Repository identity is case-insensitive, and an issue and pull request cannot share a
+        // number, so repeated command and URL forms collapse to one item.
         if seen.insert((
             owner.to_lowercase(),
             repository.to_lowercase(),
@@ -1022,7 +1007,6 @@ fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem
                 repository,
                 number,
                 url,
-                guessed,
             });
         }
     }
@@ -1103,13 +1087,12 @@ fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem
             }
             // The repository was read and searched, and the number names nothing in it.
             Some(repository) if !repository.is_null() && not_found.contains(alias.as_str()) => {}
-            _ if !lookup.guessed => found.push(GitHubItem {
+            _ => found.push(GitHubItem {
                 url: lookup.url.clone(),
                 title: None,
                 state: None,
                 occurred_at: None,
             }),
-            _ => {}
         }
     }
     found
@@ -1118,7 +1101,7 @@ fn check_github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem
 // The check waits on a process and a network round trip, so the run is moved off the runtime the rest
 // of Lite's commands share rather than holding one of its workers for the length of it.
 #[tauri::command]
-async fn github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem> {
+async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
     // A run that never finished answered nothing, and nothing is not evidence that a link names
     // nothing, so the links come back the way they were printed rather than as an empty panel.
     let unanswered: Vec<GitHubItem> = urls
@@ -1131,7 +1114,7 @@ async fn github_items(urls: Vec<String>, guessed: Vec<String>) -> Vec<GitHubItem
             occurred_at: None,
         })
         .collect();
-    tauri::async_runtime::spawn_blocking(move || check_github_items(urls, guessed))
+    tauri::async_runtime::spawn_blocking(move || check_github_items(urls))
         .await
         .unwrap_or(unanswered)
 }
