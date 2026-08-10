@@ -569,17 +569,12 @@ fn claude_launch_id(app: &AppHandle, session_id: &str) -> (String, bool) {
     if claude_transcript_has_messages(&marker) {
         return (session_id.to_owned(), true);
     }
-    // The conversation was written into after the session moved, so older transcripts cannot hold it.
-    let moved = fs::metadata(&marker)
-        .and_then(|marker| marker.modified())
-        .ok();
     fs::read_dir(&project)
         .into_iter()
         .flatten()
         .flatten()
         .map(|conversation| conversation.path())
         .filter(|path| path.extension() == Some("jsonl".as_ref()) && path != &marker)
-        .filter(|path| fs::metadata(path).and_then(|path| path.modified()).ok() >= moved)
         .find(|path| claude_transcript_quotes(path, session_id))
         .and_then(|path| Some((path.file_stem()?.to_str()?.to_owned(), true)))
         .unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), false))
