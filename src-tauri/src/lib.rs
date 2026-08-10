@@ -2615,6 +2615,23 @@ fn open_external(url: &str) -> Result<(), String> {
         .map_err(|error| format!("Could not open the link: {error}"))
 }
 
+fn configure_session_command(command: &mut CommandBuilder, cwd: &Path, theme: Option<&str>) {
+    command.cwd(path_text(cwd));
+    command.env("TERM", "xterm-256color");
+    // A launched app inherits no locale, so a session copies its own UTF-8 as Mac Roman: `─` as `‚îÄ`.
+    #[cfg(target_os = "macos")]
+    command.env("LC_CTYPE", "UTF-8");
+    // The conventional hint for which way a terminal is shaded, so a CLI picks a readable palette.
+    command.env(
+        "COLORFGBG",
+        if theme == Some("light") {
+            "0;15"
+        } else {
+            "15;0"
+        },
+    );
+}
+
 #[tauri::command]
 async fn spawn_session(
     app: AppHandle,
@@ -2744,17 +2761,7 @@ async fn spawn_session(
         let settings = claude_settings(&app, &session_id, &run_id)?;
         command.args(["--settings", &path_text(&settings)]);
     }
-    command.cwd(path_text(&cwd));
-    command.env("TERM", "xterm-256color");
-    // The conventional hint for which way a terminal is shaded, so a CLI picks a readable palette.
-    command.env(
-        "COLORFGBG",
-        if theme.as_deref() == Some("light") {
-            "0;15"
-        } else {
-            "15;0"
-        },
-    );
+    configure_session_command(&mut command, &cwd, theme.as_deref());
     // Codex records a new thread per launch, so its discovery watches for one the tab did not start with.
     // Kimi attaches to the directory's session instead, so its discovery reads that session directly.
     let known_sessions =
@@ -3961,4 +3968,23 @@ pub fn run() {
                 stop_runtime(app);
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn session_locale_is_utf8_only_on_macos() {
+        let mut command = CommandBuilder::new("test");
+        command.env_clear();
+
+        configure_session_command(&mut command, Path::new("."), None);
+
+        assert_eq!(
+            command.get_env("LC_CTYPE"),
+            cfg!(target_os = "macos").then_some(OsStr::new("UTF-8"))
+        );
+    }
 }
