@@ -1213,9 +1213,7 @@ fn codex_requests(
     codex_requests_once(&endpoint, requests)
 }
 
-// The newest token count in a thread's rollout file, less the baseline Codex itself discounts.
-fn codex_context(path: &Path) -> Option<UsageSnapshot> {
-    const BASELINE_TOKENS: u64 = 12_000;
+fn file_tail(path: &Path) -> Option<String> {
     const TAIL_BYTES: u64 = 256 * 1024;
     let mut file = fs::File::open(path).ok()?;
     let length = file.metadata().ok()?.len();
@@ -1223,7 +1221,13 @@ fn codex_context(path: &Path) -> Option<UsageSnapshot> {
         .ok()?;
     let mut tail = Vec::new();
     file.take(TAIL_BYTES).read_to_end(&mut tail).ok()?;
-    let (tokens, window) = String::from_utf8_lossy(&tail)
+    Some(String::from_utf8_lossy(&tail).into_owned())
+}
+
+// The newest token count in a thread's rollout file, less the baseline Codex itself discounts.
+fn codex_context(path: &Path) -> Option<UsageSnapshot> {
+    const BASELINE_TOKENS: u64 = 12_000;
+    let (tokens, window) = file_tail(path)?
         .lines()
         .rev()
         .filter(|line| line.contains("token_count"))
@@ -1247,6 +1251,41 @@ fn codex_context(path: &Path) -> Option<UsageSnapshot> {
         context_tokens: Some(tokens),
         ..UsageSnapshot::default()
     })
+}
+
+fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
+    file_tail(path)?
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|record| match agent {
+            "gemini"
+                if record.get("type").and_then(serde_json::Value::as_str) == Some("gemini") =>
+            {
+                let tokens = record.pointer("/tokens/input")?.as_u64()?;
+                (tokens > 0).then(|| UsageSnapshot {
+                    context_tokens: Some(tokens),
+                    ..UsageSnapshot::default()
+                })
+            }
+            "qwen"
+                if record.get("type").and_then(serde_json::Value::as_str) == Some("assistant") =>
+            {
+                let tokens = record
+                    .pointer("/usageMetadata/promptTokenCount")?
+                    .as_u64()?;
+                let window = record.get("contextWindowSize")?.as_u64()?;
+                (tokens > 0 && window > 0).then(|| UsageSnapshot {
+                    context_used_percent: Some(
+                        (tokens as f64 / window as f64 * 100.0).clamp(0.0, 100.0),
+                    ),
+                    context_window: Some(window),
+                    context_tokens: Some(tokens),
+                    ..UsageSnapshot::default()
+                })
+            }
+            _ => None,
+        })
 }
 
 fn codex_usage(server: &CodexServer, thread_id: Option<&str>) -> Result<UsageSnapshot, String> {
@@ -1945,55 +1984,101 @@ fn qwen_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "QWEN_HOME", ".qwen")
 }
 
-fn native_session_exists(app: &AppHandle, agent: &str, session_id: &str) -> bool {
+fn native_session_path(app: &AppHandle, agent: &str, session_id: &str) -> Option<PathBuf> {
     let (home, directory) = match agent {
         "gemini" => (gemini_home(app), "tmp"),
         "qwen" => (qwen_home(app), "projects"),
-        _ => return false,
+        _ => return None,
     };
-    let Ok(projects) =
-        home.and_then(|home| fs::read_dir(home.join(directory)).map_err(|error| error.to_string()))
-    else {
-        return false;
-    };
+    let projects = home
+        .and_then(|home| fs::read_dir(home.join(directory)).map_err(|error| error.to_string()))
+        .ok()?;
     let expected = if agent == "qwen" {
         format!("{session_id}.jsonl")
     } else {
         format!("-{}.jsonl", session_id.chars().take(8).collect::<String>())
     };
-    projects.flatten().take(512).any(|project| {
-        fs::read_dir(project.path().join("chats")).is_ok_and(|chats| {
-            chats.flatten().take(512).any(|chat| {
+    projects.flatten().take(512).find_map(|project| {
+        if agent == "qwen" {
+            let path = project.path().join("chats").join(&expected);
+            return path.is_file().then_some(path);
+        }
+        fs::read_dir(project.path().join("chats"))
+            .ok()?
+            .flatten()
+            .take(512)
+            .find_map(|chat| {
                 let name = chat.file_name();
                 let name = name.to_string_lossy();
-                if agent == "qwen" {
-                    name == expected
+                if name.ends_with(&expected)
+                    && fs::File::open(chat.path()).is_ok_and(|file| {
+                        BufReader::new(file)
+                            .lines()
+                            .next()
+                            .and_then(Result::ok)
+                            .and_then(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
+                            .and_then(|value| {
+                                value
+                                    .get("sessionId")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned)
+                            })
+                            .is_some_and(|id| id == session_id)
+                    })
+                {
+                    Some(chat.path())
                 } else {
-                    name.ends_with(&expected)
-                        && fs::File::open(chat.path()).is_ok_and(|file| {
-                            BufReader::new(file)
-                                .lines()
-                                .next()
-                                .and_then(Result::ok)
-                                .and_then(|line| {
-                                    serde_json::from_str::<serde_json::Value>(&line).ok()
-                                })
-                                .and_then(|value| {
-                                    value
-                                        .get("sessionId")
-                                        .and_then(serde_json::Value::as_str)
-                                        .map(str::to_owned)
-                                })
-                                .is_some_and(|id| id == session_id)
-                        })
+                    None
                 }
             })
-        })
     })
+}
+
+fn native_session_exists(app: &AppHandle, agent: &str, session_id: &str) -> bool {
+    native_session_path(app, agent, session_id).is_some()
 }
 
 fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "KIMI_CODE_HOME", ".kimi-code")
+}
+
+fn kimi_context(app: &AppHandle, session_id: &str) -> Option<UsageSnapshot> {
+    let sessions = fs::read_dir(kimi_home(app).ok()?.join("sessions")).ok()?;
+    let path = sessions
+        .flatten()
+        .take(512)
+        .map(|workspace| {
+            workspace
+                .path()
+                .join(session_id)
+                .join("agents/main/wire.jsonl")
+        })
+        .find(|path| path.is_file())?;
+    file_tail(&path)?
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|record| {
+            if record.get("type").and_then(serde_json::Value::as_str) != Some("usage.record")
+                || record.get("usageScope").and_then(serde_json::Value::as_str) != Some("turn")
+            {
+                return None;
+            }
+            let usage = record.get("usage")?;
+            let tokens = [
+                "inputOther",
+                "inputCacheRead",
+                "inputCacheCreation",
+                "output",
+            ]
+            .iter()
+            .filter_map(|key| usage.get(key).and_then(serde_json::Value::as_u64))
+            .sum();
+            (tokens > 0).then(|| UsageSnapshot {
+                context_tokens: Some(tokens),
+                ..UsageSnapshot::default()
+            })
+        })
 }
 
 // Kimi groups sessions under an opaque per-directory key that its workspace index maps back to a path.
@@ -3195,6 +3280,16 @@ async fn read_usage(
     if agent == "codex" && codex_provider(provider.as_deref()).is_some() {
         return Ok(None);
     }
+    let provider_session_id = if agent == "codex" || agent == "kimi" {
+        provider_sessions
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(&session_id)
+            .cloned()
+    } else {
+        None
+    };
     match agent.as_str() {
         "claude" => {
             let directory = app
@@ -3271,17 +3366,13 @@ async fn read_usage(
                 || !usage.windows.is_empty())
             .then_some(usage))
         }
-        "codex" => {
-            // The thread is discovered after the session starts, so it is read here, not passed in.
-            let thread_id = provider_sessions
-                .0
-                .lock()
-                .map_err(|error| error.to_string())?
-                .get(&session_id)
-                .cloned();
-            codex_usage(&codex_server, thread_id.as_deref()).map(Some)
-        }
-        "gemini" | "kimi" | "qwen" | "shell" => Ok(None),
+        "codex" => codex_usage(&codex_server, provider_session_id.as_deref()).map(Some),
+        "gemini" | "qwen" => Ok(native_session_path(&app, &agent, &session_id)
+            .and_then(|path| native_context(&path, &agent))),
+        "kimi" => Ok(provider_session_id
+            .as_deref()
+            .and_then(|id| kimi_context(&app, id))),
+        "shell" => Ok(None),
         _ => Err("Unknown session type".into()),
     }
 }
