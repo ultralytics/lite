@@ -977,11 +977,10 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
 // Each harness and provider reports what it reports; Lite never fills the gap with a number of its own.
 function missingUsage(session: Session): string {
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
-  if (session.agent === "kimi") return "Kimi Code keeps session usage inside its own terminal view.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
-    return `${providerLabel(session.provider)} publishes no account limits locally. Codex reports this session's usage in the terminal.`;
+    return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
   if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
-  return "This provider reports no usage locally.";
+  return `${sessionLabel(session)} reports session context after its first response.`;
 }
 
 function UsagePanel({ session }: { session: Session }) {
@@ -1030,9 +1029,13 @@ function UsagePanel({ session }: { session: Session }) {
             </Empty>
           ) : (
             <ItemGroup>
-              {usage.contextUsedPercent != null ? (
+              {usage.contextUsedPercent != null || usage.contextTokens != null ? (
                 <Item variant="outline" className="flex-col items-stretch">
-                  <Meter label="Session context" value={usage.contextUsedPercent} />
+                  {usage.contextUsedPercent != null ? (
+                    <Meter label="Session context" value={usage.contextUsedPercent} />
+                  ) : (
+                    <ItemDescription>Session context</ItemDescription>
+                  )}
                   {usage.contextTokens != null ? (
                     <ItemDescription className="tabular-nums">
                       {formatNumber.format(usage.contextTokens)}
@@ -1045,7 +1048,7 @@ function UsagePanel({ session }: { session: Session }) {
                 </Item>
               ) : (
                 <ItemDescription>
-                  {session.agent === "codex" ? "The Codex CLI" : "This provider"} does not report per-session context.
+                  Session context appears after this harness reports its first response.
                 </ItemDescription>
               )}
               {usage.windows.map((window) => (
