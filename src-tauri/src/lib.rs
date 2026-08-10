@@ -3362,10 +3362,10 @@ async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<S
     )
 }
 
-// The repository's main checkout, reached from any of its worktrees: the common git dir is the
-// main checkout's .git, so its parent names the folder. This — not the path's own toplevel — is
-// the identity sessions sharing a repository agree on, since a linked worktree's toplevel is the
-// worktree itself. Layouts without a .git folder (bare repositories) fall back to the toplevel.
+// The repository that owns a path's worktrees, reached from any of them: a normal repository's
+// common git dir is its main checkout's .git, so the checkout is the owner and this — not the
+// path's own toplevel — is the identity sessions sharing a repository agree on. A bare
+// repository has no checkout, so the common dir itself is the owner and git commands run there.
 fn main_checkout(git: &Path, path: &Path) -> Result<PathBuf, String> {
     let common = command_output(git, path, &["rev-parse", "--git-common-dir"])?;
     let common = match Path::new(&common).is_absolute() {
@@ -3373,16 +3373,13 @@ fn main_checkout(git: &Path, path: &Path) -> Result<PathBuf, String> {
         false => path.join(common),
     };
     let common = fs::canonicalize(common).map_err(|error| error.to_string())?;
-    if common.file_name() == Some(std::ffi::OsStr::new(".git"))
-        && let Some(parent) = common.parent()
-    {
-        return Ok(parent.to_path_buf());
+    if common.file_name() == Some(std::ffi::OsStr::new(".git")) {
+        return common
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .ok_or("The repository's git folder has no parent".into());
     }
-    Ok(PathBuf::from(command_output(
-        git,
-        path,
-        &["rev-parse", "--show-toplevel"],
-    )?))
+    Ok(common)
 }
 
 // Whether a folder sits inside a repository, and where that repository's main checkout is. The
@@ -3600,10 +3597,9 @@ async fn remove_worktree(
     if git_dir == common_dir {
         return Err("Refusing to remove a repository's main checkout".into());
     }
-    let main = common_dir
-        .parent()
-        .ok_or("The repository's git folder has no parent")?
-        .to_path_buf();
+    // Cleanup runs against the owner recorded at creation: the main checkout for a normal
+    // repository, the bare directory itself for a bare one.
+    let main = PathBuf::from(&recorded.main);
     let target = path_text(&path);
     let mut args = vec!["worktree", "remove"];
     if force {
