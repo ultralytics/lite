@@ -2453,7 +2453,16 @@ function App() {
                     void Promise.all(
                       sessions.map(async (session) => {
                         runs.current.delete(session.id);
-                        await invoke("stop_session", { sessionId: session.id });
+                        // A session that cannot be stopped is left alone, still live; every
+                        // promise settles, so the dialog always comes back.
+                        const stopped = await invoke("stop_session", { sessionId: session.id }).then(
+                          () => true,
+                          () => false,
+                        );
+                        if (!stopped) {
+                          failed.add(session.id);
+                          return;
+                        }
                         const { error, restorable } = await cleanupSession(session);
                         if (error && restorable) {
                           failed.add(session.id);
