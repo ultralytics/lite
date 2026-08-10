@@ -547,10 +547,8 @@ fn claude_transcript_has_messages(path: &Path) -> bool {
         })
 }
 
-// Claude resumes by transcript name, so `/resume` leaves the id it started as a marker holding no message
-// and writes the turns that follow into the conversation it moved to, stamping each with that id. Claude
-// reopens neither the marker nor its id, so an unstamped one is spent. Returns the id to launch and
-// whether it names a conversation to resume.
+// `/resume` leaves the launched id as a marker holding no message and stamps the turns that follow into
+// the conversation it moved to. Returns the id to launch and whether it names one to resume.
 fn claude_launch_id(app: &AppHandle, session_id: &str) -> (String, bool) {
     let transcript = format!("{session_id}.jsonl");
     let Some(project) = provider_home(app, "CLAUDE_CONFIG_DIR", ".claude")
