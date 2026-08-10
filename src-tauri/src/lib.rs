@@ -2652,8 +2652,7 @@ async fn spawn_session(
             &provider_sessions,
             &session_id,
             Some(claude_id.clone()),
-        )
-        .unwrap_or(true);
+        )?;
         provider_session_id = Some(if claimed {
             claude_id
         } else {
