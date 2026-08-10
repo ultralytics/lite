@@ -17,6 +17,9 @@ export interface Session {
   rootId: string;
   running: boolean;
   providerSessionId?: string;
+  // Lite created this session its own git worktree, so closing the session offers to remove it.
+  // A worktree the user made by hand never carries this flag and is never offered for deletion.
+  worktree?: boolean;
 }
 
 const agentLabels: Record<Agent, string> = {

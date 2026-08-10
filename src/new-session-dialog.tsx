@@ -1,8 +1,8 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Check, FolderOpen } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { Check, FolderOpen, GitBranch } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
-import { defaultSessionName, type Session, sessionLabel } from "@/types";
+import { defaultSessionName, folderName, type Session, sessionLabel } from "@/types";
 
 const choices = [
   ...Object.values(AUTH_PROVIDERS),
@@ -31,6 +31,13 @@ const choices = [
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
+
+// The branch a new worktree starts from, named for the repository and the moment so two sessions
+// created on the same project never collide: lite/<repo>-<yyyymmdd-hhmmss>.
+function suggestedBranch(repo: string) {
+  const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+  return `lite/${folderName(repo) || "project"}-${stamp.slice(0, 8)}-${stamp.slice(8)}`;
+}
 
 interface DirectoryGrant {
   id: string;
@@ -47,10 +54,12 @@ export function NewSessionDialog({
   open: isOpen,
   onOpenChange,
   onCreate,
+  existingCwds,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
+  existingCwds: string[];
 }) {
   const [choiceId, setChoiceId] = useState(choices[0].id);
   const [directory, setDirectory] = useState<DirectoryGrant>();
@@ -59,10 +68,52 @@ export function NewSessionDialog({
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
   const [error, setError] = useState("");
+  // The repository the chosen folder sits in, empty while asking or when it sits in none.
+  const [repo, setRepo] = useState("");
+  const [worktreeOn, setWorktreeOn] = useState(false);
+  const [branch, setBranch] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
+  // Sessions already working in this repository, which is the case a worktree exists for.
+  const sharing = repo ? existingCwds.filter((cwd) => cwd === repo || cwd.startsWith(`${repo}/`)).length : 0;
+  // The probe reads this rather than depending on it: a session updating elsewhere must not reset
+  // the toggle the user has already answered.
+  const existingCwdsRef = useRef(existingCwds);
+  existingCwdsRef.current = existingCwds;
+
+  // A typed path settles for a moment before it is probed, so a folder is never looked up once per
+  // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
+  // would name.
+  useEffect(() => {
+    if (!isOpen || !path.trim()) {
+      setRepo("");
+      setWorktreeOn(false);
+      return;
+    }
+    let disposed = false;
+    const probe = window.setTimeout(() => {
+      void invoke<string | null>("git_repo", { path: path.trim() })
+        .then((root) => {
+          if (disposed) return;
+          setRepo(root ?? "");
+          // Sessions already sharing this repository make the worktree the default rather than the
+          // option; a fresh repository leaves the choice with the main checkout.
+          setWorktreeOn(
+            Boolean(root && existingCwdsRef.current.some((cwd) => cwd === root || cwd.startsWith(`${root}/`))),
+          );
+          setBranch(root ? suggestedBranch(root) : "");
+        })
+        .catch(() => {
+          if (!disposed) setRepo("");
+        });
+    }, 250);
+    return () => {
+      disposed = true;
+      window.clearTimeout(probe);
+    };
+  }, [isOpen, path]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -140,8 +191,22 @@ export function NewSessionDialog({
   }
 
   async function create() {
-    const folder = await grant();
+    let folder = await grant();
     if (!folder) return;
+    let worktree = false;
+    if (repo && worktreeOn) {
+      try {
+        const granted = await invoke<DirectoryGrant>("create_worktree", { rootId: folder.id, branch });
+        // The worktree's grant replaces the repository's: the session belongs to the folder it
+        // runs in, and the main checkout was only the way to make it.
+        void invoke("revoke_directory", { rootId: folder.id });
+        folder = granted;
+        worktree = true;
+      } catch (reason) {
+        setError(String(reason));
+        return;
+      }
+    }
     const project = defaultSessionName(folder.path);
     onCreate({
       id: crypto.randomUUID(),
@@ -151,6 +216,7 @@ export function NewSessionDialog({
       rootId: folder.id,
       name: project,
       running: false,
+      worktree,
     });
     setDirectory(undefined);
     onOpenChange(false);
@@ -188,7 +254,7 @@ export function NewSessionDialog({
   // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
   // and a second click on the agent already chosen. An agent that is not installed reads them all as a
   // request to install it, which is the only one of the two it can answer.
-  const ready = Boolean(!installing && (missing || (path.trim() && status)));
+  const ready = Boolean(!installing && (missing || (path.trim() && status && (!repo || !worktreeOn || branch.trim()))));
   function start() {
     if (missing?.installable) void install();
     else if (missing)
@@ -235,6 +301,47 @@ export function NewSessionDialog({
                 </ActionIconButton>
               </div>
             </div>
+            {repo ? (
+              <fieldset className="space-y-1.5">
+                <legend className={SECTION}>Git worktree</legend>
+                <Item
+                  size="xs"
+                  variant={worktreeOn ? "outline" : "default"}
+                  className={worktreeOn ? "border-ring bg-accent" : "hover:bg-muted/60"}
+                  render={
+                    <button
+                      type="button"
+                      aria-pressed={worktreeOn}
+                      onClick={() => setWorktreeOn((current) => !current)}
+                    />
+                  }
+                >
+                  <ItemMedia variant="icon" className="size-7 rounded-md border bg-background">
+                    <GitBranch />
+                  </ItemMedia>
+                  <ItemContent>
+                    <ItemTitle>Start in a new worktree</ItemTitle>
+                    {sharing ? (
+                      <ItemDescription>
+                        {`${sharing} session${sharing === 1 ? "" : "s"} already work${sharing === 1 ? "s" : ""} in this project — a worktree keeps them separate`}
+                      </ItemDescription>
+                    ) : null}
+                  </ItemContent>
+                  <ItemActions>
+                    <Check className={`size-4 shrink-0 ${worktreeOn ? "" : "invisible"}`} />
+                  </ItemActions>
+                </Item>
+                {worktreeOn ? (
+                  <Input
+                    value={branch}
+                    className="font-mono"
+                    placeholder="Branch for the worktree"
+                    aria-label="Branch for the worktree"
+                    onChange={(event) => setBranch(event.target.value)}
+                  />
+                ) : null}
+              </fieldset>
+            ) : null}
             <fieldset className="space-y-1.5">
               <legend className={SECTION}>Agent</legend>
               <div className="space-y-1">

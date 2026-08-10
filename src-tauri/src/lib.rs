@@ -3281,6 +3281,112 @@ async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<S
     )
 }
 
+// Whether a folder sits inside a repository, and where that repository's root is. The new-session
+// dialog asks before it has granted anything, so this takes the bare path — the same folder the
+// grant would name — and only reads from it.
+#[tauri::command]
+async fn git_repo(app: AppHandle, path: String) -> Result<Option<String>, String> {
+    let path = path.trim();
+    let path = match path.strip_prefix('~') {
+        Some(rest) => app
+            .path()
+            .home_dir()
+            .map_err(|error| error.to_string())?
+            .join(rest.trim_start_matches(['/', '\\'])),
+        None => PathBuf::from(path),
+    };
+    if !path.is_dir() {
+        return Ok(None);
+    }
+    // Canonicalized like the grant's path would be, so the root can be compared with session cwds.
+    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    Ok(command_output(&git, &path, &["rev-parse", "--show-toplevel"]).ok())
+}
+
+// A session that shares its project with another gets a worktree of its own: a sibling folder
+// named after the repository, holding a folder named after the branch. The branch is new, so the
+// name the dialog suggests is validated the way git would before anything is created.
+#[tauri::command]
+async fn create_worktree(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    root_id: String,
+    branch: String,
+) -> Result<DirectoryGrant, String> {
+    let folder = root_path(&roots, &root_id)?;
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let repo = PathBuf::from(command_output(
+        &git,
+        &folder,
+        &["rev-parse", "--show-toplevel"],
+    )?);
+    let branch = branch.trim();
+    command_output(&git, &repo, &["check-ref-format", "--branch", branch])
+        .map_err(|_| format!("“{branch}” is not a valid branch name"))?;
+    let name = repo
+        .file_name()
+        .ok_or("The repository root names no folder")?;
+    let worktree = repo
+        .parent()
+        .ok_or("The repository root has no parent folder")?
+        .join(format!("{}-worktrees", name.to_string_lossy()))
+        .join(branch.replace('/', "-"));
+    if worktree.exists() {
+        return Err(format!("{} already exists", path_text(&worktree)));
+    }
+    if let Some(parent) = worktree.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    command_output(
+        &git,
+        &repo,
+        &["worktree", "add", &path_text(&worktree), "-b", branch],
+    )?;
+    grant_directory(&app, &roots, worktree, None)
+}
+
+// Removing a worktree is the mirror of creating one, with one guard that does not trust the
+// caller: the granted folder must be a linked worktree (its git dir is not the common git dir),
+// so a main checkout is refused no matter which session asked. The branch is read before the
+// removal that would orphan it, and goes with the folder it only ever named.
+#[tauri::command]
+async fn remove_worktree(
+    roots: State<'_, Roots>,
+    root_id: String,
+    force: bool,
+) -> Result<(), String> {
+    let path = root_path(&roots, &root_id)?;
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let git_dir = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])?;
+    let common_dir = command_output(&git, &path, &["rev-parse", "--git-common-dir"])?;
+    let common_dir = match Path::new(&common_dir).is_absolute() {
+        true => PathBuf::from(common_dir),
+        false => path.join(common_dir),
+    };
+    let git_dir = fs::canonicalize(git_dir).map_err(|error| error.to_string())?;
+    let common_dir = fs::canonicalize(&common_dir).map_err(|error| error.to_string())?;
+    if git_dir == common_dir {
+        return Err("Refusing to remove a repository's main checkout".into());
+    }
+    let main = common_dir
+        .parent()
+        .ok_or("The repository's git folder has no parent")?
+        .to_path_buf();
+    let branch = command_output(&git, &path, &["branch", "--show-current"])?;
+    let target = path_text(&path);
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(&target);
+    command_output(&git, &main, &args)?;
+    if !branch.is_empty() {
+        command_output(&git, &main, &["branch", "-D", branch.as_str()])?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn read_usage(
     app: AppHandle,
@@ -3593,6 +3699,9 @@ pub fn run() {
             read_text_file,
             git_status,
             git_remote,
+            git_repo,
+            create_worktree,
+            remove_worktree,
             read_usage,
             agent_availability,
             install_agent,

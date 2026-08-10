@@ -95,7 +95,7 @@ import { NewSessionDialog } from "@/new-session-dialog";
 import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
-import { type Agent, defaultSessionName, repoName, type Session, sessionLabel } from "@/types";
+import { type Agent, defaultSessionName, type GitStatus, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -921,6 +921,8 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
+  // The worktree session waiting on the close dialog's answer, with what its tree looked like when asked.
+  const [closingWorktree, setClosingWorktree] = useState<{ session: Session; branch: string; changes: number }>();
   const [error, setError] = useState("");
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   // Sessions whose terminal has written something recently, which is what separates a connected
@@ -955,6 +957,8 @@ function App() {
   const [updateError, setUpdateError] = useState("");
   const updateDialog = useRef<HTMLDivElement>(null);
   const runs = useRef(new Map<string, string>());
+  // Sessions whose dirty worktree the user agreed to force-remove; answered at close, read at cleanup.
+  const forceWorktree = useRef(new Set<string>());
   const sessionsRef = useRef(sessions);
   const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
@@ -991,6 +995,8 @@ function App() {
     );
   }, [sessions, query]);
   visibleRef.current = visible;
+  // What the new-session dialog measures "already working here" against.
+  const existingCwds = useMemo(() => sessions.map((session) => session.cwd), [sessions]);
   sessionsRef.current = sessions;
   themeRef.current = theme;
   selectedRef.current = selected;
@@ -1545,6 +1551,18 @@ function App() {
     } catch (reason) {
       cleanupError = String(reason);
     }
+    if (session.worktree) {
+      try {
+        // The grant is still needed for this, so the worktree goes before it does. Force was the
+        // user's answer to the dirty warning at close time, not a default.
+        await invoke("remove_worktree", {
+          rootId: session.rootId,
+          force: forceWorktree.current.delete(session.id),
+        });
+      } catch (reason) {
+        cleanupError ||= String(reason);
+      }
+    }
     try {
       await invoke("revoke_directory", { rootId: session.rootId });
     } catch (reason) {
@@ -1555,9 +1573,34 @@ function App() {
     if (cleanupError) setError(`Session closed, but local cleanup failed: ${cleanupError}`);
   }
 
+  // A worktree session owns the folder it runs in, so closing one first asks whether the folder
+  // and its branch go with the tab. Everything else closes directly.
+  function closeSession(session: Session) {
+    if (startingIds.has(session.id)) return;
+    if (!session.worktree) return closeSessionNow(session);
+    invoke<GitStatus | null>("git_status", { rootId: session.rootId })
+      .then((status) =>
+        setClosingWorktree({
+          session,
+          branch: status?.branch ?? "",
+          changes: status?.changes.length ?? 0,
+        }),
+      )
+      // A folder that is already gone has nothing left to ask about; the session closes plainly.
+      .catch(() => closeSessionNow({ ...session, worktree: false }));
+  }
+
+  function confirmCloseWorktree(remove: boolean) {
+    if (!closingWorktree) return;
+    const { session, changes } = closingWorktree;
+    setClosingWorktree(undefined);
+    if (remove && changes > 0) forceWorktree.current.add(session.id);
+    closeSessionNow(remove ? session : { ...session, worktree: false });
+  }
+
   // Closing is reversible: the row leaves immediately and its PTY stops, while the provider session
   // metadata and directory grant remain until the toast closes without being undone.
-  function closeSession(session: Session) {
+  function closeSessionNow(session: Session) {
     if (startingIds.has(session.id)) return;
     clearAttention(session.id);
     const index = sessions.findIndex((item) => item.id === session.id);
@@ -2255,7 +2298,9 @@ function App() {
                       sessions.map(async (session) => {
                         runs.current.delete(session.id);
                         await invoke("stop_session", { sessionId: session.id });
-                        await cleanupSession(session);
+                        // Closing in bulk asks no per-session questions, so no folders go with it:
+                        // worktrees are removed only by the close that shows their dialog.
+                        await cleanupSession(session.worktree ? { ...session, worktree: false } : session);
                         setSessions((current) => current.filter((item) => item.id !== session.id));
                         if (selectedId === session.id)
                           setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
@@ -2271,7 +2316,45 @@ function App() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
+          <Dialog open={Boolean(closingWorktree)} onOpenChange={(open) => !open && setClosingWorktree(undefined)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Close “{closingWorktree?.session.name}”?</DialogTitle>
+                <DialogDescription>
+                  This session works in its own git worktree. Closing it can also delete the folder{" "}
+                  <span className="font-mono">{closingWorktree ? shortPath(closingWorktree.session.cwd) : ""}</span>
+                  {closingWorktree?.branch ? (
+                    <>
+                      {" "}
+                      and its branch <span className="font-mono">{closingWorktree.branch}</span>
+                    </>
+                  ) : null}
+                  .
+                </DialogDescription>
+              </DialogHeader>
+              {closingWorktree?.changes ? (
+                <DialogBody>
+                  <p className="text-xs text-destructive">
+                    {`The worktree has ${closingWorktree.changes} uncommitted change${closingWorktree.changes === 1 ? "" : "s"} that will be lost.`}
+                  </p>
+                </DialogBody>
+              ) : null}
+              <DialogFooter>
+                <Button variant="outline" onClick={() => confirmCloseWorktree(false)}>
+                  Keep worktree
+                </Button>
+                <Button variant="destructive" onClick={() => confirmCloseWorktree(true)}>
+                  {closingWorktree?.changes ? "Force delete worktree" : "Delete worktree"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <NewSessionDialog
+            open={newSessionOpen}
+            onOpenChange={setNewSessionOpen}
+            onCreate={createSession}
+            existingCwds={existingCwds}
+          />
           <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
           <Toaster />
         </div>

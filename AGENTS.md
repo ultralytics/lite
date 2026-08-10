@@ -53,7 +53,7 @@ bun run tauri build # native installer for the current operating system
 
 ## Architecture
 
-- `src/App.tsx` owns persisted tabs, session lifecycle, the top bar, and app-wide shortcuts.
+- `src/App.tsx` owns persisted tabs, session lifecycle, the top bar, and app-wide shortcuts. A session started in a Lite-created git worktree lives in a `<repo>-worktrees/` sibling folder and is removed with its branch when the session is closed and confirmed.
 - `src/terminal.tsx` owns the active xterm instance and its theme; `src/output-store.ts` bounds buffered output for inactive tabs.
 - `src/inspector.tsx` owns the lazy file browser, Git status, and provider usage surface.
 - `src/code-preview.tsx` owns syntax-highlighted source and rendered Markdown previews.
