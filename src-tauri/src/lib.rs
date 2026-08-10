@@ -561,6 +561,7 @@ fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<Pa
     write_atomic(
         &settings_path,
         serde_json::json!({
+            "preferredNotifChannel": "iterm2",
             "statusLine": { "type": "command", "command": status, "refreshInterval": 1 },
             "hooks": {
                 "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
@@ -2036,6 +2037,10 @@ fn agent_command(
         }
         "codex" => {
             let mut command = agent_builder(agent)?;
+            // Codex otherwise suppresses notifications while its terminal is focused and its automatic
+            // method falls back to BEL for Lite's generic TERM. Keep the override local to this launch.
+            command.args(["-c", r#"tui.notification_method="osc9""#]);
+            command.args(["-c", r#"tui.notification_condition="always""#]);
             // Providers are selected per launch so the user's default Codex provider stays untouched.
             if let Some(provider) = codex_provider(provider) {
                 let key = saved_api_key(app, agent, Some(provider.id)).is_some();
