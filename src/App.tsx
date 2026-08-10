@@ -2375,11 +2375,13 @@ function App() {
                 <DialogTitle>Close “{closingWorktree?.session.name}”?</DialogTitle>
                 <DialogDescription>
                   This session works in its own git worktree. Closing it can also delete the folder{" "}
-                  <span className="font-mono">{closingWorktree ? shortPath(closingWorktree.folder) : ""}</span>
+                  <span className="break-all font-mono">
+                    {closingWorktree ? shortPath(closingWorktree.folder) : ""}
+                  </span>
                   {closingWorktree?.branch ? (
                     <>
                       {" "}
-                      and its branch <span className="font-mono">{closingWorktree.branch}</span>
+                      and its branch <span className="break-all font-mono">{closingWorktree.branch}</span>
                     </>
                   ) : null}
                   .

@@ -78,8 +78,8 @@ export function NewSessionDialog({
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
   const [error, setError] = useState("");
-  // The repository the chosen folder sits in, empty while asking or when it sits in none.
-  const [repo, setRepo] = useState("");
+  // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
+  const [repo, setRepo] = useState<string | null>();
   const [worktreeOn, setWorktreeOn] = useState(false);
   const [branch, setBranch] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
@@ -98,23 +98,24 @@ export function NewSessionDialog({
   // would name.
   useEffect(() => {
     if (!isOpen || !path.trim()) {
-      setRepo("");
+      setRepo(null);
       setWorktreeOn(false);
       return;
     }
+    setRepo(undefined);
     let disposed = false;
     const probe = window.setTimeout(() => {
       void invoke<string | null>("git_repo", { path: path.trim() })
         .then((root) => {
           if (disposed) return;
-          setRepo(root ?? "");
+          setRepo(root);
           // Sessions already sharing this repository make the worktree the default rather than the
           // option; a fresh repository leaves the choice with the main checkout.
           setWorktreeOn(Boolean(root && sessionsRef.current.some((session) => sharesRepo(session, root))));
           setBranch(root ? suggestedBranch(root) : "");
         })
         .catch(() => {
-          if (!disposed) setRepo("");
+          if (!disposed) setRepo(null);
         });
     }, 250);
     return () => {
@@ -168,7 +169,7 @@ export function NewSessionDialog({
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setDirectory(selected);
         setPath(selected.path);
-        setRepo("");
+        setRepo(undefined);
       }
     } catch (reason) {
       setError(String(reason));
@@ -205,7 +206,13 @@ export function NewSessionDialog({
     let worktree = false;
     // The probe's answer can lag the folder field, so the granted folder is asked directly:
     // the worktree and the recorded repository always describe where the session will run.
-    const root = await invoke<string | null>("git_repo", { path: folder.path }).catch(() => null);
+    let root: string | null;
+    try {
+      root = await invoke<string | null>("git_repo", { path: folder.path });
+    } catch (reason) {
+      setError(String(reason));
+      return;
+    }
     // The toggle must still describe this folder: root === repo fails when the folder changed
     // after the probe that enabled the option, and a worktree is never made on a stale answer.
     if (root && root === repo && worktreeOn) {
@@ -268,7 +275,10 @@ export function NewSessionDialog({
   // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
   // and a second click on the agent already chosen. An agent that is not installed reads them all as a
   // request to install it, which is the only one of the two it can answer.
-  const ready = Boolean(!installing && (missing || (path.trim() && status && (!repo || !worktreeOn || branch.trim()))));
+  const ready = Boolean(
+    !installing &&
+      (missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim()))),
+  );
   function start() {
     if (missing?.installable) void install();
     else if (missing)
@@ -301,12 +311,14 @@ export function NewSessionDialog({
                   id="project-folder"
                   value={path}
                   className="min-w-0 flex-1 font-mono"
-                  placeholder="Type or choose a project folder"
+                  placeholder="Type or choose a project folder…"
+                  name="project-folder"
+                  autoComplete="off"
                   onChange={(event) => {
                     setPath(event.target.value);
                     // The worktree section describes the probed folder; while a new one is being
                     // typed there is nothing true to show, so it hides until the probe answers.
-                    setRepo("");
+                    setRepo(undefined);
                   }}
                 />
                 <ActionIconButton
@@ -354,8 +366,11 @@ export function NewSessionDialog({
                   <Input
                     value={branch}
                     className="font-mono"
-                    placeholder="Branch for the worktree"
+                    placeholder="Branch for the worktree…"
                     aria-label="Branch for the worktree"
+                    name="worktree-branch"
+                    autoComplete="off"
+                    spellCheck={false}
                     onChange={(event) => setBranch(event.target.value)}
                   />
                 ) : null}
