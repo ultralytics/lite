@@ -965,6 +965,8 @@ function App() {
   const runs = useRef(new Map<string, string>());
   // Sessions whose dirty worktree the user agreed to force-remove; answered at close, read at cleanup.
   const forceWorktree = useRef(new Set<string>());
+  // Sessions whose worktree the user chose to keep; cleanup forgets Lite's record instead of removing.
+  const keptWorktrees = useRef(new Set<string>());
   const sessionsRef = useRef(sessions);
   const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
@@ -1557,12 +1559,17 @@ function App() {
     }
     if (session.worktree) {
       try {
-        // The grant is still needed for this, so the worktree goes before it does. Force was the
-        // user's answer to the dirty warning at close time, not a default.
-        await invoke("remove_worktree", {
-          rootId: session.rootId,
-          force: forceWorktree.current.delete(session.id),
-        });
+        if (keptWorktrees.current.delete(session.id)) {
+          // Kept at the user's choice: Lite forgets it made the worktree; the folder is the user's now.
+          await invoke("forget_worktree", { rootId: session.rootId });
+        } else {
+          // The grant is still needed for this, so the worktree goes before it does. Force was the
+          // user's answer to the dirty warning at close time, not a default.
+          await invoke("remove_worktree", {
+            rootId: session.rootId,
+            force: forceWorktree.current.delete(session.id),
+          });
+        }
       } catch (reason) {
         cleanupError ||= String(reason);
       }
@@ -1585,28 +1592,42 @@ function App() {
     // Force is the backend's call, made against the removal target with checks user git config
     // cannot hide; the status count only puts a number on the warning.
     Promise.all([
-      invoke<{ force: boolean; dirty: boolean }>("worktree_state", { rootId: session.rootId }),
+      invoke<{ recorded: boolean; gone: boolean; force: boolean; dirty: boolean }>("worktree_state", {
+        rootId: session.rootId,
+      }),
       invoke<GitStatus | null>("git_status", { rootId: session.rootId }).catch(() => null),
     ])
-      .then(([state, status]) =>
+      .then(([state, status]) => {
+        // No record means nothing Lite can clean up: the folder is the user's, the tab just closes.
+        if (!state.recorded) return closeSessionNow({ ...session, worktree: false });
+        // A folder verified gone leaves only metadata behind; cleanup prunes it without asking.
+        if (state.gone) return closeSessionNow(session);
         setClosingWorktree({
           session,
           branch: session.branch ?? "",
           changes: status?.changes.length ?? 0,
           force: state.force,
           dirty: state.dirty,
-        }),
-      )
-      // A folder that is already gone has nothing left to ask about; the session closes plainly.
-      .catch(() => closeSessionNow({ ...session, worktree: false }));
+        });
+      })
+      // The state could not be read, so nothing is known about what closing would delete: the
+      // session stays and the error says why, so closing can be tried again.
+      .catch((reason) => setError(String(reason)));
   }
 
   function confirmCloseWorktree(remove: boolean) {
     if (!closingWorktree) return;
     const { session, force } = closingWorktree;
     setClosingWorktree(undefined);
-    if (remove && force) forceWorktree.current.add(session.id);
-    closeSessionNow(remove ? session : { ...session, worktree: false });
+    // Keep-or-delete travels beside the session, not in it: Undo restores the session exactly as
+    // it was, worktree flag included, and cleanup reads the choice from here.
+    if (remove) {
+      keptWorktrees.current.delete(session.id);
+      if (force) forceWorktree.current.add(session.id);
+    } else {
+      keptWorktrees.current.add(session.id);
+    }
+    closeSessionNow(session);
   }
 
   // Closing is reversible: the row leaves immediately and its PTY stops, while the provider session
@@ -2294,6 +2315,9 @@ function App() {
                 <DialogTitle>Close all sessions?</DialogTitle>
                 <DialogDescription>
                   This stops every running session and removes all tabs. Providers keep their own conversation history.
+                  {sessions.some((session) => session.worktree)
+                    ? " Sessions in Lite-created worktrees stay open; close them individually to decide what happens to their folders."
+                    : null}
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -2305,19 +2329,23 @@ function App() {
                   onClick={() => {
                     attentionRef.current = [];
                     setAttention([]);
+                    // Worktree sessions stay: their folders are Lite's to remove, and that choice
+                    // is each session's own dialog, never a bulk default.
+                    const kept = sessions.filter((session) => session.worktree);
                     void Promise.all(
-                      sessions.map(async (session) => {
-                        runs.current.delete(session.id);
-                        await invoke("stop_session", { sessionId: session.id });
-                        // Closing in bulk asks no per-session questions, so no folders go with it:
-                        // worktrees are removed only by the close that shows their dialog.
-                        await cleanupSession(session.worktree ? { ...session, worktree: false } : session);
-                        setSessions((current) => current.filter((item) => item.id !== session.id));
-                        if (selectedId === session.id)
-                          setSelectedId(sessions.find((item) => item.id !== session.id)?.id ?? "");
-                      }),
+                      sessions
+                        .filter((session) => !session.worktree)
+                        .map(async (session) => {
+                          runs.current.delete(session.id);
+                          await invoke("stop_session", { sessionId: session.id });
+                          await cleanupSession(session);
+                          setSessions((current) => current.filter((item) => item.id !== session.id));
+                          if (selectedId === session.id) setSelectedId(kept[0]?.id ?? "");
+                        }),
                     ).then(() => {
-                      setSelectedId("");
+                      setSelectedId((current) =>
+                        kept.some((session) => session.id === current) ? current : (kept[0]?.id ?? ""),
+                      );
                     });
                     setClosingAll(false);
                   }}

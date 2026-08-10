@@ -348,12 +348,13 @@ fn worktrees_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("worktrees"))
 }
 
-// What Lite records about each worktree it creates: the folder, and the branch it made for it —
-// both used at removal time and neither trusted to the caller again.
+// What Lite records about each worktree it creates: the folder, the branch it made for it, and
+// the main checkout it belongs to — all used at removal time and none trusted to the caller again.
 #[derive(Deserialize, Serialize)]
 struct WorktreeRecord {
     path: String,
     branch: String,
+    main: String,
 }
 
 fn record_worktree(
@@ -361,6 +362,7 @@ fn record_worktree(
     root_id: &str,
     worktree: &Path,
     branch: &str,
+    main: &Path,
 ) -> Result<(), String> {
     uuid::Uuid::parse_str(root_id).map_err(|_| "Invalid grant ID")?;
     let directory = worktrees_path(app)?;
@@ -368,6 +370,7 @@ fn record_worktree(
     let record = WorktreeRecord {
         path: path_text(worktree),
         branch: branch.to_owned(),
+        main: path_text(main),
     };
     write_atomic(
         &directory.join(root_id),
@@ -375,6 +378,36 @@ fn record_worktree(
             .map_err(|error| error.to_string())?
             .as_slice(),
     )
+}
+
+fn read_worktree_record(record: &Path) -> Option<WorktreeRecord> {
+    fs::read(record)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
+// A grant id proves its session is the one asking; where the grant points is irrelevant, since
+// the recorded path — never the grant's — is what removal targets.
+fn grant_known(roots: &Roots, root_id: &str) -> Result<(), String> {
+    let roots = roots.0.lock().map_err(|error| error.to_string())?;
+    if roots.contains_key(root_id) {
+        Ok(())
+    } else {
+        Err("Folder permission is no longer available".into())
+    }
+}
+
+// The user chose to keep a worktree Lite made: Lite forgets it made it. From here the folder is
+// the user's own worktree, never offered for deletion again.
+#[tauri::command]
+async fn forget_worktree(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    root_id: String,
+) -> Result<(), String> {
+    uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
+    grant_known(&roots, &root_id)?;
+    forget_record(&worktrees_path(&app)?.join(&root_id))
 }
 
 // worktree add has already run when these are reached, so a failure after it puts the folder and
@@ -3419,7 +3452,7 @@ async fn create_worktree(
             return Err(error);
         }
     };
-    if let Err(error) = record_worktree(&app, &grant.id, &worktree, branch) {
+    if let Err(error) = record_worktree(&app, &grant.id, &worktree, branch, &repo) {
         let _ = update_roots(&app, &roots, |roots| {
             roots.remove(&grant.id);
         });
@@ -3429,14 +3462,18 @@ async fn create_worktree(
     Ok(grant)
 }
 
-// What closing a worktree session needs to know before it asks: whether removal will need
-// --force, and whether anything precious is in the way. Both are asked in a form user status
-// configuration cannot hide (an explicit --untracked-files beats status.showUntrackedFiles):
-// dirty counts changes git tracks or reports, ignored files and submodules only force removal —
-// git refuses both without it — but are nothing to warn about losing.
+// What closing a worktree session needs to know before it asks. recorded is false when Lite has
+// no record for the grant — nothing Lite can clean up, the folder is the user's. gone is true
+// when the worktree folder is verified deleted, so only metadata is left to prune. force says
+// removal will need --force and dirty that anything precious is in the way, both asked in a form
+// user status configuration cannot hide (an explicit --untracked-files beats
+// status.showUntrackedFiles): dirty counts changes git tracks or reports, ignored files and
+// submodules only force removal — git refuses both without it — but are nothing to warn about.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WorktreeState {
+    recorded: bool,
+    gone: bool,
     force: bool,
     dirty: bool,
 }
@@ -3449,14 +3486,25 @@ async fn worktree_state(
     roots: State<'_, Roots>,
     root_id: String,
 ) -> Result<WorktreeState, String> {
+    const EMPTY: WorktreeState = WorktreeState {
+        recorded: false,
+        gone: false,
+        force: false,
+        dirty: false,
+    };
     uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
+    grant_known(&roots, &root_id)?;
     let record = worktrees_path(&app)?.join(&root_id);
-    let recorded: WorktreeRecord = fs::read(&record)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .ok_or("This session's worktree is not one Lite created".to_owned())?;
-    root_path(&roots, &root_id)?;
+    let Some(recorded) = read_worktree_record(&record) else {
+        return Ok(EMPTY);
+    };
     let path = PathBuf::from(&recorded.path);
+    if !path.is_dir() {
+        return Ok(WorktreeState {
+            gone: true,
+            ..EMPTY
+        });
+    }
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     let status = command_output(
         &git,
@@ -3474,9 +3522,31 @@ async fn worktree_state(
         .unwrap_or_default()
         .is_empty();
     Ok(WorktreeState {
+        recorded: true,
+        gone: false,
         force: dirty || ignored || submodules,
         dirty,
     })
+}
+
+// An already-gone branch is no failure; anything else leaves the branch behind and says so.
+fn delete_branch(git: &Path, main: &Path, branch: &str) -> Result<(), String> {
+    if branch.is_empty() {
+        return Ok(());
+    }
+    match command_output(git, main, &["branch", "-D", branch]) {
+        Ok(_) => Ok(()),
+        Err(error) if error.contains("not found") => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn forget_record(record: &Path) -> Result<(), String> {
+    match fs::remove_file(record) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
+    }
 }
 
 // Removing a worktree is the mirror of creating one, with two guards that do not trust the
@@ -3494,16 +3564,21 @@ async fn remove_worktree(
     force: bool,
 ) -> Result<(), String> {
     uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
+    grant_known(&roots, &root_id)?;
     let record = worktrees_path(&app)?.join(&root_id);
-    let recorded: WorktreeRecord = fs::read(&record)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+    let recorded = read_worktree_record(&record)
         .ok_or("This session's worktree is not one Lite created".to_owned())?;
-    // The grant only proves the session asking is still the one this record belongs to.
-    root_path(&roots, &root_id)?;
     let path = PathBuf::from(&recorded.path);
     let branch = recorded.branch;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    if !path.is_dir() {
+        // The folder went away on its own; what remains is administrative. Prune forgets the
+        // worktree, and the branch Lite made goes with the record either way.
+        let main = PathBuf::from(&recorded.main);
+        let _ = command_output(&git, &main, &["worktree", "prune"]);
+        forget_record(&record)?;
+        return delete_branch(&git, &main, &branch);
+    }
     let git_dir = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])?;
     let common_dir = command_output(&git, &path, &["rev-parse", "--git-common-dir"])?;
     let common_dir = match Path::new(&common_dir).is_absolute() {
@@ -3526,18 +3601,8 @@ async fn remove_worktree(
     }
     args.push(&target);
     command_output(&git, &main, &args)?;
-    match fs::remove_file(&record) {
-        Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.to_string()),
-    }
-    if !branch.is_empty()
-        && let Err(error) = command_output(&git, &main, &["branch", "-D", branch.as_str()])
-        && !error.contains("not found")
-    {
-        return Err(error);
-    }
-    Ok(())
+    forget_record(&record)?;
+    delete_branch(&git, &main, &branch)
 }
 
 #[tauri::command]
@@ -3856,6 +3921,7 @@ pub fn run() {
             create_worktree,
             worktree_state,
             remove_worktree,
+            forget_worktree,
             read_usage,
             agent_availability,
             install_agent,
