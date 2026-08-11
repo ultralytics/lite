@@ -778,6 +778,7 @@ function SessionRow({
   }
 
   function clearDrag(row: HTMLElement) {
+    delete document.documentElement.dataset.sessionDragging;
     for (const property of [
       "background-color",
       "box-shadow",
@@ -820,6 +821,7 @@ function SessionRow({
         if (!dragging.current) {
           if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) < 6) return;
           dragging.current = true;
+          document.documentElement.dataset.sessionDragging = "";
           Object.assign(pointer.row.style, {
             backgroundColor: "var(--sidebar)",
             boxShadow: "0 6px 18px rgb(0 0 0 / 0.18)",

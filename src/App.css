@@ -4,6 +4,10 @@
   height: 100%;
 }
 
+html[data-session-dragging] * {
+  cursor: grabbing !important;
+}
+
 /* Session actions belong to the terminal while the pointer or keyboard is working there. */
 [data-terminal-surface]:hover [data-terminal-action],
 [data-terminal-surface]:has(.xterm.focus) [data-terminal-action] {
