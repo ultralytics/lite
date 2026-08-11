@@ -730,14 +730,10 @@ function SessionRow({
   working,
   renaming,
   reorderable,
-  drop,
   onSelect,
   onRename,
   onRenamingChange,
-  onDragStart,
-  onDragMove,
-  onDragEnd,
-  onDragCancel,
+  onReorder,
   onMove,
   onRestart,
   onClose,
@@ -750,31 +746,15 @@ function SessionRow({
   working: boolean;
   renaming: boolean;
   reorderable: boolean;
-  drop?: "before" | "after";
   onSelect: () => void;
   onRename: (name: string) => void;
   onRenamingChange: (renaming: boolean) => void;
-  onDragStart: () => void;
-  onDragMove: (clientX: number, clientY: number) => void;
-  onDragEnd: () => void;
-  onDragCancel: () => void;
+  onReorder: (draggedId: string) => void;
   onMove: (direction: -1 | 1) => void;
   onRestart: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(session.name);
-  const dragPointer = useRef<
-    | {
-        id: number;
-        x: number;
-        y: number;
-        row: HTMLElement;
-        dragging: boolean;
-        preview?: HTMLElement;
-      }
-    | undefined
-  >(undefined);
-  const suppressClick = useRef(false);
 
   function saveName() {
     const next = name.trim();
@@ -783,100 +763,21 @@ function SessionRow({
     onRenamingChange(false);
   }
 
-  function removeDragPreview(pointer: NonNullable<typeof dragPointer.current>) {
-    pointer.row.style.removeProperty("opacity");
-    pointer.preview?.remove();
-  }
-
   return (
     <Item
       data-context-session={session.id}
       size="xs"
       onClick={onSelect}
-      onClickCapture={(event) => {
-        if (!suppressClick.current) return;
-        suppressClick.current = false;
+      draggable={reorderable && !renaming}
+      onDragStart={(event) => event.dataTransfer.setData("text/plain", session.id)}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={(event) => {
         event.preventDefault();
-        event.stopPropagation();
-      }}
-      onPointerDown={(event) => {
-        const target = event.target as Element;
-        if (
-          !reorderable ||
-          event.pointerType === "touch" ||
-          event.button !== 0 ||
-          renaming ||
-          target.closest("input,[data-slot=item-actions]")
-        )
-          return;
-        event.currentTarget.setPointerCapture(event.pointerId);
-        dragPointer.current = {
-          id: event.pointerId,
-          x: event.clientX,
-          y: event.clientY,
-          row: event.currentTarget,
-          dragging: false,
-        };
-      }}
-      onPointerMove={(event) => {
-        const pointer = dragPointer.current;
-        if (!pointer || pointer.id !== event.pointerId) return;
-        if (!pointer.dragging) {
-          if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) < 6) return;
-          pointer.dragging = true;
-          const bounds = pointer.row.getBoundingClientRect();
-          const preview = pointer.row.cloneNode(true) as HTMLElement;
-          preview.setAttribute("aria-hidden", "true");
-          preview.inert = true;
-          Object.assign(preview.style, {
-            position: "fixed",
-            zIndex: "100",
-            left: `${bounds.left}px`,
-            top: `${bounds.top}px`,
-            width: `${bounds.width}px`,
-            pointerEvents: "none",
-            backgroundColor: "var(--sidebar)",
-            borderColor: "var(--border)",
-            boxShadow: "0 12px 32px rgb(0 0 0 / 0.28)",
-            opacity: "0.88",
-            willChange: "transform",
-          });
-          document.body.append(preview);
-          pointer.preview = preview;
-          pointer.row.style.opacity = "0.35";
-          onDragStart();
-        }
-        event.preventDefault();
-        if (pointer.preview)
-          pointer.preview.style.transform = `translate3d(${event.clientX - pointer.x}px, ${event.clientY - pointer.y}px, 0)`;
-        onDragMove(event.clientX, event.clientY);
-      }}
-      onPointerUp={(event) => {
-        const pointer = dragPointer.current;
-        if (!pointer || pointer.id !== event.pointerId) return;
-        if (pointer.row.hasPointerCapture(pointer.id)) pointer.row.releasePointerCapture(pointer.id);
-        dragPointer.current = undefined;
-        if (!pointer.dragging) return;
-        event.preventDefault();
-        removeDragPreview(pointer);
-        suppressClick.current = true;
-        onDragEnd();
-        window.setTimeout(() => {
-          suppressClick.current = false;
-        });
-      }}
-      onPointerCancel={(event) => {
-        const pointer = dragPointer.current;
-        if (!pointer || pointer.id !== event.pointerId) return;
-        dragPointer.current = undefined;
-        if (pointer.dragging) {
-          removeDragPreview(pointer);
-          onDragCancel();
-        }
+        onReorder(event.dataTransfer.getData("text/plain"));
       }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`relative flex-nowrap select-none transition-[color,background-color,opacity] after:pointer-events-none after:absolute after:z-10 after:inset-x-1 after:h-0.5 after:rounded-full after:bg-primary active:opacity-70 ${reorderable ? "cursor-grab active:cursor-grabbing" : ""} ${drop === "before" ? "after:-top-0.5" : drop === "after" ? "after:-bottom-0.5" : "after:hidden"} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
+      className={`flex-nowrap transition-[color,background-color,opacity] active:opacity-70 ${reorderable ? "cursor-grab active:cursor-grabbing" : ""} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge
@@ -1072,7 +973,6 @@ function App() {
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
   const [query, setQuery] = useState("");
   const [renamingId, setRenamingId] = useState("");
-  const [sessionDrop, setSessionDrop] = useState<{ targetId: string; after: boolean }>();
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
@@ -1099,8 +999,6 @@ function App() {
   const [updateError, setUpdateError] = useState("");
   const updateDialog = useRef<HTMLDivElement>(null);
   const runs = useRef(new Map<string, string>());
-  const draggingSession = useRef("");
-  const sessionDropRef = useRef<{ targetId: string; after: boolean } | undefined>(undefined);
   const recoveries = useRef(new Map<string, Promise<void>>());
   const recoveryFailures = useRef(new Set<string>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
@@ -1633,52 +1531,16 @@ function App() {
     void launch(session, false);
   }
 
-  function reorderSession(draggedId: string, targetId: string, after: boolean) {
+  function reorderSession(draggedId: string, targetId: string) {
     setSessions((current) => {
       const draggedIndex = current.findIndex((session) => session.id === draggedId);
       const targetIndex = current.findIndex((session) => session.id === targetId);
       if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return current;
       const next = [...current];
       const [dragged] = next.splice(draggedIndex, 1);
-      const destination = next.findIndex((session) => session.id === targetId) + Number(after);
-      next.splice(destination, 0, dragged);
-      return next.every((session, index) => session === current[index]) ? current : next;
+      next.splice(targetIndex, 0, dragged);
+      return next;
     });
-  }
-
-  function moveSession(session: Session, direction: -1 | 1) {
-    const index = sessionsRef.current.findIndex((item) => item.id === session.id);
-    const target = sessionsRef.current[index + direction];
-    if (target) reorderSession(session.id, target.id, direction > 0);
-  }
-
-  function dragSessionAt(clientX: number, clientY: number) {
-    const row = document
-      .elementFromPoint(clientX, clientY)
-      ?.closest<HTMLElement>("[data-slot=item][data-context-session]");
-    if (!row) {
-      sessionDropRef.current = undefined;
-      return setSessionDrop(undefined);
-    }
-    const bounds = row.getBoundingClientRect();
-    const drop = {
-      targetId: row.dataset.contextSession ?? "",
-      after: clientY >= bounds.top + bounds.height / 2,
-    };
-    sessionDropRef.current = drop;
-    setSessionDrop((current) => (current?.targetId === drop.targetId && current.after === drop.after ? current : drop));
-  }
-
-  function endSessionDrag() {
-    const drop = sessionDropRef.current;
-    if (drop) reorderSession(draggingSession.current, drop.targetId, drop.after);
-    cancelSessionDrag();
-  }
-
-  function cancelSessionDrag() {
-    draggingSession.current = "";
-    sessionDropRef.current = undefined;
-    setSessionDrop(undefined);
   }
 
   function sessionUndoToast(
@@ -2434,13 +2296,6 @@ function App() {
                             working={working.has(session.id)}
                             renaming={renamingId === session.id}
                             reorderable={!query.trim()}
-                            drop={
-                              sessionDrop?.targetId === session.id
-                                ? sessionDrop.after
-                                  ? "after"
-                                  : "before"
-                                : undefined
-                            }
                             onSelect={() => openRef.current(session)}
                             onRename={(name) =>
                               setSessions((current) =>
@@ -2450,15 +2305,12 @@ function App() {
                               )
                             }
                             onRenamingChange={(renaming) => setRenamingId(renaming ? session.id : "")}
-                            onDragStart={() => {
-                              draggingSession.current = session.id;
-                              sessionDropRef.current = undefined;
-                              setSessionDrop(undefined);
+                            onReorder={(draggedId) => reorderSession(draggedId, session.id)}
+                            onMove={(direction) => {
+                              const index = sessionsRef.current.findIndex((item) => item.id === session.id);
+                              const target = sessionsRef.current[index + direction];
+                              if (target) reorderSession(session.id, target.id);
                             }}
-                            onDragMove={dragSessionAt}
-                            onDragEnd={endSessionDrag}
-                            onDragCancel={cancelSessionDrag}
-                            onMove={(direction) => moveSession(session, direction)}
                             onRestart={() => void restartSession(session)}
                             onClose={() => closeSession(session)}
                           />
