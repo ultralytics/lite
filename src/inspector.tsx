@@ -1092,8 +1092,8 @@ export function Inspector({
 }) {
   const [tab, setTab] = useState<string>(TABS[0].value);
   const [visited, setVisited] = useState(() => new Set<string>([TABS[0].value]));
-  // A tab already names the panel it shows, so the panel does not name itself again. One button beside
-  // the tabs rereads whichever is open, by rebuilding it, and only that one ever reads the disk.
+  // A tab already names the panel it shows, so the panel does not name itself again. The refresh button
+  // rebuilds whichever is open, and every explicit Files visit rebuilds that disk snapshot as well.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
 
   function visitTab(value: string) {
@@ -1105,14 +1105,19 @@ export function Inspector({
     });
   }
 
+  function refreshTab(value: keyof typeof reload) {
+    setReload((counts) => ({ ...counts, [value]: counts[value] + 1 }));
+  }
+
   function selectTab(value: string) {
     setTab(value);
     visitTab(value);
+    if (value === "files") refreshTab(value);
   }
 
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
-  // on. What it was showing is hidden rather than thrown away, so the file you had open is still open
-  // when it comes back. Hovering or focusing Git explicitly asks that panel to prepare before the click.
+  // on. Hidden panels retain their state except Files, whose explicit visit requests a fresh disk
+  // snapshot. Hovering or focusing Git explicitly asks that panel to prepare before the click.
   const rail = (
     <div
       data-context-surface
@@ -1174,6 +1179,7 @@ export function Inspector({
                         aria-label={label}
                         onPointerEnter={value === "git" ? () => visitTab(value) : undefined}
                         onFocus={value === "git" ? () => visitTab(value) : undefined}
+                        onClick={value === "files" && tab === "files" ? () => refreshTab("files") : undefined}
                       />
                     }
                   >
@@ -1190,7 +1196,7 @@ export function Inspector({
                   tooltip="Refresh"
                   aria-label="Refresh"
                   data-context-refresh
-                  onClick={() => setReload((counts) => ({ ...counts, [tab]: counts[tab as keyof typeof counts] + 1 }))}
+                  onClick={() => refreshTab(tab as keyof typeof reload)}
                 >
                   <RefreshCw />
                 </ActionIconButton>
