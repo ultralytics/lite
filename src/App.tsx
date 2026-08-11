@@ -918,10 +918,8 @@ function SessionRow({
             aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
             onClick={(event) => {
               event.stopPropagation();
-              if (active && session.running) onRenamingChange(true);
-              else onSelect();
+              onRenamingChange(true);
             }}
-            onDoubleClick={() => onRenamingChange(true)}
             onKeyDown={(event) => {
               if (!reorderable || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
               event.preventDefault();
