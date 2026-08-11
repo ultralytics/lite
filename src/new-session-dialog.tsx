@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { FolderOpen } from "lucide-react";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
 import { ActionIconButton, Button } from "@/components/ui/button";
@@ -90,11 +90,6 @@ export function NewSessionDialog({
   const missing = status && !status.available ? status : undefined;
   // Sessions already working in this repository, which is the case a worktree exists for.
   const sharing = repo ? sessions.filter((session) => sharesRepo(session, repo)).length : 0;
-  // The probe reads this rather than depending on it: a session updating elsewhere must not reset
-  // the toggle the user has already answered.
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
-
   // Dialog checks are independent, so one slow registry request never holds up another harness.
   useEffect(() => {
     if (!isOpen) return;
@@ -133,9 +128,7 @@ export function NewSessionDialog({
           const root = repository?.root ?? null;
           setRepo(root);
           setWorktree(repository?.worktree ?? "");
-          // Sessions already sharing this repository make the worktree the default rather than the
-          // option; a fresh repository leaves the choice with the main checkout.
-          setWorktreeOn(Boolean(root && sessionsRef.current.some((session) => sharesRepo(session, root))));
+          setWorktreeOn(false);
           setBranch(repository?.branch ?? "");
         })
         .catch(() => {

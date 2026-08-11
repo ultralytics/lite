@@ -749,12 +749,16 @@ function SessionRow({
   onSelect: () => void;
   onRename: (name: string) => void;
   onRenamingChange: (renaming: boolean) => void;
-  onReorder: (draggedId: string) => void;
+  onReorder: (targetId: string, after: boolean) => void;
   onMove: (direction: -1 | 1) => void;
   onRestart: () => void;
   onClose: () => void;
 }) {
   const [name, setName] = useState(session.name);
+  const drag = useRef<{ id: number; x: number; y: number; row: HTMLElement } | undefined>(undefined);
+  const drop = useRef<{ row: HTMLElement; after: boolean } | undefined>(undefined);
+  const shifted = useRef<HTMLElement[]>([]);
+  const dragging = useRef(false);
 
   function saveName() {
     const next = name.trim();
@@ -763,21 +767,121 @@ function SessionRow({
     onRenamingChange(false);
   }
 
+  function clearDrop() {
+    if (drop.current) delete drop.current.row.dataset.drop;
+    for (const row of shifted.current) {
+      row.style.removeProperty("transform");
+      delete row.dataset.shifted;
+    }
+    drop.current = undefined;
+    shifted.current = [];
+  }
+
+  function clearDrag(row: HTMLElement) {
+    for (const property of [
+      "background-color",
+      "box-shadow",
+      "opacity",
+      "pointer-events",
+      "transform",
+      "will-change",
+      "z-index",
+    ])
+      row.style.removeProperty(property);
+    clearDrop();
+  }
+
   return (
     <Item
       data-context-session={session.id}
       size="xs"
       onClick={onSelect}
-      draggable={reorderable && !renaming}
-      onDragStart={(event) => event.dataTransfer.setData("text/plain", session.id)}
-      onDragOver={(event) => event.preventDefault()}
-      onDrop={(event) => {
+      onClickCapture={(event) => {
+        if (!dragging.current) return;
+        dragging.current = false;
         event.preventDefault();
-        onReorder(event.dataTransfer.getData("text/plain"));
+        event.stopPropagation();
+      }}
+      onPointerDown={(event) => {
+        if (
+          !reorderable ||
+          event.pointerType === "touch" ||
+          event.button !== 0 ||
+          renaming ||
+          (event.target as Element).closest("input,[data-slot=item-actions]")
+        )
+          return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, row: event.currentTarget };
+      }}
+      onPointerMove={(event) => {
+        const pointer = drag.current;
+        if (!pointer || pointer.id !== event.pointerId) return;
+        if (!dragging.current) {
+          if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) < 6) return;
+          dragging.current = true;
+          Object.assign(pointer.row.style, {
+            backgroundColor: "var(--sidebar)",
+            boxShadow: "0 6px 18px rgb(0 0 0 / 0.18)",
+            opacity: "0.96",
+            pointerEvents: "none",
+            willChange: "transform",
+            zIndex: "20",
+          });
+        }
+        event.preventDefault();
+        const parent = pointer.row.parentElement;
+        const rows = [...(parent?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
+        const parentTop = parent?.getBoundingClientRect().top ?? 0;
+        const before = rows.find(
+          (row) => row !== pointer.row && event.clientY < parentTop + row.offsetTop + row.offsetHeight / 2,
+        );
+        const last = rows[rows.length - 1];
+        const row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
+        const after = !before;
+        pointer.row.style.transform = `translate3d(0, ${event.clientY - pointer.y}px, 0)`;
+        if (!row) return clearDrop();
+        if (drop.current?.row === row && drop.current?.after === after) return;
+        const sourceIndex = rows.indexOf(pointer.row);
+        const targetIndex = rows.indexOf(row);
+        const start = sourceIndex < targetIndex ? sourceIndex + 1 : targetIndex + Number(after);
+        const end = sourceIndex < targetIndex ? targetIndex + Number(after) : sourceIndex;
+        const shifts: [HTMLElement, number][] = [];
+        for (let index = start; index < end; index++) {
+          const shiftedRow = rows[index];
+          const neighbor = rows[index + (sourceIndex < targetIndex ? -1 : 1)];
+          shifts.push([shiftedRow, neighbor.offsetTop - shiftedRow.offsetTop]);
+        }
+        clearDrop();
+        row.dataset.drop = after ? "after" : "before";
+        drop.current = { row, after };
+        for (const [shiftedRow, distance] of shifts) {
+          shiftedRow.dataset.shifted = "";
+          shiftedRow.style.transform = `translate3d(0, ${distance}px, 0)`;
+          shifted.current.push(shiftedRow);
+        }
+      }}
+      onPointerUp={(event) => {
+        const pointer = drag.current;
+        if (!pointer || pointer.id !== event.pointerId) return;
+        pointer.row.releasePointerCapture(pointer.id);
+        drag.current = undefined;
+        const targetId = drop.current?.row.dataset.contextSession;
+        const after = drop.current?.after;
+        clearDrag(pointer.row);
+        if (dragging.current && targetId && after !== undefined) onReorder(targetId, after);
+        window.setTimeout(() => {
+          dragging.current = false;
+        });
+      }}
+      onPointerCancel={() => {
+        if (drag.current) clearDrag(drag.current.row);
+        drag.current = undefined;
+        dragging.current = false;
       }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`flex-nowrap transition-[color,background-color,opacity] active:opacity-70 ${reorderable ? "cursor-grab active:cursor-grabbing" : ""} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
+      className={`relative flex-nowrap transition-[color,background-color,opacity] data-[shifted]:transition-transform data-[shifted]:duration-150 data-[shifted]:ease-out motion-reduce:data-[shifted]:transition-none after:pointer-events-none after:absolute after:inset-x-1 after:z-10 after:hidden after:h-0.5 after:rounded-full after:bg-primary data-[drop=before]:after:-top-0.5 data-[drop=before]:after:block data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:block active:opacity-70 ${reorderable ? "cursor-grab select-none active:cursor-grabbing" : ""} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge
@@ -1526,19 +1630,20 @@ function App() {
 
   function createSession(session: Session) {
     resumed.current = session.id;
-    setSessions((current) => [...current, session]);
+    setSessions((current) => [session, ...current]);
     setSelectedId(session.id);
     void launch(session, false);
   }
 
-  function reorderSession(draggedId: string, targetId: string) {
+  function reorderSession(draggedId: string, targetId: string, after: boolean) {
     setSessions((current) => {
       const draggedIndex = current.findIndex((session) => session.id === draggedId);
       const targetIndex = current.findIndex((session) => session.id === targetId);
       if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return current;
       const next = [...current];
       const [dragged] = next.splice(draggedIndex, 1);
-      next.splice(targetIndex, 0, dragged);
+      const destination = next.findIndex((session) => session.id === targetId) + Number(after);
+      next.splice(destination, 0, dragged);
       return next;
     });
   }
@@ -2305,11 +2410,11 @@ function App() {
                               )
                             }
                             onRenamingChange={(renaming) => setRenamingId(renaming ? session.id : "")}
-                            onReorder={(draggedId) => reorderSession(draggedId, session.id)}
+                            onReorder={(targetId, after) => reorderSession(session.id, targetId, after)}
                             onMove={(direction) => {
                               const index = sessionsRef.current.findIndex((item) => item.id === session.id);
                               const target = sessionsRef.current[index + direction];
-                              if (target) reorderSession(session.id, target.id);
+                              if (target) reorderSession(session.id, target.id, direction > 0);
                             }}
                             onRestart={() => void restartSession(session)}
                             onClose={() => closeSession(session)}
