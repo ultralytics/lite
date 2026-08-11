@@ -914,7 +914,7 @@ function SessionRow({
           {/* Only the visible title owns rename; its hit area stops where its text stops. */}
           <button
             type="button"
-            className="group/title flex w-fit max-w-full cursor-text items-center gap-1 text-xs font-medium"
+            className="group/title flex w-fit max-w-full cursor-pointer items-center gap-1 text-xs font-medium"
             aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
             onClick={(event) => {
               event.stopPropagation();
