@@ -129,6 +129,12 @@ export function TerminalView({
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: storedFontSize(),
       lineHeight: 1.25,
+      linkHandler: {
+        activate: (event, url) => {
+          event.preventDefault();
+          void invoke("open_url", { url });
+        },
+      },
       scrollback: 5000,
       theme: themes[themeRef.current],
     });
