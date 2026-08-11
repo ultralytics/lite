@@ -401,10 +401,12 @@ export function NewSessionDialog({
                   const update = updates[option.agent];
                   const managed = option.agent !== "shell" && state && !state.installable;
                   // A registry that could not answer knows of no update, so only one it reported is
-                  // offered. The label doubles as the switch: nothing to install or update, no button.
+                  // offered — by the button and by the mark beside the version alike.
+                  const updatable = managed && update === true;
+                  // The label doubles as the switch: nothing to install or update, no button.
                   const action = state?.installable
                     ? (["Install", "Installing…"] as const)
-                    : managed && update === true
+                    : updatable
                       ? (["Update", "Updating…"] as const)
                       : undefined;
                   const busy = installing === option.id;
@@ -426,7 +428,7 @@ export function NewSessionDialog({
                       >
                         <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
                         <div
-                          className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : managed && update === true ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
+                          className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
                           <span className="block truncate">{sessionLabel(option)}</span>
                           {state && !state.available ? (
