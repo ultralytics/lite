@@ -241,7 +241,7 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
               <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
               {title ? (
                 <div className="flex min-w-0 items-center gap-2">
-                  <ItemDescription className="min-w-0 flex-1 truncate font-mono">
+                  <ItemDescription className="min-w-0 truncate font-mono">
                     #{number}
                     {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
                   </ItemDescription>
@@ -251,7 +251,11 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
                   {deletions ? (
                     <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
                   ) : null}
-                  {state ? <Badge variant={GITHUB_STATE[state]}>{state}</Badge> : null}
+                  {state ? (
+                    <Badge className="ml-auto" variant={GITHUB_STATE[state]}>
+                      {state}
+                    </Badge>
+                  ) : null}
                 </div>
               ) : null}
             </ItemContent>
