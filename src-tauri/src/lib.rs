@@ -3903,20 +3903,25 @@ async fn restore_worktree(
     {
         return Ok(None);
     }
-    match root_path(roots.inner(), &root_id) {
-        Ok(_) => return Ok(None),
-        Err(error) if error == MISSING_DIRECTORY => {}
+    let current = match root_path(roots.inner(), &root_id) {
+        Ok(path) => Some(path),
+        Err(error) if error == MISSING_DIRECTORY => None,
         Err(error) => return Err(error),
-    }
+    };
     let record = worktrees_path(&app)?.join(&root_id);
-    let recorded = read_worktree_record(&record).ok_or(MISSING_DIRECTORY)?;
+    let Some(recorded) = read_worktree_record(&record) else {
+        return current.map_or_else(|| Err(MISSING_DIRECTORY.into()), |_| Ok(None));
+    };
+    let path = PathBuf::from(&recorded.path);
+    if current
+        .as_ref()
+        .is_some_and(|current| fs::canonicalize(&path).ok().as_ref() != Some(current))
+    {
+        return Ok(None);
+    }
     // A running shell may have left its healthy owned tree and lost only the folder it cd'd into;
     // live recovery leaves that process alone, while startup returns it to the tree it can launch in.
-    let path = PathBuf::from(&recorded.path);
     if path.is_dir() {
-        if owned_only {
-            return Ok(None);
-        }
         let git = resolve_executable("git").unwrap_or_else(|| "git".into());
         let main = PathBuf::from(&recorded.main);
         let owner = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])
@@ -3930,6 +3935,9 @@ async fn restore_worktree(
                 "The folder at the recorded path is not the worktree Lite created; nothing is restored"
                     .into(),
             );
+        }
+        if owned_only {
+            return Ok(None);
         }
         return grant_directory(&app, roots.inner(), path, Some(root_id)).map(Some);
     }
