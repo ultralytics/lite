@@ -94,7 +94,14 @@ import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clearUsageCache, Inspector } from "@/inspector";
 import { NewSessionDialog } from "@/new-session-dialog";
-import { appendOutput, clearOutput, subscribeOutput, syncTerminalTheme, writeSession } from "@/output-store";
+import {
+  appendOutput,
+  clearOutput,
+  holdSessionWrites,
+  subscribeOutput,
+  syncTerminalTheme,
+  writeSession,
+} from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import { applyTheme, initialTheme, type Theme } from "@/theme";
 import { type Agent, defaultSessionName, repoName, type Session, sessionLabel } from "@/types";
@@ -1064,6 +1071,7 @@ function App() {
   // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
   // cleanup has settled, so nothing can be reopened under its own cleanup.
   const [closingAllRunning, setClosingAllRunning] = useState(false);
+  const closingAllRef = useRef(false);
   // The worktree session waiting on the close dialog's answer, with what its tree looked like when asked.
   const [closingWorktree, setClosingWorktree] = useState<{
     session: Session;
@@ -1115,6 +1123,8 @@ function App() {
   const runs = useRef(new Map<string, string>());
   const draggingSession = useRef("");
   const sessionDropRef = useRef<{ targetId: string; after: boolean } | undefined>(undefined);
+  const recoveries = useRef(new Map<string, Promise<void>>());
+  const recoveryFailures = useRef(new Set<string>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
   // covered real changes (true) or only ignored files and submodules (false); read at cleanup.
   const forceWorktree = useRef(new Map<string, boolean>());
@@ -1136,6 +1146,7 @@ function App() {
   const selectedRef = useRef<Session>(undefined);
   const closeRef = useRef<(session: Session) => void>(() => {});
   const openRef = useRef<(session: Session) => void>(() => {});
+  const recoverRef = useRef<(session: Session) => Promise<void>>(() => Promise.resolve());
   const markAttention = useCallback((sessionId: string) => {
     const current = attentionRef.current;
     if (current[current.length - 1] === sessionId) return;
@@ -1169,7 +1180,10 @@ function App() {
   openRef.current = (session) => {
     clearAttention(session.id);
     setSelectedId(session.id);
-    if (!session.running && !startingIds.has(session.id)) void launch(session, true);
+    if (session.running) {
+      recoveryFailures.current.delete(session.id);
+      void recoverRef.current(session).catch(() => {});
+    } else if (!startingIds.has(session.id)) void launch(session, true);
   };
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
@@ -1254,8 +1268,10 @@ function App() {
 
   useEffect(() => {
     const readSelected = () => {
-      const sessionId = selectedRef.current?.id;
-      if (sessionId) clearAttention(sessionId);
+      const session = selectedRef.current;
+      if (!session) return;
+      clearAttention(session.id);
+      if (session.running) void recoverRef.current(session).catch(() => {});
     };
     window.addEventListener("focus", readSelected);
     return () => window.removeEventListener("focus", readSelected);
@@ -1463,11 +1479,23 @@ function App() {
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
     if (runs.current.has(session.id)) return true;
+    recoveryFailures.current.delete(session.id);
     const runId = crypto.randomUUID();
     runs.current.set(session.id, runId);
     setStartingIds((current) => new Set(current).add(session.id));
     setError("");
     try {
+      if (session.worktree) {
+        const folder = await invoke<{ id: string; path: string } | null>("restore_worktree", {
+          rootId: session.rootId,
+          ownedOnly: false,
+        });
+        if (folder) {
+          setSessions((current) =>
+            current.map((item) => (item.id === session.id ? { ...item, cwd: folder.path } : item)),
+          );
+        }
+      }
       const providerSessionId = await invoke<string | null>("spawn_session", {
         sessionId: session.id,
         runId,
@@ -1508,6 +1536,72 @@ function App() {
       });
     }
   }, []);
+
+  function recoverSession(session: Session): Promise<void> {
+    const pending = recoveries.current.get(session.id);
+    if (pending) return pending;
+    if (recoveryFailures.current.has(session.id)) return Promise.resolve();
+    if (
+      !session.worktree ||
+      startingIds.has(session.id) ||
+      closingIds.current.has(session.id) ||
+      closingAllRef.current
+    ) {
+      return Promise.resolve();
+    }
+    let stopped = false;
+    let cleanup = () => Promise.resolve();
+    const recovery = (async () => {
+      try {
+        const folder = await invoke<{ id: string; path: string } | null>("restore_worktree", {
+          rootId: session.rootId,
+          ownedOnly: true,
+        });
+        const live = sessionsRef.current.find((item) => item.id === session.id);
+        if (!folder || !live?.running || closingIds.current.has(session.id) || closingAllRef.current) return;
+        setStartingIds((current) => new Set(current).add(session.id));
+        await invoke("stop_session", { sessionId: session.id });
+        stopped = true;
+        runs.current.delete(session.id);
+        setShellAgents((current) => {
+          if (!current.has(session.id)) return current;
+          const next = new Map(current);
+          next.delete(session.id);
+          return next;
+        });
+        const current = sessionsRef.current.find((item) => item.id === session.id) ?? live;
+        // Keep the terminal mounted while its write queue holds later keystrokes behind recovery;
+        // launch marks it disconnected if the replacement process cannot start.
+        const restored = { ...current, cwd: folder.path, running: true };
+        setSessions((current) => current.map((item) => (item.id === session.id ? restored : item)));
+        resumed.current = session.id;
+        await launch(restored, true);
+      } catch (reason) {
+        if (stopped) {
+          setSessions((current) =>
+            current.map((item) => (item.id === session.id ? { ...item, running: false } : item)),
+          );
+        }
+        recoveryFailures.current.add(session.id);
+        setError(`Session could not be recovered: ${String(reason)}`);
+        throw reason;
+      } finally {
+        recoveries.current.delete(session.id);
+        pendingCleanups.current.delete(cleanup);
+        setStartingIds((current) => {
+          const next = new Set(current);
+          next.delete(session.id);
+          return next;
+        });
+      }
+    })();
+    cleanup = () => recovery.catch(() => {});
+    recoveries.current.set(session.id, recovery);
+    pendingCleanups.current.add(cleanup);
+    holdSessionWrites(session.id, recovery);
+    return recovery;
+  }
+  recoverRef.current = recoverSession;
 
   // Opening the app, or coming back to a session, brings its provider process back on its own.
   useEffect(() => {
@@ -1678,10 +1772,20 @@ function App() {
 
   // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
   // session it resumed by id is retained only until the shared Undo window expires.
-  function restartSession(session: Session, select = true) {
+  function restartSession(session: Session, select = true, recovered = false) {
     // A close in flight owns this session's fate: restarting now would inherit a worktree the
     // close dialog is about to take away.
-    if (startingIds.has(session.id) || closingIds.current.has(session.id)) return;
+    const recovering = recoveries.current.get(session.id);
+    if (recovering) {
+      const restart = () => {
+        const current = sessionsRef.current.find((item) => item.id === session.id);
+        if (current) restartSession(current, select, true);
+      };
+      void recovering.then(restart, restart);
+      return;
+    }
+    if ((!recovered && startingIds.has(session.id)) || closingIds.current.has(session.id)) return;
+    recoveryFailures.current.delete(session.id);
     clearAttention(session.id);
     const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
     const restarted = restartSessionNow(session, fresh, select);
@@ -1796,6 +1900,7 @@ function App() {
   // Worktree cleanup runs first so a failed removal can restore a session whose provider metadata
   // and folder grant are still intact.
   async function cleanupSession(session: Session): Promise<{ error: string; restorable: boolean }> {
+    recoveryFailures.current.delete(session.id);
     let error = "";
     let restorable = false;
     if (session.worktree) {
@@ -1853,8 +1958,17 @@ function App() {
 
   // A worktree session owns the folder it runs in, so closing one first asks whether the folder
   // and its branch go with the tab. Everything else closes directly.
-  function closeSession(session: Session) {
-    if (startingIds.has(session.id)) return;
+  function closeSession(session: Session, recovered = false) {
+    const recovering = recoveries.current.get(session.id);
+    if (recovering) {
+      const close = () => {
+        const current = sessionsRef.current.find((item) => item.id === session.id);
+        if (current) closeSession(current, true);
+      };
+      void recovering.then(close, close);
+      return;
+    }
+    if (!recovered && startingIds.has(session.id)) return;
     if (!session.worktree) return closeSessionNow(session);
     // One close flow across the app at a time: the dialog is singular, so from probe to answer
     // only one worktree session may be closing at all — a second would overwrite the dialog and
@@ -2425,6 +2539,9 @@ function App() {
                               agent={shellAgents.get(session.id) ?? session.agent}
                               theme={theme}
                               active={selected.running && session.id === selectedId}
+                              working={working.has(session.id)}
+                              starting={startingIds.has(session.id)}
+                              onRecover={() => recoverSession(session)}
                               onPrompt={(text) => {
                                 const agent = session.agent === "shell" ? commandAgent(text) : undefined;
                                 if (agent)
@@ -2699,10 +2816,12 @@ function App() {
                     // A session whose cleanup failed but is restorable keeps its tab: the record
                     // and grant survive for a retry, and they need a row to be retried from.
                     const failed = new Set<string>();
+                    closingAllRef.current = true;
                     setClosingAllRunning(true);
                     // Registered like every other cleanup: closing the app mid-run waits for this
                     // instead of abandoning stops and cleanups half-done.
                     const close = async () => {
+                      await Promise.allSettled([...recoveries.current.values()]);
                       await Promise.all(
                         sessions.map(async (session) => {
                           // A session that cannot be stopped is left alone, still live and still
@@ -2729,6 +2848,7 @@ function App() {
                         }),
                       );
                       setSelectedId(sessions.find((session) => failed.has(session.id))?.id ?? "");
+                      closingAllRef.current = false;
                       setClosingAllRunning(false);
                       setClosingAll(false);
                     };
