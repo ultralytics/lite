@@ -85,20 +85,33 @@ export function TerminalView({
   agent,
   theme,
   active,
+  working,
+  starting,
   onPrompt,
+  onRecover,
 }: {
   sessionId: string;
   agent: Agent;
   theme: Theme;
   active: boolean;
+  working: boolean;
+  starting: boolean;
   onPrompt: (text: string) => void;
+  onRecover: () => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Held in a ref so a new prompt handler never rebuilds the terminal underneath the session.
   const promptRef = useRef(onPrompt);
   promptRef.current = onPrompt;
+  const recoverRef = useRef(onRecover);
+  recoverRef.current = onRecover;
   const terminalRef = useRef<Terminal | null>(null);
   const zoomRef = useRef<(step: -1 | 0 | 1) => void>(() => undefined);
+  const resizeRef = useRef<() => void>(() => undefined);
+  const checkRef = useRef(true);
+  const workingRef = useRef(working);
+  if (workingRef.current && !working) checkRef.current = true;
+  workingRef.current = working;
   // Read when a terminal is built, so switching sessions paints the new one in the current theme
   // without rebuilding it every time the theme changes.
   const themeRef = useRef(theme);
@@ -139,6 +152,10 @@ export function TerminalView({
     // An event can end mid-sequence, so an unfinished tail waits for the rest instead of being read.
     let pending = "";
     const input = terminal.onData((data) => {
+      if (checkRef.current) {
+        checkRef.current = false;
+        void recoverRef.current().catch(() => {});
+      }
       const buffer = pending + data;
       const partial = buffer.match(PARTIAL);
       pending = partial?.[0] ?? "";
@@ -160,6 +177,7 @@ export function TerminalView({
         rows: terminal.rows,
       });
     };
+    resizeRef.current = resize;
     zoomRef.current = (step) => {
       const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminal.options.fontSize ?? 13) + step) : 13;
       terminal.options.fontSize = size;
@@ -225,12 +243,17 @@ export function TerminalView({
       terminal.dispose();
       terminalRef.current = null;
       zoomRef.current = () => undefined;
+      resizeRef.current = () => undefined;
     };
   }, [sessionId]);
 
   useEffect(() => {
     if (active) terminalRef.current?.focus();
   }, [active]);
+
+  useEffect(() => {
+    if (!starting) requestAnimationFrame(() => resizeRef.current());
+  }, [starting]);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = themes[theme];

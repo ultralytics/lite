@@ -26,6 +26,7 @@ const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
 const MAX_GIT_DIFF_BYTES: u64 = 1_000_000;
+const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
@@ -226,8 +227,7 @@ fn root_path(roots: &Roots, root_id: &str) -> Result<PathBuf, String> {
     let root = roots
         .get(root_id)
         .ok_or("Folder permission is no longer available")?;
-    let root =
-        fs::canonicalize(root).map_err(|_| "The selected folder no longer exists".to_owned())?;
+    let root = fs::canonicalize(root).map_err(|_| MISSING_DIRECTORY.to_owned())?;
     if is_sensitive_root(&root) {
         Err("Credential and configuration folders cannot be opened".into())
     } else {
@@ -459,14 +459,23 @@ async fn forget_worktree(
 }
 
 // worktree add has already run when these are reached, so a failure after it puts the folder and
-// branch back rather than leaving an orphan nothing can clean up. Both removals are always
-// attempted — one failing must not strand the other — and a rollback that fails is said out
-// loud: the caller's error alone would strand the worktree without a word about where.
-fn undo_worktree(git: &Path, repo: &Path, worktree: &Path, branch: &str) -> Result<(), String> {
+// newly made branch back rather than leaving an orphan nothing can clean up. A branch that survived
+// a missing worktree is preserved, and a rollback that fails says where the folder may remain.
+fn undo_worktree(
+    git: &Path,
+    repo: &Path,
+    worktree: &Path,
+    branch: &str,
+    delete_branch: bool,
+) -> Result<(), String> {
     let target = path_text(worktree);
     let removed = command_output(git, repo, &["worktree", "remove", "--force", &target]);
-    let branch_gone = command_output(git, repo, &["branch", "-D", branch]);
-    removed.and(branch_gone).map(|_| ())
+    if delete_branch {
+        let branch_gone = command_output(git, repo, &["branch", "-D", branch]);
+        removed.and(branch_gone).map(|_| ())
+    } else {
+        removed.map(|_| ())
+    }
 }
 
 // On a clean rollback the repository's mark goes too: nothing is left to prove. On a failed one
@@ -479,10 +488,16 @@ fn fail_with_rollback(
     worktree: &Path,
     branch: &str,
     root_id: &str,
+    rollback: Option<(bool, bool)>,
 ) -> String {
-    match undo_worktree(git, repo, worktree, branch) {
+    let Some((delete_branch, remove_mark)) = rollback else {
+        return error;
+    };
+    match undo_worktree(git, repo, worktree, branch, delete_branch) {
         Ok(()) => {
-            remove_repo_mark(git, repo, root_id);
+            if remove_mark {
+                remove_repo_mark(git, repo, root_id);
+            }
             error
         }
         Err(rollback) => format!(
@@ -2821,7 +2836,7 @@ async fn spawn_session(
         .contains_key(&root_id)
     {
         uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid folder permission")?;
-        let path = fs::canonicalize(cwd).map_err(|_| "The selected folder no longer exists")?;
+        let path = fs::canonicalize(cwd).map_err(|_| MISSING_DIRECTORY)?;
         if is_sensitive_root(&path) {
             return Err("Credential and configuration folders cannot be opened".into());
         }
@@ -3679,8 +3694,8 @@ async fn git_repo(app: AppHandle, path: String) -> Result<Option<Repository>, St
     }))
 }
 
-// A session that shares its project with another gets the next numbered sibling folder. The branch
-// is new, so the name the dialog suggests is validated the way git would before anything is created.
+// A session that shares its project with another gets the next numbered sibling folder. A missing
+// worktree this grant already owns is recreated here too, through the same marks and transaction.
 #[tauri::command]
 async fn create_worktree(
     app: AppHandle,
@@ -3688,23 +3703,68 @@ async fn create_worktree(
     root_id: String,
     branch: String,
 ) -> Result<DirectoryGrant, String> {
-    let folder = root_path(&roots, &root_id)?;
+    grant_known(roots.inner(), &root_id)?;
+    create_worktree_inner(&app, roots.inner(), root_id, branch)
+}
+
+fn create_worktree_inner(
+    app: &AppHandle,
+    roots: &Roots,
+    root_id: String,
+    branch: String,
+) -> Result<DirectoryGrant, String> {
+    let (folder, recovery) = match root_path(roots, &root_id) {
+        Ok(folder) => (folder, None),
+        Err(error) => {
+            let record = worktrees_path(app)?.join(&root_id);
+            let recorded = read_worktree_record(&record).ok_or(error)?;
+            (PathBuf::from(&recorded.main), Some(recorded))
+        }
+    };
+    let restoring = recovery.is_some();
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     // Anchored at the main checkout even when the session's folder is itself a linked worktree.
     let repo = main_checkout(&git, &folder)?;
-    let checkout = command_output(&git, &folder, &["rev-parse", "--show-toplevel"])
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| repo.clone());
-    let candidate = next_worktree(&git, &repo, &checkout)?;
-    let branch = match branch.trim() {
-        "" => candidate.branch.as_str(),
-        branch => branch,
+    let candidate = match recovery.as_ref() {
+        Some(recorded) => {
+            if !repo_mark_present(&git, &repo, &root_id, &recorded.branch) {
+                return Err(
+                    "Lite cannot prove this repository is the one it created the worktree in; nothing is restored"
+                        .into(),
+                );
+            }
+            let path = PathBuf::from(&recorded.path);
+            if !path.is_dir() && worktree_registered(&git, &repo, &path)? {
+                return Err(
+                    "Git still registers this missing worktree; repair or remove it with Git before restoring the session"
+                        .into(),
+                );
+            }
+            WorktreeCandidate {
+                path,
+                branch: recorded.branch.clone(),
+            }
+        }
+        None => {
+            let checkout = command_output(&git, &folder, &["rev-parse", "--show-toplevel"])
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| repo.clone());
+            next_worktree(&git, &repo, &checkout)?
+        }
+    };
+    let branch = match recovery.as_ref() {
+        Some(_) => candidate.branch.as_str(),
+        None => match branch.trim() {
+            "" => candidate.branch.as_str(),
+            branch => branch,
+        },
     };
     command_output(&git, &repo, &["check-ref-format", "--branch", branch])
         .map_err(|_| format!("“{branch}” is not a valid branch name"))?;
     // A retry resumes the worktree this grant already marked; a new create takes the next free
     // numbered sibling. Nothing else at a candidate path is ever adopted.
     let owned = owned_worktree(&git, &repo, &root_id, branch);
+    let created = owned.is_none();
     let worktree = match owned.as_ref() {
         Some(worktree) => worktree.clone(),
         None => candidate.path,
@@ -3713,7 +3773,12 @@ async fn create_worktree(
     // be: a worktree made from a feature worktree keeps the feature's commits. An empty
     // repository has no HEAD; current git starts the unborn branch without a start point, older
     // git needs --orphan for the same start, and the record simply has no ancestor to check later.
-    let head = command_output(&git, &folder, &["rev-parse", "HEAD"]).ok();
+    let head = match recovery.as_ref() {
+        Some(recorded) => (!recorded.head.is_empty()).then(|| recorded.head.clone()),
+        None => command_output(&git, &folder, &["rev-parse", "HEAD"]).ok(),
+    };
+    let delete_branch = !restoring || !branch_exists(&git, &repo, branch)?;
+    let rollback = created.then_some((delete_branch, !restoring));
     let target = path_text(&worktree);
     let mut args = vec!["worktree", "add", "-b", branch, &target];
     if let Some(head) = head.as_deref() {
@@ -3758,7 +3823,7 @@ async fn create_worktree(
         Ok(admin) => PathBuf::from(admin),
         Err(error) => {
             return Err(fail_with_rollback(
-                error, &git, &repo, &worktree, branch, &root_id,
+                error, &git, &repo, &worktree, branch, &root_id, rollback,
             ));
         }
     };
@@ -3770,13 +3835,14 @@ async fn create_worktree(
             &worktree,
             branch,
             &root_id,
+            rollback,
         ));
     }
     let main_git = match command_output(&git, &repo, &["rev-parse", "--absolute-git-dir"]) {
         Ok(main_git) => PathBuf::from(main_git),
         Err(error) => {
             return Err(fail_with_rollback(
-                error, &git, &repo, &worktree, branch, &root_id,
+                error, &git, &repo, &worktree, branch, &root_id, rollback,
             ));
         }
     };
@@ -3785,11 +3851,11 @@ async fn create_worktree(
         branch.as_bytes(),
     ) {
         return Err(fail_with_rollback(
-            error, &git, &repo, &worktree, branch, &root_id,
+            error, &git, &repo, &worktree, branch, &root_id, rollback,
         ));
     }
     if let Err(error) = record_worktree(
-        &app,
+        app,
         &root_id,
         &worktree,
         branch,
@@ -3798,20 +3864,63 @@ async fn create_worktree(
         head.as_deref().unwrap_or(""),
     ) {
         return Err(fail_with_rollback(
-            error, &git, &repo, &worktree, branch, &root_id,
+            error, &git, &repo, &worktree, branch, &root_id, rollback,
         ));
     }
-    match grant_directory(&app, &roots, worktree.clone(), Some(root_id.clone())) {
+    match grant_directory(app, roots, worktree.clone(), Some(root_id.clone())) {
         Ok(grant) => Ok(grant),
         Err(error) => {
-            if let Ok(directory) = worktrees_path(&app) {
+            if !restoring
+                && created
+                && let Ok(directory) = worktrees_path(app)
+            {
                 let _ = forget_record(&directory.join(&root_id));
             }
             Err(fail_with_rollback(
-                error, &git, &repo, &worktree, branch, &root_id,
+                error, &git, &repo, &worktree, branch, &root_id, rollback,
             ))
         }
     }
+}
+
+#[tauri::command]
+async fn restore_worktree(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    root_id: String,
+    owned_only: bool,
+) -> Result<Option<DirectoryGrant>, String> {
+    uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid grant ID")?;
+    if !roots
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .contains_key(&root_id)
+    {
+        return Ok(None);
+    }
+    match root_path(roots.inner(), &root_id) {
+        Ok(_) => return Ok(None),
+        Err(error) if error == MISSING_DIRECTORY => {}
+        Err(error) => return Err(error),
+    }
+    let record = worktrees_path(&app)?.join(&root_id);
+    let recorded = read_worktree_record(&record).ok_or(MISSING_DIRECTORY)?;
+    // A running shell may have left its healthy owned tree and lost only the folder it cd'd into;
+    // live recovery leaves that process alone, while startup returns it to the tree it can launch in.
+    if Path::new(&recorded.path).is_dir() {
+        if owned_only {
+            return Ok(None);
+        }
+        return grant_directory(
+            &app,
+            roots.inner(),
+            PathBuf::from(recorded.path),
+            Some(root_id),
+        )
+        .map(Some);
+    }
+    create_worktree_inner(&app, roots.inner(), root_id, String::new()).map(Some)
 }
 
 // What closing a worktree session needs to know before it asks. recorded is false when Lite has
@@ -4423,6 +4532,7 @@ pub fn run() {
             git_remote,
             git_repo,
             create_worktree,
+            restore_worktree,
             worktree_state,
             remove_worktree,
             forget_worktree,

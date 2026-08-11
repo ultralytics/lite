@@ -151,6 +151,17 @@ export function clearOutput(sessionId: string) {
 // queue rather than each holding its own — an order that only covers the keyboard is not an order.
 const writes = new Map<string, Promise<unknown>>();
 
+// Recovery replaces a process behind the same session id. Input arriving while it does waits in the
+// existing per-session queue, and a failed replacement releases later writes instead of jamming it.
+export function holdSessionWrites(sessionId: string, wait: Promise<unknown>) {
+  writes.set(
+    sessionId,
+    (writes.get(sessionId) ?? Promise.resolve())
+      .then(() => wait)
+      .catch((reason) => console.error(`Lite could not recover session ${sessionId}:`, reason)),
+  );
+}
+
 export function writeSession(sessionId: string, text: string) {
   const data = Array.from(new TextEncoder().encode(text));
   writes.set(
