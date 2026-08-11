@@ -46,6 +46,18 @@ const OSC_OR_BELL = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|(\x07)/g;
 // than a title could be is no longer one, so the wait is given up rather than grown.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const UNTERMINATED = /\x1b(?:\](?:(?!\x07|\x1b\\)[\s\S])*)?$/;
+// The folder a session says it is in, as a path. A shell that leaves a bare % in its own path, or
+// names a host no URL can hold, reports one that cannot be read back — and reading it is the last
+// thing this file does before it records where the chunk left off, so a throw here would cost the
+// session every title, folder and activity signal that followed as well. An unreadable path is
+// simply not one, and the folder Lite already knows about stands.
+function reportedPath(url: string): string {
+  try {
+    return decodeURIComponent(new URL(url).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+  } catch {
+    return "";
+  }
+}
 const MAX_TAIL = 512;
 // Modern TUIs request a report whenever the terminal switches between dark and light. This state is
 // read here, where every session's output arrives, so background sessions and trimmed buffers keep it.
@@ -106,10 +118,10 @@ export function appendOutput(sessionId: string, data: number[]) {
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
     if (match[1] === "7") {
-      if (match[2].startsWith("file://"))
-        path = decodeURIComponent(new URL(match[2]).pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+      if (match[2].startsWith("file://")) path = reportedPath(match[2]);
     } else if (match[1] === "6973") {
-      if (match[2] === "lite-working" || match[2] === "lite-idle") activity = match[2] === "lite-working";
+      const working = match[2] === "lite-working";
+      if (working || match[2] === "lite-idle") activity = working;
     } else title = match[2];
   }
   const tail = text.match(UNTERMINATED)?.[0] ?? "";

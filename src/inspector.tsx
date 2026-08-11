@@ -54,7 +54,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
-import { without } from "@/lib/utils";
+import { storedFontSize, without, zoomedFontSize } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput } from "@/output-store";
 import {
   type DirectoryCursor,
@@ -669,17 +669,7 @@ function FileTree({
   );
 }
 
-// The same size and limits as the terminal's type, stored on its own key: prose and code read at
-// different sizes than a terminal for different people, so each surface remembers its own.
 const PREVIEW_FONT_KEY = "lite.preview.fontSize";
-const MIN_PREVIEW_FONT = 9;
-const MAX_PREVIEW_FONT = 24;
-const DEFAULT_PREVIEW_FONT = 13;
-
-function storedPreviewFontSize(): number {
-  const saved = Number(localStorage.getItem(PREVIEW_FONT_KEY));
-  return saved >= MIN_PREVIEW_FONT && saved <= MAX_PREVIEW_FONT ? saved : DEFAULT_PREVIEW_FONT;
-}
 
 // The preview inherits its type from here, so one zoom scales code, prose, and the line-number gutter
 // together while the header chrome keeps its own size. Zooming lives in this component so a step
@@ -695,7 +685,7 @@ function FileViewer({
   error: string;
   onBack: () => void;
 }) {
-  const [fontSize, setFontSize] = useState(storedPreviewFontSize);
+  const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
   const viewer = useRef<HTMLElement>(null);
 
   // Reading is keyboard work, so the viewer takes focus as it opens and the zoom keys land here
@@ -727,9 +717,7 @@ function FileViewer({
   }, [onBack]);
 
   function zoom(step: -1 | 0 | 1) {
-    const size = step ? Math.min(MAX_PREVIEW_FONT, Math.max(MIN_PREVIEW_FONT, fontSize + step)) : DEFAULT_PREVIEW_FONT;
-    setFontSize(size);
-    localStorage.setItem(PREVIEW_FONT_KEY, String(size));
+    setFontSize(zoomedFontSize(PREVIEW_FONT_KEY, fontSize, step));
   }
 
   return (

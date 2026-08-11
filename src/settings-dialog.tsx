@@ -19,6 +19,7 @@ import {
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemActions, ItemContent, ItemFooter, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
+import { without } from "@/lib/utils";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import type { Agent } from "@/types";
 
@@ -55,12 +56,7 @@ export function SettingsDialog({
   }, [isOpen, read]);
 
   function edit(id: string, open: boolean) {
-    setEditing((current) => {
-      const next = new Set(current);
-      if (open) next.add(id);
-      else next.delete(id);
-      return next;
-    });
+    setEditing((current) => (open ? new Set(current).add(id) : without(current, id)));
     if (!open) setDrafts((current) => ({ ...current, [id]: "" }));
   }
 

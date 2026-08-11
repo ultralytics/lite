@@ -418,9 +418,10 @@ export function NewSessionDialog({
                         type="button"
                         size="lg"
                         variant={active ? "secondary" : "outline"}
-                        // The room the action button needs is the room its widest state needs, so the
-                        // name truncates before it rather than running under “Installing…”.
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-24" : "pr-3"}`}
+                        // The room kept for the button is the room its widest label takes — which is
+                        // “Installing…” beside a spinner — so the agent's name truncates before it
+                        // rather than running underneath it.
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-28" : "pr-3"}`}
                         aria-pressed={active}
                         disabled={Boolean(installing)}
                         title={"note" in option ? option.note : sessionLabel(option)}
