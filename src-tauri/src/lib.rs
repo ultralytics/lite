@@ -3762,6 +3762,12 @@ fn create_worktree_inner(
     // A retry resumes the worktree this grant already marked; a new create takes the next free
     // numbered sibling. Nothing else at a candidate path is ever adopted.
     let owned = owned_worktree(&git, &repo, &root_id, branch);
+    if restoring && owned.as_ref().is_some_and(|path| path != &candidate.path) {
+        return Err(
+            "Git registers this worktree at a different path; move it back or remove it with Git before restoring the session"
+                .into(),
+        );
+    }
     let created = owned.is_none();
     let worktree = match owned.as_ref() {
         Some(worktree) => worktree.clone(),
