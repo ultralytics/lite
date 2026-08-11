@@ -3912,17 +3912,26 @@ async fn restore_worktree(
     let recorded = read_worktree_record(&record).ok_or(MISSING_DIRECTORY)?;
     // A running shell may have left its healthy owned tree and lost only the folder it cd'd into;
     // live recovery leaves that process alone, while startup returns it to the tree it can launch in.
-    if Path::new(&recorded.path).is_dir() {
+    let path = PathBuf::from(&recorded.path);
+    if path.is_dir() {
         if owned_only {
             return Ok(None);
         }
-        return grant_directory(
-            &app,
-            roots.inner(),
-            PathBuf::from(recorded.path),
-            Some(root_id),
-        )
-        .map(Some);
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let main = PathBuf::from(&recorded.main);
+        let owner = command_output(&git, &path, &["rev-parse", "--absolute-git-dir"])
+            .ok()
+            .and_then(|admin| fs::read_to_string(PathBuf::from(admin).join("lite")).ok());
+        if !repo_mark_present(&git, &main, &root_id, &recorded.branch)
+            || !worktree_registered(&git, &main, &path)?
+            || owner.as_deref().map(str::trim) != Some(root_id.as_str())
+        {
+            return Err(
+                "The folder at the recorded path is not the worktree Lite created; nothing is restored"
+                    .into(),
+            );
+        }
+        return grant_directory(&app, roots.inner(), path, Some(root_id)).map(Some);
     }
     create_worktree_inner(&app, roots.inner(), root_id, String::new()).map(Some)
 }
