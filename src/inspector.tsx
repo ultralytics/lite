@@ -79,7 +79,7 @@ const CodePreview = lazy(() => import("@/code-preview"));
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
 const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
-const GH_VIEW = /\bgh\s+(issue|pr)\s+view\s+([1-9]\d{0,8})([^;&|\r\n]*)/gi;
+const GH_VIEW = /\bgh\s+(issue|pr)\s+view\s+([1-9]\d{0,8})((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
 
