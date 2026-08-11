@@ -1008,6 +1008,8 @@ struct GitHubItem {
     title: Option<String>,
     state: Option<String>,
     occurred_at: Option<String>,
+    additions: Option<u64>,
+    deletions: Option<u64>,
 }
 
 // The repository and number a GitHub work-item link names, or nothing if the link is not one. Owner
@@ -1093,7 +1095,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             ));
         }
         query.push_str(
-            "}\nfragment f on IssueOrPullRequest {\n... on Issue { title url state createdAt closedAt }\n... on PullRequest { title url state isDraft createdAt closedAt mergedAt }\n}",
+            "}\nfragment f on IssueOrPullRequest {\n... on Issue { title url state createdAt closedAt }\n... on PullRequest { title url state isDraft createdAt closedAt mergedAt additions deletions }\n}",
         );
         let output = Command::new(gh)
             .args(["api", "graphql", "-f", &format!("query={query}")])
@@ -1149,6 +1151,8 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                     title: item["title"].as_str().map(str::to_owned),
                     state: Some(state.to_owned()),
                     occurred_at,
+                    additions: item["additions"].as_u64(),
+                    deletions: item["deletions"].as_u64(),
                 });
             }
             // The repository was read and searched, and the number names nothing in it.
@@ -1158,6 +1162,8 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                 title: None,
                 state: None,
                 occurred_at: None,
+                additions: None,
+                deletions: None,
             }),
         }
     }
@@ -1178,6 +1184,8 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             title: None,
             state: None,
             occurred_at: None,
+            additions: None,
+            deletions: None,
         })
         .collect();
     tauri::async_runtime::spawn_blocking(move || check_github_items(urls))

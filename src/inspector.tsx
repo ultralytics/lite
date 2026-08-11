@@ -125,6 +125,8 @@ interface GitHubItem {
   title: string | null;
   state: keyof typeof GITHUB_STATE | null;
   occurredAt: string | null;
+  additions: number | null;
+  deletions: number | null;
 }
 
 // The colors GitHub itself answers in, so a glance here reads the same as a glance there.
@@ -218,7 +220,7 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
     <div className="border-t">
       <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">{label}</p>
       <ItemGroup className="has-data-[size=xs]:gap-0">
-        {items.map(({ url, title, state, occurredAt, kind, number }) => (
+        {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
           <Item
             key={url}
             size="xs"
@@ -243,6 +245,12 @@ function GitHubItemList({ label, items }: { label: string; items: RepositoryGrou
                     #{number}
                     {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
                   </ItemDescription>
+                  {additions ? (
+                    <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">+{additions}</span>
+                  ) : null}
+                  {deletions ? (
+                    <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
+                  ) : null}
                   {state ? <Badge variant={GITHUB_STATE[state]}>{state}</Badge> : null}
                 </div>
               ) : null}
@@ -902,7 +910,10 @@ function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: st
       })
       // A link that could not be checked is still explicit, so it is shown the way it was printed.
       .catch(() => {
-        if (!disposed) setItems(urls.map((url) => ({ url, title: null, state: null, occurredAt: null })));
+        if (!disposed)
+          setItems(
+            urls.map((url) => ({ url, title: null, state: null, occurredAt: null, additions: null, deletions: null })),
+          );
       });
     return () => {
       disposed = true;
