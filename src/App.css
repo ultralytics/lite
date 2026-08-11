@@ -4,13 +4,6 @@
   height: 100%;
 }
 
-/* xterm marks OSC 8 hyperlinks with its dashed underline style. Render that semantic link style the
-   same solid blue used by Lite's light and dark syntax themes. */
-.xterm .xterm-underline-5 {
-  color: var(--syntax-constant) !important;
-  text-decoration-style: solid;
-}
-
 /* Session actions belong to the terminal while the pointer or keyboard is working there. */
 [data-terminal-surface]:hover [data-terminal-action],
 [data-terminal-surface]:has(.xterm.focus) [data-terminal-action] {
