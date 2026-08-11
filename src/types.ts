@@ -13,7 +13,6 @@ export interface Session {
   name: string;
   // A name the user typed is theirs, so nothing the session says about itself overwrites it again.
   renamed?: boolean;
-  pinned?: boolean;
   cwd: string;
   rootId: string;
   running: boolean;

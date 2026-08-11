@@ -19,8 +19,6 @@ import {
   Moon,
   MoreHorizontal,
   Pencil,
-  Pin,
-  PinOff,
   Play,
   Plus,
   RefreshCw,
@@ -306,7 +304,6 @@ function AppContextMenu({
   startingIds,
   onSelectSession,
   onRenameSession,
-  onPinSession,
   onRestartSession,
   onCloseSession,
   onRestartAll,
@@ -318,7 +315,6 @@ function AppContextMenu({
   startingIds: Set<string>;
   onSelectSession: (session: Session) => void;
   onRenameSession: (session: Session) => void;
-  onPinSession: (session: Session) => void;
   onRestartSession: (session: Session) => void;
   onCloseSession: (session: Session) => void;
   onRestartAll: () => void;
@@ -368,10 +364,6 @@ function AppContextMenu({
             <ContextMenuItem onClick={() => writeClipboard(session.cwd)}>
               <Copy />
               Copy path
-            </ContextMenuItem>
-            <ContextMenuItem onClick={() => onPinSession(session)}>
-              {session.pinned ? <PinOff /> : <Pin />}
-              {session.pinned ? "Unpin" : "Pin to top"}
             </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onRestartSession(session)}>
@@ -793,10 +785,7 @@ function SessionRow({
 
   function removeDragPreview(pointer: NonNullable<typeof dragPointer.current>) {
     pointer.row.style.removeProperty("opacity");
-    if (!pointer.preview) return;
-    pointer.preview.style.opacity = "0";
-    pointer.preview.style.scale = "0.98";
-    window.setTimeout(() => pointer.preview?.remove(), 100);
+    pointer.preview?.remove();
   }
 
   return (
@@ -849,18 +838,12 @@ function SessionRow({
             backgroundColor: "var(--sidebar)",
             borderColor: "var(--border)",
             boxShadow: "0 12px 32px rgb(0 0 0 / 0.28)",
-            opacity: "0",
-            scale: "0.98",
-            transition: "opacity 120ms ease, scale 120ms ease",
+            opacity: "0.88",
             willChange: "transform",
           });
           document.body.append(preview);
           pointer.preview = preview;
           pointer.row.style.opacity = "0.35";
-          window.requestAnimationFrame(() => {
-            preview.style.opacity = "0.88";
-            preview.style.scale = "1.02";
-          });
           onDragStart();
         }
         event.preventDefault();
@@ -924,29 +907,24 @@ function SessionRow({
       ) : (
         <div className="min-w-0 flex-1 text-left">
           {/* Only the visible title owns rename; its hit area stops where its text stops. */}
-          <div className="flex min-w-0 items-center gap-1">
-            {session.pinned ? (
-              <Pin className="size-3 shrink-0 fill-current text-primary/70" aria-label="Pinned" />
-            ) : null}
-            <button
-              type="button"
-              className="block min-w-0 w-fit max-w-full truncate text-xs font-medium"
-              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-              onClick={(event) => {
-                event.stopPropagation();
-                if (active && session.running) onRenamingChange(true);
-                else onSelect();
-              }}
-              onDoubleClick={() => onRenamingChange(true)}
-              onKeyDown={(event) => {
-                if (!reorderable || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-                event.preventDefault();
-                onMove(event.key === "ArrowUp" ? -1 : 1);
-              }}
-            >
-              {session.name}
-            </button>
-          </div>
+          <button
+            type="button"
+            className="block w-fit max-w-full truncate text-xs font-medium"
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (active && session.running) onRenamingChange(true);
+              else onSelect();
+            }}
+            onDoubleClick={() => onRenamingChange(true)}
+            onKeyDown={(event) => {
+              if (!reorderable || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+              event.preventDefault();
+              onMove(event.key === "ArrowUp" ? -1 : 1);
+            }}
+          >
+            {session.name}
+          </button>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
             title={session.cwd}
@@ -1655,30 +1633,11 @@ function App() {
     void launch(session, false);
   }
 
-  function pinSession(session: Session) {
-    setSessions((current) => {
-      const index = current.findIndex((item) => item.id === session.id);
-      if (index < 0) return current;
-      const next = [...current];
-      const [item] = next.splice(index, 1);
-      const pinned = !item.pinned;
-      const boundary = next.findIndex((candidate) => !candidate.pinned);
-      next.splice(boundary < 0 ? next.length : boundary, 0, { ...item, pinned: pinned || undefined });
-      return next;
-    });
-  }
-
   function reorderSession(draggedId: string, targetId: string, after: boolean) {
     setSessions((current) => {
       const draggedIndex = current.findIndex((session) => session.id === draggedId);
       const targetIndex = current.findIndex((session) => session.id === targetId);
-      if (
-        draggedIndex < 0 ||
-        targetIndex < 0 ||
-        draggedIndex === targetIndex ||
-        Boolean(current[draggedIndex].pinned) !== Boolean(current[targetIndex].pinned)
-      )
-        return current;
+      if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return current;
       const next = [...current];
       const [dragged] = next.splice(draggedIndex, 1);
       const destination = next.findIndex((session) => session.id === targetId) + Number(after);
@@ -1688,9 +1647,8 @@ function App() {
   }
 
   function moveSession(session: Session, direction: -1 | 1) {
-    const group = sessionsRef.current.filter((item) => Boolean(item.pinned) === Boolean(session.pinned));
-    const index = group.findIndex((item) => item.id === session.id);
-    const target = group[index + direction];
+    const index = sessionsRef.current.findIndex((item) => item.id === session.id);
+    const target = sessionsRef.current[index + direction];
     if (target) reorderSession(session.id, target.id, direction > 0);
   }
 
@@ -1707,12 +1665,6 @@ function App() {
       targetId: row.dataset.contextSession ?? "",
       after: clientY >= bounds.top + bounds.height / 2,
     };
-    const dragged = sessionsRef.current.find((session) => session.id === draggingSession.current);
-    const target = sessionsRef.current.find((session) => session.id === drop.targetId);
-    if (!dragged || !target || Boolean(dragged.pinned) !== Boolean(target.pinned)) {
-      sessionDropRef.current = undefined;
-      return setSessionDrop(undefined);
-    }
     sessionDropRef.current = drop;
     setSessionDrop((current) => (current?.targetId === drop.targetId && current.after === drop.after ? current : drop));
   }
@@ -2091,10 +2043,7 @@ function App() {
           return current.map((item) => (item.id === session.id ? { ...item, running } : item));
         }
         const restored = [...current];
-        const firstUnpinned = restored.findIndex((item) => !item.pinned);
-        const boundary = firstUnpinned < 0 ? restored.length : firstUnpinned;
-        const position = session.pinned ? Math.min(index, boundary) : Math.max(index, boundary);
-        restored.splice(Math.min(position, restored.length), 0, { ...session, running });
+        restored.splice(Math.min(index, restored.length), 0, { ...session, running });
         return restored;
       });
       if (wasSelected) setSelectedId((current) => (current === nextSelectedId ? session.id : current));
@@ -2229,7 +2178,6 @@ function App() {
           setRenamingId(session.id);
           if (shut.sidebar) glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size));
         }}
-        onPinSession={pinSession}
         onRestartSession={(session) => void restartSession(session)}
         onCloseSession={closeSession}
         onRestartAll={() => void restartAllSessions()}
