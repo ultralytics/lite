@@ -79,7 +79,6 @@ struct PtySession {
 }
 
 fn stop_pty(session: &mut PtySession) -> Result<(), String> {
-    session.alive.store(false, Ordering::Relaxed);
     let running = session
         .child
         .try_wait()
@@ -88,10 +87,12 @@ fn stop_pty(session: &mut PtySession) -> Result<(), String> {
     let kill_error = running
         .then(|| session.child.kill().err().map(|error| error.to_string()))
         .flatten();
-    match session.child.wait() {
-        Ok(_) => Ok(()),
-        Err(error) => Err(kill_error.unwrap_or_else(|| error.to_string())),
-    }
+    session
+        .child
+        .wait()
+        .map_err(|error| kill_error.unwrap_or_else(|| error.to_string()))?;
+    session.alive.store(false, Ordering::Relaxed);
+    Ok(())
 }
 
 #[derive(Default)]
@@ -3284,13 +3285,10 @@ fn resize_session(
 
 #[tauri::command]
 fn stop_session(sessions: State<Sessions>, session_id: String) -> Result<(), String> {
-    if let Some(mut session) = sessions
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .remove(&session_id)
-    {
-        stop_pty(&mut session)?;
+    let mut sessions = sessions.0.lock().map_err(|error| error.to_string())?;
+    if let Some(session) = sessions.get_mut(&session_id) {
+        stop_pty(session)?;
+        sessions.remove(&session_id);
     }
     Ok(())
 }

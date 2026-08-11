@@ -207,7 +207,7 @@ export function TerminalView({
       ) {
         // Returning false leaves the keypress to follow and send a bare carriage return.
         event.preventDefault();
-        writeSession(sessionId, "\x1b\r");
+        terminal.input("\x1b\r");
         return false;
       }
       // xterm defers ASCII capitals to keypress for macOS IMEs. WKWebView also emits text input for

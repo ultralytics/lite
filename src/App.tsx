@@ -1416,6 +1416,9 @@ function App() {
         });
         const live = sessionsRef.current.find((item) => item.id === session.id);
         if (!folder || !live?.running || closingIds.current.has(session.id) || closingAllRef.current) return;
+        setStartingIds((current) => new Set(current).add(session.id));
+        await invoke("stop_session", { sessionId: session.id });
+        stopped = true;
         runs.current.delete(session.id);
         setShellAgents((current) => {
           if (!current.has(session.id)) return current;
@@ -1423,9 +1426,6 @@ function App() {
           next.delete(session.id);
           return next;
         });
-        setStartingIds((current) => new Set(current).add(session.id));
-        stopped = true;
-        await invoke("stop_session", { sessionId: session.id });
         const current = sessionsRef.current.find((item) => item.id === session.id) ?? live;
         // Keep the terminal mounted while its write queue holds later keystrokes behind recovery;
         // launch marks it disconnected if the replacement process cannot start.
