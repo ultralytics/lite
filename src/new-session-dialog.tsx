@@ -22,10 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
-const choices = [
-  ...Object.values(AUTH_PROVIDERS),
-  { id: "shell", agent: "shell" as const, provider: undefined, description: "Open your default shell" },
-];
+const choices = [...Object.values(AUTH_PROVIDERS), { id: "shell", agent: "shell" as const, provider: undefined }];
 const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
@@ -403,7 +400,14 @@ export function NewSessionDialog({
                   const state = availability[option.id];
                   const update = updates[option.agent];
                   const managed = option.agent !== "shell" && state && !state.installable;
-                  const installable = state?.installable;
+                  // A registry that could not answer knows of no update, so only one it reported is
+                  // offered. The label doubles as the switch: nothing to install or update, no button.
+                  const action = state?.installable
+                    ? (["Install", "Installing…"] as const)
+                    : managed && update === true
+                      ? (["Update", "Updating…"] as const)
+                      : undefined;
+                  const busy = installing === option.id;
                   const authProvider = "configured" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   return (
@@ -412,7 +416,9 @@ export function NewSessionDialog({
                         type="button"
                         size="lg"
                         variant={active ? "secondary" : "outline"}
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${installable ? "pr-20" : managed && update !== false && update !== undefined ? "pr-24" : "pr-3"}`}
+                        // The room the action button needs is the room its widest state needs, so the
+                        // name truncates before it rather than running under “Installing…”.
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-24" : "pr-3"}`}
                         aria-pressed={active}
                         disabled={Boolean(installing)}
                         title={"note" in option ? option.note : sessionLabel(option)}
@@ -436,7 +442,7 @@ export function NewSessionDialog({
                           )}
                         </div>
                       </Button>
-                      {installable ? (
+                      {action ? (
                         <Button
                           type="button"
                           size="sm"
@@ -445,20 +451,8 @@ export function NewSessionDialog({
                           disabled={Boolean(installing)}
                           onClick={() => void install(option)}
                         >
-                          {installing === option.id ? <Spinner /> : null}
-                          {installing === option.id ? "Installing…" : "Install"}
-                        </Button>
-                      ) : managed && update !== false && update !== undefined ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="absolute top-1/2 right-1.5 -translate-y-1/2"
-                          disabled={Boolean(installing)}
-                          onClick={() => void install(option)}
-                        >
-                          {installing === option.id ? <Spinner /> : null}
-                          {installing === option.id ? "Updating…" : "Update"}
+                          {busy ? <Spinner /> : null}
+                          {busy ? action[1] : action[0]}
                         </Button>
                       ) : null}
                     </div>

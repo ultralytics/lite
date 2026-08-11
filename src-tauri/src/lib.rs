@@ -2135,10 +2135,6 @@ fn resolve_executable(name: &str) -> Option<PathBuf> {
     })
 }
 
-fn executable_exists(name: &str) -> bool {
-    resolve_executable(name).is_some()
-}
-
 fn agent_executable(agent: &str) -> Option<&'static str> {
     match agent {
         "claude" => Some("claude"),
@@ -2161,8 +2157,10 @@ fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "CODEX_HOME", ".codex")
 }
 
-// Looks only for the section header. Provider credentials in that file are never read.
-fn codex_declares_provider(app: &AppHandle, provider: &str) -> bool {
+// Whether Codex's own configuration states something, asked line by line so the file is never parsed
+// and never held in memory. Only section headers and key names are ever looked for; provider
+// credentials in that file are never read.
+fn codex_config_states(app: &AppHandle, stated: impl Fn(&str) -> bool) -> bool {
     let Ok(home) = codex_home(app) else {
         return false;
     };
@@ -2172,21 +2170,19 @@ fn codex_declares_provider(app: &AppHandle, provider: &str) -> bool {
     BufReader::new(file)
         .lines()
         .map_while(Result::ok)
-        .any(|line| line.trim() == format!("[model_providers.{provider}]"))
+        .any(|line| stated(&line))
+}
+
+fn codex_declares_provider(app: &AppHandle, provider: &str) -> bool {
+    let header = format!("[model_providers.{provider}]");
+    codex_config_states(app, |line| line.trim() == header)
 }
 
 // A catalog is a replacement rather than a merge, so one the user configured is left to win.
 fn codex_declares_catalog(app: &AppHandle) -> bool {
-    let Ok(home) = codex_home(app) else {
-        return false;
-    };
-    let Ok(file) = fs::File::open(home.join("config.toml")) else {
-        return false;
-    };
-    BufReader::new(file)
-        .lines()
-        .map_while(Result::ok)
-        .any(|line| line.trim_start().starts_with("model_catalog_json"))
+    codex_config_states(app, |line| {
+        line.trim_start().starts_with("model_catalog_json")
+    })
 }
 
 fn codex_profile_exists(app: &AppHandle, provider: &str) -> bool {
@@ -2249,10 +2245,6 @@ fn native_session_path(app: &AppHandle, agent: &str, session_id: &str) -> Option
                 }
             })
     })
-}
-
-fn native_session_exists(app: &AppHandle, agent: &str, session_id: &str) -> bool {
-    native_session_path(app, agent, session_id).is_some()
 }
 
 fn kimi_home(app: &AppHandle) -> Result<PathBuf, String> {
@@ -2554,7 +2546,8 @@ async fn agent_availability(
         }
         _ => return Err("Unknown session type".into()),
     };
-    if !agent_executable(&agent).is_some_and(executable_exists) {
+    let installed = agent_executable(&agent).and_then(resolve_executable);
+    if installed.is_none() {
         return Ok(Availability {
             available: false,
             installable: true,
@@ -2862,7 +2855,7 @@ async fn spawn_session(
     let mut resume = resume
         && match agent.as_str() {
             "claude" => claude_launch.as_ref().is_some_and(|(_, resume)| *resume),
-            "gemini" | "qwen" => native_session_exists(&app, &agent, &session_id),
+            "gemini" | "qwen" => native_session_path(&app, &agent, &session_id).is_some(),
             _ => true,
         };
     // The tab keeps the id it was given so the next launch reopens the same conversation, and a

@@ -84,8 +84,6 @@ export const AUTH_PROVIDERS = {
   }
 >;
 
-export type AuthProviderId = keyof typeof AUTH_PROVIDERS;
-
 export interface ProviderAuth {
   name: string;
   keyHint: string | null;
@@ -97,7 +95,7 @@ export function ProviderAuthDescription({
   provider,
   status,
 }: {
-  provider: (typeof AUTH_PROVIDERS)[AuthProviderId];
+  provider: (typeof AUTH_PROVIDERS)[keyof typeof AUTH_PROVIDERS];
   status?: ProviderAuth;
 }) {
   const hint = status?.keyHint ?? status?.cliKeyHint;

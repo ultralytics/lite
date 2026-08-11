@@ -74,10 +74,11 @@ const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$
 const FONT_SIZE_KEY = "lite.terminal.fontSize";
 const MIN_FONT_SIZE = 9;
 const MAX_FONT_SIZE = 24;
+const DEFAULT_FONT_SIZE = 13;
 
 function storedFontSize(): number {
   const saved = Number(localStorage.getItem(FONT_SIZE_KEY));
-  return saved >= MIN_FONT_SIZE && saved <= MAX_FONT_SIZE ? saved : 13;
+  return saved >= MIN_FONT_SIZE && saved <= MAX_FONT_SIZE ? saved : DEFAULT_FONT_SIZE;
 }
 
 export function TerminalView({
@@ -185,7 +186,11 @@ export function TerminalView({
     };
     resizeRef.current = resize;
     zoomRef.current = (step) => {
-      const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, terminal.options.fontSize ?? 13) + step) : 13;
+      // Both bounds hold the step, so zooming out at the smallest size stays there rather than
+      // stepping past the size the terminal is willing to read back on the next launch.
+      const size = step
+        ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, (terminal.options.fontSize ?? DEFAULT_FONT_SIZE) + step))
+        : DEFAULT_FONT_SIZE;
       terminal.options.fontSize = size;
       localStorage.setItem(FONT_SIZE_KEY, String(size));
       requestAnimationFrame(resize);
