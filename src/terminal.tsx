@@ -7,9 +7,8 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 
-import { storedFontSize, zoomedFontSize } from "@/lib/utils";
 import { subscribeOutput, writeSession } from "@/output-store";
-import type { Theme } from "@/theme";
+import { storedFontSize, type Theme, zoomedFontSize } from "@/theme";
 import type { Agent } from "@/types";
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.

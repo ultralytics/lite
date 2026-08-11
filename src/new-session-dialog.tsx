@@ -403,11 +403,13 @@ export function NewSessionDialog({
                   // A registry that could not answer knows of no update, so only one it reported is
                   // offered — by the button and by the mark beside the version alike.
                   const updatable = managed && update === true;
-                  // The label doubles as the switch: nothing to install or update, no button.
+                  // What the button offers, if it is there at all, and the room the tile keeps for it:
+                  // a tile only ever offers the one action, so each reserves the width of its own
+                  // widest label rather than both settling for the wider.
                   const action = state?.installable
-                    ? (["Install", "Installing…"] as const)
+                    ? ({ label: "Install", working: "Installing…", room: "pr-28" } as const)
                     : updatable
-                      ? (["Update", "Updating…"] as const)
+                      ? ({ label: "Update", working: "Updating…", room: "pr-24" } as const)
                       : undefined;
                   const busy = installing === option.id;
                   const authProvider = "configured" in option ? option : undefined;
@@ -418,10 +420,7 @@ export function NewSessionDialog({
                         type="button"
                         size="lg"
                         variant={active ? "secondary" : "outline"}
-                        // The room kept for the button is the room its widest label takes — which is
-                        // “Installing…” beside a spinner — so the agent's name truncates before it
-                        // rather than running underneath it.
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-28" : "pr-3"}`}
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action?.room ?? "pr-3"}`}
                         aria-pressed={active}
                         disabled={Boolean(installing)}
                         title={"note" in option ? option.note : sessionLabel(option)}
@@ -455,7 +454,7 @@ export function NewSessionDialog({
                           onClick={() => void install(option)}
                         >
                           {busy ? <Spinner /> : null}
-                          {busy ? action[1] : action[0]}
+                          {busy ? action.working : action.label}
                         </Button>
                       ) : null}
                     </div>

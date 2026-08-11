@@ -91,7 +91,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clearUsageCache, Inspector } from "@/inspector";
-import { without } from "@/lib/utils";
+import { swapped, without } from "@/lib/utils";
 import { NewSessionDialog } from "@/new-session-dialog";
 import {
   appendOutput,
@@ -1386,6 +1386,17 @@ function App() {
     });
   }, []);
 
+  // A shell is only running an agent for as long as that agent is running: the badge goes back to the
+  // shell's own when the process ends, and when the session it ran in ends with it.
+  const forgetShellAgent = useCallback((sessionId: string) => {
+    setShellAgents((current) => {
+      if (!current.has(sessionId)) return current;
+      const next = new Map(current);
+      next.delete(sessionId);
+      return next;
+    });
+  }, []);
+
   const markDirectory = useCallback((sessionId: string, path: string) => {
     const session = sessionsRef.current.find((item) => item.id === sessionId);
     if (session?.agent !== "shell" || session.cwd === path) return;
@@ -1416,12 +1427,7 @@ function App() {
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         runs.current.delete(payload.sessionId);
-        setShellAgents((current) => {
-          if (!current.has(payload.sessionId)) return current;
-          const next = new Map(current);
-          next.delete(payload.sessionId);
-          return next;
-        });
+        forgetShellAgent(payload.sessionId);
         setSessions((current) =>
           current.map((session) => (session.id === payload.sessionId ? { ...session, running: false } : session)),
         );
@@ -1456,7 +1462,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [markAttention, markDirectory, markWorking, markTitle]);
+  }, [forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
     if (runs.current.has(session.id)) return true;
@@ -1540,12 +1546,7 @@ function App() {
         await invoke("stop_session", { sessionId: session.id });
         stopped = true;
         runs.current.delete(session.id);
-        setShellAgents((current) => {
-          if (!current.has(session.id)) return current;
-          const next = new Map(current);
-          next.delete(session.id);
-          return next;
-        });
+        forgetShellAgent(session.id);
         const current = sessionsRef.current.find((item) => item.id === session.id) ?? live;
         // Keep the terminal mounted while its write queue holds later keystrokes behind recovery;
         // launch marks it disconnected if the replacement process cannot start.
@@ -1707,12 +1708,7 @@ function App() {
       restarted,
       () => {
         const restored = { ...session, running: false };
-        setStartingIds((current) => {
-          const next = new Set(current);
-          next.delete(fresh.id);
-          next.add(session.id);
-          return next;
-        });
+        setStartingIds((current) => swapped(current, fresh.id, session.id));
         setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
         setSelectedId((current) => (current === fresh.id ? session.id : current));
         resumed.current = session.id;
@@ -1722,12 +1718,7 @@ function App() {
           try {
             await invoke("stop_session", { sessionId: fresh.id });
           } catch (reason) {
-            setStartingIds((current) => {
-              const next = new Set(current);
-              next.delete(session.id);
-              next.add(fresh.id);
-              return next;
-            });
+            setStartingIds((current) => swapped(current, session.id, fresh.id));
             const relaunched = { ...fresh, running: false };
             setSessions((current) => current.map((item) => (item.id === session.id ? relaunched : item)));
             setSelectedId((current) => (current === session.id ? fresh.id : current));
@@ -1768,12 +1759,7 @@ function App() {
       await invoke("stop_session", { sessionId: session.id });
     } catch (reason) {
       const restored = { ...session, running: false };
-      setStartingIds((current) => {
-        const next = new Set(current);
-        next.delete(fresh.id);
-        next.add(session.id);
-        return next;
-      });
+      setStartingIds((current) => swapped(current, fresh.id, session.id));
       setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
       setSelectedId((current) => (current === fresh.id ? session.id : current));
       resumed.current = session.id;

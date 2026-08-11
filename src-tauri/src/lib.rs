@@ -2135,6 +2135,10 @@ fn resolve_executable(name: &str) -> Option<PathBuf> {
     })
 }
 
+fn executable_exists(name: &str) -> bool {
+    resolve_executable(name).is_some()
+}
+
 fn agent_executable(agent: &str) -> Option<&'static str> {
     match agent {
         "claude" => Some("claude"),
@@ -2546,8 +2550,7 @@ async fn agent_availability(
         }
         _ => return Err("Unknown session type".into()),
     };
-    let installed = agent_executable(&agent).and_then(resolve_executable);
-    if installed.is_none() {
+    if !agent_executable(&agent).is_some_and(executable_exists) {
         return Ok(Availability {
             available: false,
             installable: true,

@@ -54,8 +54,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
-import { storedFontSize, without, zoomedFontSize } from "@/lib/utils";
+import { without } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput } from "@/output-store";
+import { storedFontSize, zoomedFontSize } from "@/theme";
 import {
   type DirectoryCursor,
   type DirectoryListing,
