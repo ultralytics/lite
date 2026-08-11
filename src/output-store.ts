@@ -24,8 +24,8 @@ const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
 // owner lives here where every session's output arrives rather than in the mounted terminal. Lite's
 // Claude status line reports work that produces no terminal output — a parent waiting for subagents,
 // a quiet shell command — through a private OSC of its own, which stays invisible and reaches the
-// same owner. They are read in one pass because every byte a session prints goes through it, and a
-// pass per kind is a pass per kind over all of it.
+// same owner. One pass reads both: every byte a session prints comes through here, so a second
+// pattern would be a second reading of all of it.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const METADATA = /\x1b\](0|2|7|6973);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // Common terminal notification protocols share the OSC owner with titles and working directories.
