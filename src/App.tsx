@@ -1673,6 +1673,7 @@ function App() {
     toastId = toast.add({
       title: `${action} “${session.name}”`,
       type: "success",
+      timeout: 10000,
       onClose: async () => {
         if (!undone) await finish();
         pendingCleanups.current.delete(finish);
