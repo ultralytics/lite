@@ -808,7 +808,7 @@ function SessionRow({
           event.pointerType === "touch" ||
           event.button !== 0 ||
           renaming ||
-          (event.target as Element).closest("input,[data-slot=item-actions]")
+          (event.target as Element).closest("button,input,[data-slot=item-actions]")
         )
           return;
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -914,7 +914,7 @@ function SessionRow({
           {/* Only the visible title owns rename; its hit area stops where its text stops. */}
           <button
             type="button"
-            className="block w-fit max-w-full truncate text-xs font-medium"
+            className="group/title flex w-fit max-w-full cursor-text items-center gap-1 text-xs font-medium"
             aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
             onClick={(event) => {
               event.stopPropagation();
@@ -928,7 +928,11 @@ function SessionRow({
               onMove(event.key === "ArrowUp" ? -1 : 1);
             }}
           >
-            {session.name}
+            <span className="truncate">{session.name}</span>
+            <Pencil
+              aria-hidden="true"
+              className="size-3 shrink-0 opacity-0 transition-opacity group-hover/title:opacity-100 group-focus-visible/title:opacity-100"
+            />
           </button>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
