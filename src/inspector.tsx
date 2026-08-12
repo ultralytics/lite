@@ -772,6 +772,7 @@ function FileTree({
 }
 
 const PREVIEW_FONT_KEY = "lite.preview.fontSize";
+const RENDERED_FILE = /\.(?:html?|mdx?|svg)$/i;
 
 // The preview inherits its type from here, so one zoom scales code, prose, and the line-number gutter
 // together while the header chrome keeps its own size. Zooming lives in this component so a step
@@ -796,13 +797,15 @@ function FileViewer({
   onSave: (contents: string) => Promise<void>;
 }) {
   const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
-  const [editing, setEditing] = useState(true);
+  const [view, setView] = useState<"source" | "preview" | "edit">("source");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
-  const viewer = useRef<HTMLElement>(null);
+  const viewer = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const dirty = draft !== source;
+  const editing = view === "edit";
+  const renderable = RENDERED_FILE.test(entry.path);
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
 
   // Reading is keyboard work, so the viewer takes focus as it opens and the zoom keys land here
@@ -861,12 +864,14 @@ function FileViewer({
   }
 
   return (
-    <section
+    <Tabs
       ref={viewer}
+      value={editing ? "source" : view}
+      onValueChange={(value) => setView(value as "source" | "preview")}
       aria-label={entry.name}
       tabIndex={-1}
       data-context-zoom
-      className="flex min-h-0 flex-1 flex-col outline-none"
+      className="flex min-h-0 flex-1 flex-col gap-0 outline-none"
       style={{ fontSize, lineHeight: 1.6 }}
       onKeyDown={(event) => {
         const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
@@ -929,14 +934,24 @@ function FileViewer({
           {entry.name}
           {dirty ? " •" : ""}
         </span>
+        {renderable && !editing && !error ? (
+          <TabsList aria-label="File view" className="h-7 shrink-0">
+            <TabsTrigger value="source" className="text-xs">
+              Source
+            </TabsTrigger>
+            <TabsTrigger value="preview" className="text-xs">
+              Preview
+            </TabsTrigger>
+          </TabsList>
+        ) : null}
         {editing ? (
           <>
             <ActionIconButton
               size="icon-sm"
-              tooltip="Preview file"
-              aria-label="Preview file"
+              tooltip={renderable ? "Preview file" : "Stop editing"}
+              aria-label={renderable ? "Preview file" : "Stop editing"}
               disabled={loading}
-              onClick={() => setEditing(false)}
+              onClick={() => setView(renderable ? "preview" : "source")}
             >
               <Eye />
             </ActionIconButton>
@@ -954,7 +969,7 @@ function FileViewer({
                 aria-label="Edit file"
                 onClick={() => {
                   setSaveError("");
-                  setEditing(true);
+                  setView("edit");
                 }}
               >
                 <SquarePen />
@@ -1001,11 +1016,22 @@ function FileViewer({
           </div>
         ) : (
           <Suspense fallback={<Loading label="Opening file…" />}>
-            <CodePreview path={entry.path} source={draft} />
+            {renderable ? (
+              <>
+                <TabsContent value="source" className="min-h-full">
+                  <CodePreview path={entry.path} source={draft} />
+                </TabsContent>
+                <TabsContent value="preview" className="min-h-full">
+                  <CodePreview path={entry.path} source={draft} rendered />
+                </TabsContent>
+              </>
+            ) : (
+              <CodePreview path={entry.path} source={draft} />
+            )}
           </Suspense>
         )}
       </ScrollArea>
-    </section>
+    </Tabs>
   );
 }
 
