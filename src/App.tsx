@@ -90,7 +90,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearUsageCache, Inspector } from "@/inspector";
+import { clearInspectorCache, Inspector } from "@/inspector";
 import { swapped, without } from "@/lib/utils";
 import { NewSessionDialog } from "@/new-session-dialog";
 import {
@@ -914,27 +914,27 @@ function SessionRow({
         />
       ) : (
         <div className="min-w-0 flex-1 text-left">
-          {/* Only the visible title owns rename; its hit area stops where its text stops. */}
-          <button
-            type="button"
-            className="group/title flex w-fit max-w-full cursor-pointer items-center gap-1 text-xs font-medium"
-            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-            onClick={(event) => {
-              event.stopPropagation();
-              onRenamingChange(true);
-            }}
-            onKeyDown={(event) => {
-              if (!reorderable || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-              event.preventDefault();
-              onMove(event.key === "ArrowUp" ? -1 : 1);
-            }}
-          >
+          <div className="group/title flex w-fit max-w-full items-center gap-1 text-xs font-medium">
             <span className="truncate">{session.name}</span>
-            <Pencil
-              aria-hidden="true"
-              className="size-3 shrink-0 opacity-0 transition-opacity group-hover/title:opacity-100 group-focus-visible/title:opacity-100"
-            />
-          </button>
+            <ActionIconButton
+              size="icon-xs"
+              className="size-4 rounded-sm opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100"
+              tooltip="Rename"
+              aria-label={`Rename ${session.name}`}
+              aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+              onClick={(event) => {
+                event.stopPropagation();
+                onRenamingChange(true);
+              }}
+              onKeyDown={(event) => {
+                if (!reorderable || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+                event.preventDefault();
+                onMove(event.key === "ArrowUp" ? -1 : 1);
+              }}
+            >
+              <Pencil />
+            </ActionIconButton>
+          </div>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
             title={session.cwd}
@@ -1728,12 +1728,12 @@ function App() {
             }
             await invoke("delete_session_data", { sessionId: session.id }).catch(() => {});
             clearOutput(session.id);
-            clearUsageCache(session.id);
+            clearInspectorCache(session.id);
             return;
           }
           await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
           clearOutput(fresh.id);
-          clearUsageCache(fresh.id);
+          clearInspectorCache(fresh.id);
           await launch(restored, true);
         });
       },
@@ -1742,7 +1742,7 @@ function App() {
           setError(`Session restarted, but local cleanup failed: ${String(reason)}`),
         );
         clearOutput(session.id);
-        clearUsageCache(session.id);
+        clearInspectorCache(session.id);
       },
     );
   }
@@ -1771,7 +1771,7 @@ function App() {
     if (!(await launch(fresh, false))) {
       await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
       clearOutput(fresh.id);
-      clearUsageCache(fresh.id);
+      clearInspectorCache(fresh.id);
       const restored = { ...session, running: false };
       setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
       setSelectedId((current) => (current === fresh.id ? session.id : current));
@@ -1849,7 +1849,7 @@ function App() {
       error ||= String(reason);
     }
     clearOutput(session.id);
-    clearUsageCache(session.id);
+    clearInspectorCache(session.id);
     if (error) setError(`Session closed, but local cleanup failed: ${error}`);
     return { error, restorable };
   }

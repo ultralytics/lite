@@ -82,10 +82,12 @@ const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!
 const GH_VIEW = /\bgh\s+(issue|pr)\s+view\s+([1-9]\d{0,8})((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
+const githubItemsBySession = new Map<string, Set<string>>();
 
 function namedInSession(sessionId: string, remote: string) {
   const text = readOutput(sessionId).slice(-MAX_OUTPUT_BYTES).replace(COLOR, "");
-  const urls = new Set(text.match(GITHUB_ITEM) ?? []);
+  const urls = githubItemsBySession.get(sessionId) ?? new Set<string>();
+  for (const url of text.match(GITHUB_ITEM) ?? []) urls.add(url);
   const prefix = "https://github.com/";
   for (const match of text.matchAll(QUALIFIED_ITEM)) {
     urls.add(`${prefix}${match[1]}/${match[2]}/issues/${match[3]}`);
@@ -99,6 +101,7 @@ function namedInSession(sessionId: string, remote: string) {
   for (const match of text.matchAll(GH_API)) {
     urls.add(`${prefix}${match[1]}/${match[2]}/${match[3].toLowerCase() === "pulls" ? "pull" : "issues"}/${match[4]}`);
   }
+  githubItemsBySession.set(sessionId, urls);
   return [...urls];
 }
 
@@ -884,8 +887,9 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
 
 const usageCache = new Map<string, UsageSnapshot | null>();
 
-export function clearUsageCache(sessionId: string) {
+export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
+  githubItemsBySession.delete(sessionId);
 }
 
 function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
