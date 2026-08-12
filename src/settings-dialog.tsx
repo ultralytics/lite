@@ -217,7 +217,9 @@ export function SettingsDialog({
                   </ItemMedia>
                   <ItemContent>
                     <ItemTitle>Keep System Awake</ItemTitle>
-                    <ItemDescription>Prevent sleep and the screensaver while a session is active.</ItemDescription>
+                    <ItemDescription>
+                      Prevent automatic sleep and display shutoff while a session is active.
+                    </ItemDescription>
                   </ItemContent>
                   <ItemActions>
                     <Switch
