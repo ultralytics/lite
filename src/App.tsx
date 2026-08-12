@@ -1700,8 +1700,6 @@ function App() {
   const hasActiveSessions = sessions.some((session) => session.running);
   useEffect(() => {
     void invoke("set_keep_awake", { enabled: keepAwake && hasActiveSessions }).catch((reason) => {
-      localStorage.setItem(KEEP_AWAKE_KEY, "false");
-      setKeepAwake(false);
       setError(String(reason));
     });
   }, [hasActiveSessions, keepAwake]);
