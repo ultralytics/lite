@@ -155,29 +155,39 @@ struct Sessions(Mutex<HashMap<String, PtySession>>);
 #[derive(Default)]
 struct WakeLock(Mutex<Option<keepawake::KeepAwake>>);
 
+fn update_keep_awake(wake_lock: &WakeLock, enabled: bool) -> Result<(), String> {
+    let mut wake_lock = wake_lock.0.lock().map_err(|error| error.to_string())?;
+    if enabled && wake_lock.is_none() {
+        *wake_lock = Some(
+            keepawake::Builder::default()
+                .display(true)
+                .idle(true)
+                .reason("Lite has active sessions")
+                .app_name("Lite")
+                .app_reverse_domain("com.ultralytics.lite")
+                .create()
+                .map_err(|error| format!("Could not keep the system awake: {error}"))?,
+        );
+    } else if !enabled {
+        *wake_lock = None;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
 #[tauri::command]
 async fn set_keep_awake(app: AppHandle, enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let wake_lock = app.state::<WakeLock>();
-        let mut wake_lock = wake_lock.0.lock().map_err(|error| error.to_string())?;
-        if enabled && wake_lock.is_none() {
-            *wake_lock = Some(
-                keepawake::Builder::default()
-                    .display(true)
-                    .idle(true)
-                    .reason("Lite has active sessions")
-                    .app_name("Lite")
-                    .app_reverse_domain("com.ultralytics.lite")
-                    .create()
-                    .map_err(|error| format!("Could not keep the system awake: {error}"))?,
-            );
-        } else if !enabled {
-            *wake_lock = None;
-        }
-        Ok(())
+        update_keep_awake(&app.state::<WakeLock>(), enabled)
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+fn set_keep_awake(wake_lock: State<WakeLock>, enabled: bool) -> Result<(), String> {
+    update_keep_awake(&wake_lock, enabled)
 }
 
 #[derive(Default)]
