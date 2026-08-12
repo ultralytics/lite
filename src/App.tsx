@@ -554,7 +554,6 @@ function sessionStatus(session: Session, attention: boolean, working: boolean) {
 }
 
 interface SessionGroup {
-  key: string;
   name: string;
   path: string;
   sessions: Session[];
@@ -567,10 +566,9 @@ function groupSessions(sessions: Session[]): SessionGroup[] {
   const groups = new Map<string, SessionGroup>();
   for (const session of sessions) {
     const path = session.repo ?? session.cwd;
-    const key = path;
-    const group = groups.get(key) ?? { key, name: folderName(path) || path, path, sessions: [] };
+    const group = groups.get(path) ?? { name: folderName(path) || path, path, sessions: [] };
     group.sessions.push(session);
-    groups.set(key, group);
+    groups.set(path, group);
   }
   return [...groups.values()];
 }
@@ -754,7 +752,9 @@ function SessionSwitcher({
     const index = matches.findIndex((session) => session.id === activeId);
     const next =
       index < 0 ? (direction > 0 ? 0 : matches.length - 1) : (index + direction + matches.length) % matches.length;
-    setActiveId(matches[next].id);
+    const id = matches[next].id;
+    setActiveId(id);
+    requestAnimationFrame(() => document.getElementById(`switch-session-${id}`)?.scrollIntoView({ block: "nearest" }));
   }
 
   function select(session: Session) {
@@ -778,6 +778,12 @@ function SessionSwitcher({
             value={query}
             placeholder="Switch session…"
             aria-label="Switch session"
+            aria-keyshortcuts={navigator.platform.includes("Mac") ? "Meta+P" : "Control+Shift+P"}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls="session-switcher-list"
+            aria-autocomplete="list"
+            aria-activedescendant={activeId ? `switch-session-${activeId}` : undefined}
             name="session-switcher"
             autoComplete="off"
             spellCheck={false}
@@ -796,16 +802,17 @@ function SessionSwitcher({
             }}
           />
         </InputGroup>
-        <ScrollArea className="max-h-[min(28rem,60dvh)]">
-          <div className="space-y-0.5">
+        <DialogBody className="max-h-[min(28rem,60dvh)] overscroll-contain">
+          <div id="session-switcher-list" role="listbox" className="space-y-0.5">
             {matches.map((session) => {
               const needsAttention = attention.includes(session.id);
               return (
                 <Item
                   key={session.id}
+                  id={`switch-session-${session.id}`}
                   size="xs"
                   className={`flex-nowrap text-left ${session.id === activeId ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}
-                  render={<button type="button" />}
+                  render={<button type="button" role="option" aria-selected={session.id === activeId} />}
                   onPointerMove={() => setActiveId(session.id)}
                   onClick={() => select(session)}
                 >
@@ -832,7 +839,7 @@ function SessionSwitcher({
               <p className="px-2 py-4 text-center text-xs text-muted-foreground">No sessions found</p>
             ) : null}
           </div>
-        </ScrollArea>
+        </DialogBody>
       </DialogContent>
     </Dialog>
   );
@@ -1327,7 +1334,7 @@ function App() {
   }, [sessions, query]);
   const visibleGroups = useMemo(() => groupSessions(visible), [visible]);
   const displayed = visibleGroups.flatMap((group) =>
-    query.trim() || !collapsedGroups.has(group.key) ? group.sessions : [],
+    query.trim() || !collapsedGroups.has(group.path) ? group.sessions : [],
   );
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   const switcherSessions = recentSessions.current.flatMap((id) => sessionsById.get(id) ?? []);
@@ -1342,6 +1349,15 @@ function App() {
   closeRef.current = closeSession;
   openRef.current = (session) => {
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
+    const group = session.repo ?? session.cwd;
+    if (collapsedGroups.has(group)) {
+      setCollapsedGroups((current) => {
+        if (!current.has(group)) return current;
+        const next = new Set(current);
+        next.delete(group);
+        return next;
+      });
+    }
     clearAttention(session.id);
     setSelectedId(session.id);
     if (session.running) {
@@ -2372,6 +2388,7 @@ function App() {
                           type="button"
                           className="min-w-0 truncate rounded-sm text-xs font-medium hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                           aria-label="Switch session"
+                          aria-keyshortcuts={navigator.platform.includes("Mac") ? "Meta+P" : "Control+Shift+P"}
                           onClick={() => setSessionSwitcherOpen(true)}
                         />
                       }
@@ -2563,19 +2580,20 @@ function App() {
                           <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
                         ) : null}
                         {visibleGroups.map((group) => {
-                          const open = Boolean(query.trim()) || !collapsedGroups.has(group.key);
+                          const open = Boolean(query.trim()) || !collapsedGroups.has(group.path);
                           return (
-                            <section key={group.key}>
+                            <section key={group.path}>
                               <button
                                 type="button"
                                 className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[10px] font-medium text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
                                 title={group.path}
+                                aria-label={`${group.name}, ${group.sessions.length} session${group.sessions.length === 1 ? "" : "s"}`}
                                 aria-expanded={open}
                                 onClick={() =>
                                   setCollapsedGroups((current) => {
                                     const next = new Set(current);
-                                    if (next.has(group.key)) next.delete(group.key);
-                                    else next.add(group.key);
+                                    if (next.has(group.path)) next.delete(group.path);
+                                    else next.add(group.path);
                                     return next;
                                   })
                                 }

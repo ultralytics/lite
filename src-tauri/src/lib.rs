@@ -3567,14 +3567,14 @@ fn bounded_git_output(
     if output.len() > MAX_GIT_DIFF_BYTES as usize {
         let _ = child.kill();
         let _ = child.wait();
-        return Err("Diff is larger than 1 MB".into());
+        return Err("Diff is larger than 1 MB; inspect it with Git in the terminal".into());
     }
     let status = child.wait().map_err(|error| error.to_string())?;
     if !status
         .code()
         .is_some_and(|code| accepted_codes.contains(&code))
     {
-        return Err("Could not read Git diff".into());
+        return Err("Could not read Git diff; refresh Git and try again".into());
     }
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
@@ -3592,7 +3592,10 @@ async fn git_diff(
             .components()
             .any(|component| !matches!(component, Component::Normal(_)))
     {
-        return Err("Path is outside the selected folder".into());
+        return Err(
+            "This change is outside the selected folder; start a session from the repository root to view it"
+                .into(),
+        );
     }
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     let repository = PathBuf::from(command_output(
@@ -3605,11 +3608,14 @@ async fn git_diff(
     while !ancestor.exists() {
         ancestor = ancestor
             .parent()
-            .ok_or("Path is outside the selected folder")?;
+            .ok_or("This change is outside the selected folder")?;
     }
     let ancestor = fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
     if !ancestor.starts_with(&granted) {
-        return Err("Path is outside the selected folder".into());
+        return Err(
+            "This change is outside the selected folder; start a session from the repository root to view it"
+                .into(),
+        );
     }
     if is_sensitive_path(&granted, &file) {
         return Err("Sensitive files are hidden from Git diffs".into());
@@ -3659,7 +3665,8 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         Err(_) => return Ok(None),
     };
     let branch = command_output(&git, &path, &["branch", "--show-current"])?;
-    let (changes, changes_truncated) = bounded_git_lines(&git, &path, &["status", "--short"])?;
+    let (changes, changes_truncated) =
+        bounded_git_lines(&git, &path, &["status", "--short", "--untracked-files=all"])?;
     let line_diffs = Command::new(&git)
         .arg("-C")
         .arg(&root)

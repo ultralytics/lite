@@ -1168,6 +1168,24 @@ function DiffViewer({
 
   useEffect(() => viewer.current?.focus(), []);
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!viewer.current || viewer.current.offsetParent === null) return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, textarea, [contenteditable=true], [role=dialog], [role=menu], [data-context-session]")
+      )
+        return;
+      event.preventDefault();
+      onBack();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onBack]);
+
   function zoom(step: -1 | 0 | 1) {
     setFontSize(zoomedFontSize(PREVIEW_FONT_KEY, fontSize, step));
   }
@@ -1195,13 +1213,13 @@ function DiffViewer({
           }
           return;
         }
-        if (event.key === "Escape" || event.key === "ArrowLeft") {
-          event.preventDefault();
-          onBack();
-        }
       }}
     >
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]">
+      <div
+        className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]"
+        data-context-value={path}
+        data-context-label="Copy path"
+      >
         <ActionIconButton size="icon-sm" tooltip="Back to Git" aria-label="Back to Git" onClick={onBack}>
           <ArrowLeft />
         </ActionIconButton>
@@ -1432,10 +1450,10 @@ function GitPanel({
     }
   }
 
-  function closeDiff() {
+  const closeDiff = useCallback(() => {
     diffRequest.current++;
     setDiffPath("");
-  }
+  }, []);
 
   useEffect(() => {
     void refresh();
