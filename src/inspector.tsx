@@ -983,6 +983,7 @@ function FileViewer({
 }
 
 interface FileEditorState {
+  rootId: string;
   selected: FileEntry;
   source: string;
   draft: string;
@@ -991,8 +992,11 @@ interface FileEditorState {
 const fileEditorsBySession = new Map<string, FileEditorState>();
 
 function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string; sessionId: string }) {
-  const editorId = `${sessionId}:${rootId}`;
-  const cached = fileEditorsBySession.get(editorId);
+  const [cached] = useState(() => {
+    const current = fileEditorsBySession.get(sessionId);
+    if (current?.rootId === rootId) return current;
+    fileEditorsBySession.delete(sessionId);
+  });
   const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
   const [source, setSource] = useState(cached?.source ?? "");
   const [draft, setDraft] = useState(cached?.draft ?? "");
@@ -1023,7 +1027,7 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
       if (request.current === id) {
         setSource(contents);
         setDraft(contents);
-        fileEditorsBySession.set(editorId, { selected: entry, source: contents, draft: contents });
+        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents });
       }
     } catch (reason) {
       if (request.current === id) {
@@ -1041,19 +1045,20 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
     const id = request.current;
     await invoke("write_text_file", { rootId, path: entry.path, contents });
     if (request.current !== id) return;
-    const current = fileEditorsBySession.get(editorId);
-    if (current?.selected.path === entry.path) fileEditorsBySession.set(editorId, { ...current, source: contents });
+    const current = fileEditorsBySession.get(sessionId);
+    if (current?.rootId === rootId && current.selected.path === entry.path)
+      fileEditorsBySession.set(sessionId, { ...current, source: contents });
     if (selectedRef.current?.path === entry.path) setSource(contents);
   }
 
   function changeDraft(contents: string) {
     setDraft(contents);
-    if (selected) fileEditorsBySession.set(editorId, { selected, source, draft: contents });
+    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents });
   }
 
   function closeFile() {
     request.current++;
-    fileEditorsBySession.delete(editorId);
+    fileEditorsBySession.delete(sessionId);
     selectedRef.current = null;
     setSelected(null);
   }
@@ -1173,9 +1178,7 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
   githubItemsBySession.delete(sessionId);
-  for (const key of fileEditorsBySession.keys()) {
-    if (key.startsWith(`${sessionId}:`)) fileEditorsBySession.delete(key);
-  }
+  fileEditorsBySession.delete(sessionId);
 }
 
 function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
@@ -1506,7 +1509,12 @@ export function Inspector({
           </div>
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
-              <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} sessionId={session.id} />
+              <FilesPanel
+                key={`${session.rootId}:${reload.files}`}
+                root={session.cwd}
+                rootId={session.rootId}
+                sessionId={session.id}
+              />
             </TabsContent>
           ) : null}
           {visited.has("git") ? (
