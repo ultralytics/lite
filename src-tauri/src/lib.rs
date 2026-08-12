@@ -3616,6 +3616,22 @@ fn bounded_git_output(
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
+fn git_diff_base(git: &Path, repository: &Path) -> Result<String, String> {
+    if command_output(git, repository, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+        return Ok("HEAD".into());
+    }
+    command_output(
+        git,
+        repository,
+        &[
+            "hash-object",
+            "-t",
+            "tree",
+            if cfg!(windows) { "NUL" } else { "/dev/null" },
+        ],
+    )
+}
+
 #[tauri::command]
 async fn git_diff(
     roots: State<'_, Roots>,
@@ -3691,7 +3707,7 @@ async fn git_diff(
             &[0, 1],
         );
     }
-    let head = command_output(&git, &repository, &["rev-parse", "--verify", "HEAD"]).is_ok();
+    let base = git_diff_base(&git, &repository)?;
     let mut args = vec![
         "--literal-pathspecs",
         "diff",
@@ -3700,11 +3716,7 @@ async fn git_diff(
         "--no-renames",
         "--no-color",
     ];
-    if head {
-        args.push("HEAD");
-    } else {
-        args.push("--cached");
-    }
+    args.push(&base);
     args.extend(["--", &pathspec]);
     bounded_git_output(&git, &repository, &args, &[0])
 }
@@ -3742,15 +3754,19 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         ],
     )?;
     changes.retain(|change| Path::new(&change.path).starts_with(scope));
+    let base = git_diff_base(&git, &repository)?;
     let mut line_diffs = Command::new(&git)
         .arg("-C")
         .arg(&repository)
         .args([
             "--literal-pathspecs",
             "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
             "--numstat",
             "-z",
-            "HEAD",
+            &base,
             "--",
             &scope_text,
         ])
@@ -4974,6 +4990,39 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].status, "??");
         assert_eq!(changes[0].path, "sub/a -> b.ts");
+    }
+
+    #[test]
+    fn unborn_diff_includes_staged_and_worktree_content() {
+        let root = std::env::temp_dir().join(format!("lite-git-diff-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let git = Path::new("git");
+        command_output(git, &root, &["init"]).unwrap();
+        fs::write(root.join("file.txt"), "staged").unwrap();
+        command_output(git, &root, &["add", "file.txt"]).unwrap();
+        fs::write(root.join("file.txt"), "stagedworking").unwrap();
+
+        let base = git_diff_base(git, &root).unwrap();
+        let diff = bounded_git_output(
+            git,
+            &root,
+            &[
+                "--literal-pathspecs",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--no-color",
+                &base,
+                "--",
+                "file.txt",
+            ],
+            &[0],
+        )
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
+
+        assert!(diff.contains("+stagedworking"));
     }
 
     #[cfg(target_os = "linux")]
