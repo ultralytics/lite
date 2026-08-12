@@ -12,7 +12,6 @@ import {
   CircleDot,
   Container,
   Database,
-  Eye,
   File,
   FileArchive,
   FileAudio,
@@ -40,7 +39,6 @@ import {
   Save,
   Scale,
   Search,
-  SquarePen,
   Trash2,
   X,
 } from "lucide-react";
@@ -917,13 +915,12 @@ function FileViewer({
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
-  const [view, setView] = useState<"source" | "preview" | "edit">("source");
+  const [view, setView] = useState<"source" | "preview">("source");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
   const editor = useRef<HTMLTextAreaElement>(null);
   const dirty = draft !== source;
-  const editing = view === "edit";
   const renderable = RENDERED_FILE.test(entry.path);
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
   const { viewer, fontSize, zoom } = usePreviewViewer<HTMLDivElement>(() => {
@@ -932,8 +929,8 @@ function FileViewer({
   });
 
   useEffect(() => {
-    if (editing) editor.current?.focus();
-  }, [editing]);
+    if (!loading && view === "source") editor.current?.focus();
+  }, [loading, view]);
 
   async function save() {
     setSaving(true);
@@ -956,7 +953,7 @@ function FileViewer({
   return (
     <Tabs
       ref={viewer}
-      value={editing ? "source" : view}
+      value={view}
       onValueChange={(value) => setView(value as "source" | "preview")}
       aria-label={entry.name}
       tabIndex={-1}
@@ -1000,10 +997,10 @@ function FileViewer({
           </span>
         }
         disabled={saving}
-        showClose={!editing}
+        showClose
         onClose={closeFile}
       >
-        {renderable && !editing && !error ? (
+        {renderable && !error ? (
           <TabsList aria-label="File view" className="h-7 shrink-0">
             <TabsTrigger value="source" className="text-xs">
               Source
@@ -1013,34 +1010,11 @@ function FileViewer({
             </TabsTrigger>
           </TabsList>
         ) : null}
-        {editing ? (
-          <>
-            <ActionIconButton
-              size="icon-sm"
-              tooltip={renderable ? "Preview file" : "Stop editing"}
-              aria-label={renderable ? "Preview file" : "Stop editing"}
-              disabled={loading}
-              onClick={() => setView(renderable ? "preview" : "source")}
-            >
-              <Eye />
-            </ActionIconButton>
-            <Button size="sm" disabled={saving || draft === source} onClick={() => void save()}>
-              {saving ? <Spinner /> : <Save />}
-              {saving ? "Saving…" : "Save"}
-            </Button>
-          </>
-        ) : !error ? (
-          <ActionIconButton
-            size="icon-sm"
-            tooltip="Edit file"
-            aria-label="Edit file"
-            onClick={() => {
-              setSaveError("");
-              setView("edit");
-            }}
-          >
-            <SquarePen />
-          </ActionIconButton>
+        {!error ? (
+          <Button size="sm" disabled={saving || draft === source} onClick={() => void save()}>
+            {saving ? <Spinner aria-hidden="true" /> : <Save aria-hidden="true" />}
+            {saving ? "Saving…" : "Save"}
+          </Button>
         ) : null}
       </PreviewHeader>
       <PreviewZoomControls zoom={zoom} />
@@ -1049,42 +1023,40 @@ function FileViewer({
           <Loading label="Opening file…" />
         ) : error ? (
           <div className="p-3 text-xs text-muted-foreground">{error}</div>
-        ) : editing ? (
-          <div className="flex min-h-full flex-col">
-            <textarea
-              ref={editor}
-              name="file-contents"
-              aria-label={`Edit ${entry.name}`}
-              spellCheck={false}
-              value={draft}
-              className="min-h-[calc(100vh-8rem)] flex-1 resize-none bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              onChange={(event) =>
-                onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
-              }
-            />
-            {saveError ? (
-              <p role="alert" className="border-t p-2 text-xs text-destructive">
-                {saveError}
-              </p>
-            ) : null}
-          </div>
         ) : (
-          <Suspense fallback={<Loading label="Opening file…" />}>
+          <>
+            <TabsContent value="source" className="min-h-full">
+              <div className="flex min-h-full flex-col">
+                <textarea
+                  ref={editor}
+                  name="file-contents"
+                  aria-label={`Edit ${entry.name}`}
+                  spellCheck={false}
+                  value={draft}
+                  className="min-h-[calc(100vh-8rem)] w-full flex-1 resize-none bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  onChange={(event) =>
+                    onDraftChange(
+                      lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value,
+                    )
+                  }
+                />
+              </div>
+            </TabsContent>
             {renderable ? (
-              <>
-                <TabsContent value="source" className="min-h-full">
-                  <CodePreview path={entry.path} source={draft} />
-                </TabsContent>
-                <TabsContent value="preview" className="min-h-full">
+              <TabsContent value="preview" className="min-h-full">
+                <Suspense fallback={<Loading label="Opening preview…" />}>
                   <CodePreview path={entry.path} source={draft} rendered />
-                </TabsContent>
-              </>
-            ) : (
-              <CodePreview path={entry.path} source={draft} />
-            )}
-          </Suspense>
+                </Suspense>
+              </TabsContent>
+            ) : null}
+          </>
         )}
       </ScrollArea>
+      {saveError ? (
+        <p role="alert" className="shrink-0 border-t p-2 text-xs text-destructive">
+          {saveError}
+        </p>
+      ) : null}
     </Tabs>
   );
 }

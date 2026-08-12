@@ -6,6 +6,9 @@ export type ModelProvider = "openai" | "deepseek" | "openrouter";
 
 export interface Session {
   id: string;
+  // Creation time keeps view sorting stable independently of manual session order. Older persisted
+  // sessions receive this once when they are loaded.
+  createdAt?: number;
   agent: Agent;
   provider?: ModelProvider;
   // A sign-in session runs the provider's own login command; it is never stored or resumed.

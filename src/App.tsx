@@ -5,7 +5,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ArrowDown,
   ArrowDownToLine,
+  ArrowUp,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -26,6 +28,7 @@ import {
   Scissors,
   Search,
   Settings as SettingsIcon,
+  SlidersHorizontal,
   SquareTerminal,
   Sun,
   TextSelect,
@@ -67,6 +70,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -99,6 +113,116 @@ import { type Agent, defaultSessionName, folderName, repoName, type Session, ses
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
+const SESSION_VIEW_KEY = "lite.sessionView.v1";
+type SessionGrouping = "none" | "repository" | "directory" | "state";
+type SessionSort = "newest" | "oldest" | "name-asc" | "name-desc" | "manual";
+const SESSION_GROUPINGS: { value: SessionGrouping; label: string }[] = [
+  { value: "none", label: "None" },
+  { value: "repository", label: "Repository" },
+  { value: "directory", label: "Directory" },
+  { value: "state", label: "State" },
+];
+const SESSION_SORTS: {
+  value: string;
+  label: string;
+  ascValue?: SessionSort;
+  descValue?: SessionSort;
+  defaultDirection?: "asc" | "desc";
+}[] = [
+  { value: "created", label: "Created", ascValue: "oldest", descValue: "newest", defaultDirection: "desc" as const },
+  { value: "name", label: "Name", ascValue: "name-asc", descValue: "name-desc", defaultDirection: "asc" as const },
+  { value: "manual", label: "Manual" },
+];
+const SESSION_SORT_LABELS: Record<SessionSort, string> = {
+  newest: "Newest",
+  oldest: "Oldest",
+  "name-asc": "Name A–Z",
+  "name-desc": "Name Z–A",
+  manual: "Manual",
+};
+
+function loadSessionView(): { grouping: SessionGrouping; sort: SessionSort } {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SESSION_VIEW_KEY) ?? "{}") as {
+      grouping?: SessionGrouping;
+      sort?: SessionSort;
+    };
+    const grouping = SESSION_GROUPINGS.find(({ value }) => value === stored.grouping)?.value ?? "none";
+    const sort = stored.sort && stored.sort in SESSION_SORT_LABELS ? stored.sort : "newest";
+    return { grouping, sort };
+  } catch {
+    return { grouping: "none", sort: "newest" };
+  }
+}
+
+function SessionViewOptions({
+  view,
+  onChange,
+}: {
+  view: { grouping: SessionGrouping; sort: SessionSort };
+  onChange: (view: { grouping: SessionGrouping; sort: SessionSort }) => void;
+}) {
+  const label = `${SESSION_SORT_LABELS[view.sort]} · ${SESSION_GROUPINGS.find(({ value }) => value === view.grouping)?.label}`;
+  const trigger = (
+    <DropdownMenuTrigger
+      render={
+        <Button variant="ghost" size="icon-sm" aria-label={`Session view: ${label}`}>
+          <SlidersHorizontal aria-hidden="true" />
+        </Button>
+      }
+    />
+  );
+  return (
+    <DropdownMenu>
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex">{trigger}</span>} />
+        <TooltipContent>Session view: {label}</TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Sort by</DropdownMenuLabel>
+          {SESSION_SORTS.map((option) => {
+            const direction =
+              option.ascValue === view.sort ? "asc" : option.descValue === view.sort ? "desc" : undefined;
+            const nextSort =
+              direction === "asc"
+                ? option.descValue
+                : direction === "desc"
+                  ? option.ascValue
+                  : (option[option.defaultDirection === "asc" ? "ascValue" : "descValue"] ?? option.value);
+            return (
+              <DropdownMenuItem
+                key={option.value}
+                className={direction || view.sort === option.value ? "bg-accent" : undefined}
+                onClick={() => onChange({ ...view, sort: nextSort as SessionSort })}
+              >
+                <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                  {option.label}
+                  {direction === "asc" ? <ArrowUp aria-hidden="true" className="ml-auto size-3.5" /> : null}
+                  {direction === "desc" ? <ArrowDown aria-hidden="true" className="ml-auto size-3.5" /> : null}
+                </span>
+              </DropdownMenuItem>
+            );
+          })}
+        </DropdownMenuGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Group by</DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            value={view.grouping}
+            onValueChange={(grouping) => onChange({ ...view, grouping: grouping as SessionGrouping })}
+          >
+            {SESSION_GROUPINGS.map(({ value, label }) => (
+              <DropdownMenuRadioItem key={value} value={value}>
+                {label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 // The width each side collapses to: one icon button and the room around it.
 const RAIL = 44;
 // Where a side stops following the pointer. It has no room to be anything but its rail by here, so it
@@ -549,6 +673,12 @@ const SESSION_STATUS = {
     label: "Connected, needs attention",
   },
 } as const;
+const SESSION_STATE_LABELS = {
+  attention: "Needs attention",
+  working: "Working",
+  idle: "Idle",
+  disconnected: "Disconnected",
+} as const;
 
 function sessionStatus(session: Session, attention: boolean, working: boolean) {
   return SESSION_STATUS[!session.running ? "disconnected" : attention ? "attention" : working ? "working" : "idle"];
@@ -556,22 +686,62 @@ function sessionStatus(session: Session, attention: boolean, working: boolean) {
 
 interface SessionGroup {
   name: string;
-  path: string;
+  key: string;
+  title: string;
   sessions: Session[];
 }
 
-// Worktrees sit beside their main checkout, so the repository recorded when the session was created
-// is the stable group. Plain folders group by their own path, and first appearance preserves the
-// session order the user chose.
-function groupSessions(sessions: Session[]): SessionGroup[] {
+function sessionGroupKey(session: Session, grouping: SessionGrouping, attention: Set<string>, working: Set<string>) {
+  if (grouping === "repository") return session.repo ?? session.cwd;
+  if (grouping === "directory") return session.cwd;
+  if (grouping === "state") {
+    if (!session.running) return "disconnected";
+    if (attention.has(session.id)) return "attention";
+    return working.has(session.id) ? "working" : "idle";
+  }
+  return "all";
+}
+
+// Grouping is presentation only. First appearance preserves manual session order for paths, while
+// state follows the same stable urgency order as the status badges.
+function groupSessions(
+  sessions: Session[],
+  grouping: SessionGrouping,
+  attention: Set<string>,
+  working: Set<string>,
+): SessionGroup[] {
+  if (grouping === "none") return [{ name: "", key: "none:all", title: "", sessions }];
   const groups = new Map<string, SessionGroup>();
   for (const session of sessions) {
-    const path = session.repo ?? session.cwd;
-    const group = groups.get(path) ?? { name: folderName(path) || path, path, sessions: [] };
+    const value = sessionGroupKey(session, grouping, attention, working);
+    const status = grouping === "state" ? SESSION_STATUS[value as keyof typeof SESSION_STATUS] : undefined;
+    const group = groups.get(value) ?? {
+      name:
+        grouping === "state"
+          ? SESSION_STATE_LABELS[value as keyof typeof SESSION_STATE_LABELS]
+          : folderName(value) || value,
+      key: `${grouping}:${value}`,
+      title: status?.label ?? value,
+      sessions: [],
+    };
     group.sessions.push(session);
-    groups.set(path, group);
+    groups.set(value, group);
   }
+  if (grouping === "state")
+    return ["attention", "working", "idle", "disconnected"].flatMap((state) => groups.get(state) ?? []);
   return [...groups.values()];
+}
+
+function sortSessions(sessions: Session[], sort: SessionSort) {
+  if (sort === "manual") return sessions;
+  return [...sessions].sort((a, b) => {
+    if (sort === "name-asc" || sort === "name-desc") {
+      const order = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      return sort === "name-asc" ? order : -order;
+    }
+    const order = (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    return sort === "newest" ? order : -order;
+  });
 }
 
 // A local build names its commit and is red, so it is never mistaken for the installed copy.
@@ -638,12 +808,14 @@ function VersionBadge({
 function loadSessions(): Session[] {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "[]") as Session[];
+    const loadedAt = Date.now();
     // A session stored before Lite read window titles kept no record of who named it, so a name it did
     // not get from its folder is treated as the user's rather than replaced by the first title to arrive.
     return stored
       .filter((session) => session.rootId)
-      .map((session) => ({
+      .map((session, index) => ({
         ...session,
+        createdAt: session.createdAt ?? loadedAt - index,
         running: false,
         renamed: session.renamed ?? session.name !== defaultSessionName(session.cwd),
       }));
@@ -901,6 +1073,7 @@ function SessionRow({
   working,
   renaming,
   reorderable,
+  groupBounded,
   onSelect,
   onRename,
   onRenamingChange,
@@ -917,6 +1090,7 @@ function SessionRow({
   working: boolean;
   renaming: boolean;
   reorderable: boolean;
+  groupBounded: boolean;
   onSelect: () => void;
   onRename: (name: string) => void;
   onRenamingChange: (renaming: boolean) => void;
@@ -1004,7 +1178,11 @@ function SessionRow({
         }
         event.preventDefault();
         const list = pointer.row.closest("[data-session-list]");
-        const rows = [...(list?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
+        const rows = [
+          ...((groupBounded ? pointer.row.parentElement : list)?.querySelectorAll<HTMLElement>(
+            "[data-context-session]",
+          ) ?? []),
+        ];
         const before = rows.find(
           (row) => row !== pointer.row && event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2,
         );
@@ -1230,6 +1408,7 @@ function commandAgent(command: string): Agent | undefined {
 
 function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
+  const [sessionView, setSessionView] = useState(loadSessionView);
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -1344,9 +1523,28 @@ function App() {
       (session) => session.name.toLowerCase().includes(needle) || session.cwd.toLowerCase().includes(needle),
     );
   }, [sessions, query]);
-  const visibleGroups = useMemo(() => groupSessions(visible), [visible]);
+  const attentionIds = useMemo(() => new Set(attention), [attention]);
+  const sortedVisible = useMemo(() => {
+    return sortSessions(visible, sessionView.sort);
+  }, [sessionView.sort, visible]);
+  const visibleGroups = useMemo(
+    () => groupSessions(sortedVisible, sessionView.grouping, attentionIds, working),
+    [attentionIds, sessionView.grouping, sortedVisible, working],
+  );
+  const selectedGroupKey = selected
+    ? `${sessionView.grouping}:${sessionGroupKey(selected, sessionView.grouping, attentionIds, working)}`
+    : "";
+  useEffect(() => {
+    if (!selectedGroupKey) return;
+    setCollapsedGroups((current) => {
+      if (!current.has(selectedGroupKey)) return current;
+      const next = new Set(current);
+      next.delete(selectedGroupKey);
+      return next;
+    });
+  }, [selectedGroupKey]);
   const displayed = visibleGroups.flatMap((group) =>
-    query.trim() || !collapsedGroups.has(group.path) ? group.sessions : [],
+    query.trim() || !collapsedGroups.has(group.key) ? group.sessions : [],
   );
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   recentSessions.current = recentSessions.current.filter((id) => sessionsById.has(id));
@@ -1361,19 +1559,8 @@ function App() {
   selectedRef.current = selected;
   notificationsRef.current = notifications;
   closeRef.current = closeSession;
-  function expandSessionGroup(session: Session) {
-    const group = session.repo ?? session.cwd;
-    if (!collapsedGroups.has(group)) return;
-    setCollapsedGroups((current) => {
-      if (!current.has(group)) return current;
-      const next = new Set(current);
-      next.delete(group);
-      return next;
-    });
-  }
   openRef.current = (session) => {
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
-    expandSessionGroup(session);
     clearAttention(session.id);
     setSelectedId(session.id);
     if (session.running) {
@@ -1866,29 +2053,43 @@ function App() {
   }
 
   function createSession(session: Session) {
+    session = { ...session, createdAt: session.createdAt ?? Date.now() };
     resumed.current = session.id;
     recentSessions.current = [session.id, ...recentSessions.current];
-    expandSessionGroup(session);
     setSessions((current) => [session, ...current]);
     setSelectedId(session.id);
     void launch(session, false);
   }
 
   function reorderSession(draggedId: string, targetId: string, after: boolean) {
+    if (sessionView.sort !== "manual") {
+      const view = { ...sessionView, sort: "manual" as const };
+      localStorage.setItem(SESSION_VIEW_KEY, JSON.stringify(view));
+      setSessionView(view);
+    }
     setSessions((current) => {
-      const ordered = groupSessions(current).flatMap((group) => group.sessions);
+      const ordered = groupSessions(
+        sortSessions(current, sessionView.sort),
+        sessionView.grouping,
+        attentionIds,
+        working,
+      ).flatMap((group) => group.sessions);
       const draggedIndex = ordered.findIndex((session) => session.id === draggedId);
       const targetIndex = ordered.findIndex((session) => session.id === targetId);
       if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return current;
       const dragged = ordered[draggedIndex];
       const target = ordered[targetIndex];
-      const draggedGroup = dragged.repo ?? dragged.cwd;
-      const targetGroup = target.repo ?? target.cwd;
+      const draggedGroup = sessionGroupKey(dragged, sessionView.grouping, attentionIds, working);
+      const targetGroup = sessionGroupKey(target, sessionView.grouping, attentionIds, working);
       if (draggedGroup !== targetGroup) {
-        const moved = ordered.filter((session) => (session.repo ?? session.cwd) === draggedGroup);
-        const next = ordered.filter((session) => (session.repo ?? session.cwd) !== draggedGroup);
+        const moved = ordered.filter(
+          (session) => sessionGroupKey(session, sessionView.grouping, attentionIds, working) === draggedGroup,
+        );
+        const next = ordered.filter(
+          (session) => sessionGroupKey(session, sessionView.grouping, attentionIds, working) !== draggedGroup,
+        );
         const targets = next.flatMap((session, index) =>
-          (session.repo ?? session.cwd) === targetGroup ? [index] : [],
+          sessionGroupKey(session, sessionView.grouping, attentionIds, working) === targetGroup ? [index] : [],
         );
         const destination = after ? targets[targets.length - 1] + 1 : targets[0];
         next.splice(destination, 0, ...moved);
@@ -1964,7 +2165,13 @@ function App() {
     if ((!recovered && startingIds.has(session.id)) || closingIds.current.has(session.id)) return;
     recoveryFailures.current.delete(session.id);
     clearAttention(session.id);
-    const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
+    const fresh: Session = {
+      ...session,
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      providerSessionId: undefined,
+      running: false,
+    };
     const restarted = restartSessionNow(session, fresh, select);
     sessionUndoToast(
       session,
@@ -2250,7 +2457,6 @@ function App() {
     function restore(running: boolean) {
       keptWorktrees.current.delete(session.id);
       forceWorktree.current.delete(session.id);
-      expandSessionGroup(session);
       if (!recentSessions.current.includes(session.id)) {
         recentSessions.current.splice(Math.min(Math.max(recentIndex, 0), recentSessions.current.length), 0, session.id);
       }
@@ -2624,6 +2830,14 @@ function App() {
                       >
                         <Plus />
                       </ActionIconButton>
+                      <SessionViewOptions
+                        view={sessionView}
+                        onChange={(view) => {
+                          localStorage.setItem(SESSION_VIEW_KEY, JSON.stringify(view));
+                          if (view.grouping !== sessionView.grouping) setCollapsedGroups(new Set());
+                          setSessionView(view);
+                        }}
+                      />
                       <ActionIconButton
                         size="icon-sm"
                         tooltip="Collapse sessions"
@@ -2640,32 +2854,44 @@ function App() {
                           <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
                         ) : null}
                         {visibleGroups.map((group) => {
-                          const open = Boolean(query.trim()) || !collapsedGroups.has(group.path);
+                          const open =
+                            sessionView.grouping === "none" || Boolean(query.trim()) || !collapsedGroups.has(group.key);
                           return (
-                            <section key={group.path}>
-                              <button
-                                type="button"
-                                className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[10px] font-medium text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
-                                title={group.path}
-                                aria-label={`${group.name}, ${group.sessions.length} session${group.sessions.length === 1 ? "" : "s"}`}
-                                aria-expanded={open}
-                                onClick={() =>
-                                  setCollapsedGroups((current) => {
-                                    const next = new Set(current);
-                                    if (next.has(group.path)) next.delete(group.path);
-                                    else next.add(group.path);
-                                    return next;
-                                  })
-                                }
-                              >
-                                <ChevronRight
-                                  aria-hidden="true"
-                                  className={`size-3 transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
-                                />
-                                <Folder aria-hidden="true" className="size-3" />
-                                <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                                <span className="tabular-nums">{group.sessions.length}</span>
-                              </button>
+                            <section key={group.key}>
+                              {sessionView.grouping === "none" ? null : (
+                                <button
+                                  type="button"
+                                  className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[10px] font-medium text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
+                                  title={group.title}
+                                  aria-label={`${group.name}, ${group.sessions.length} session${group.sessions.length === 1 ? "" : "s"}`}
+                                  aria-expanded={open}
+                                  onClick={() =>
+                                    setCollapsedGroups((current) => {
+                                      const next = new Set(current);
+                                      if (next.has(group.key)) next.delete(group.key);
+                                      else next.add(group.key);
+                                      return next;
+                                    })
+                                  }
+                                >
+                                  <ChevronRight
+                                    aria-hidden="true"
+                                    className={`size-3 transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
+                                  />
+                                  {sessionView.grouping === "state" ? (
+                                    <span
+                                      aria-hidden="true"
+                                      className={`size-2 rounded-full ${SESSION_STATUS[group.key.slice("state:".length) as keyof typeof SESSION_STATUS].dot}`}
+                                    />
+                                  ) : sessionView.grouping === "repository" ? (
+                                    <GitBranch aria-hidden="true" className="size-3" />
+                                  ) : (
+                                    <Folder aria-hidden="true" className="size-3" />
+                                  )}
+                                  <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                                  <span className="tabular-nums">{group.sessions.length}</span>
+                                </button>
+                              )}
                               {open ? (
                                 <div className="space-y-0.5">
                                   {group.sessions.map((session) => (
@@ -2678,7 +2904,8 @@ function App() {
                                       starting={startingIds.has(session.id)}
                                       working={working.has(session.id)}
                                       renaming={renamingId === session.id}
-                                      reorderable={!query.trim()}
+                                      reorderable
+                                      groupBounded={sessionView.grouping === "state"}
                                       onSelect={() => openRef.current(session)}
                                       onRename={(name) =>
                                         setSessions((current) =>
