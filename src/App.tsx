@@ -14,10 +14,8 @@ import {
   Copy,
   ExternalLink,
   GitBranch,
-  KeyRound,
   Link,
   Moon,
-  MoreHorizontal,
   Pencil,
   Play,
   Plus,
@@ -25,6 +23,7 @@ import {
   RotateCcw,
   Scissors,
   Search,
+  Settings as SettingsIcon,
   SquareTerminal,
   Sun,
   TextSelect,
@@ -66,15 +65,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -176,6 +166,8 @@ const RELEASE_NOTE = {
   unknown: "",
 } as const;
 
+const NOTIFICATIONS_KEY = "lite.notifications";
+
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
 
 type Editable = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
@@ -184,6 +176,7 @@ type AppMenuContext = {
   collapsePanel: HTMLButtonElement | null;
   collapseSessions: HTMLButtonElement | null;
   directory: HTMLButtonElement | null;
+  deleteFile: HTMLButtonElement | null;
   editable: Editable | null;
   expandFiles: HTMLButtonElement | null;
   expandPanel: HTMLButtonElement | null;
@@ -205,6 +198,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   collapsePanel: null,
   collapseSessions: null,
   directory: null,
+  deleteFile: null,
   editable: null,
   expandFiles: null,
   expandPanel: null,
@@ -233,6 +227,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const link = target.closest<HTMLElement>("a[href], [data-context-url]");
   const value = target.closest<HTMLElement>("[data-context-value]");
   const directory = target.closest<HTMLButtonElement>("[data-context-directory]");
+  const fileRow = target.closest<HTMLElement>("[data-context-file-row]");
   const session = target.closest<HTMLElement>("[data-context-session]");
   const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
   const files = target.closest<HTMLElement>("[data-context-files]");
@@ -247,6 +242,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     collapsePanel: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-panel]") ?? null,
     collapseSessions: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-sessions]") ?? null,
     directory,
+    deleteFile: fileRow?.querySelector<HTMLButtonElement>("[data-context-delete-file]") ?? null,
     editable,
     expandFiles: files?.querySelector<HTMLButtonElement>("[data-context-expand-files]") ?? null,
     expandPanel: surface?.querySelector<HTMLButtonElement>("[data-context-expand-panel]") ?? null,
@@ -425,6 +421,15 @@ function AppContextMenu({
             <Copy />
             {context.valueLabel}
           </ContextMenuItem>
+        ) : null}
+        {context.deleteFile ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive" onClick={() => context.deleteFile?.click()}>
+              <Trash2 />
+              Delete File
+            </ContextMenuItem>
+          </>
         ) : null}
         {linkGroup && surfaceGroup ? <ContextMenuSeparator /> : null}
         {context.refresh ? (
@@ -1055,6 +1060,7 @@ function App() {
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) === "true");
   const [closingAll, setClosingAll] = useState(false);
   // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
   // cleanup has settled, so nothing can be reopened under its own cleanup.
@@ -1129,16 +1135,18 @@ function App() {
   const themeRef = useRef<Theme>("dark");
   const visibleRef = useRef<Session[]>([]);
   const selectedRef = useRef<Session>(undefined);
+  const notificationsRef = useRef(notifications);
   const closeRef = useRef<(session: Session) => void>(() => {});
   const openRef = useRef<(session: Session) => void>(() => {});
   const recoverRef = useRef<(session: Session) => Promise<void>>(() => Promise.resolve());
   const markAttention = useCallback((sessionId: string) => {
     const current = attentionRef.current;
-    if (current[current.length - 1] === sessionId) return;
+    if (current[current.length - 1] === sessionId) return false;
     const next = current.filter((id) => id !== sessionId);
     next.push(sessionId);
     attentionRef.current = next;
     setAttention(next);
+    return true;
   }, []);
   const clearAttention = useCallback((sessionId: string) => {
     const current = attentionRef.current;
@@ -1161,6 +1169,7 @@ function App() {
   sessionsRef.current = sessions;
   themeRef.current = theme;
   selectedRef.current = selected;
+  notificationsRef.current = notifications;
   closeRef.current = closeSession;
   openRef.current = (session) => {
     clearAttention(session.id);
@@ -1265,7 +1274,8 @@ function App() {
   // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!event.metaKey && !event.ctrlKey) return;
+      if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
       if (event.key === "n") setNewSessionOpen(true);
       else if (event.key === ",") setSettingsOpen(true);
       else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
@@ -1420,8 +1430,15 @@ function App() {
         const { title, path, activity, notification } = appendOutput(payload.sessionId, payload.data);
         if (title) markTitle(payload.sessionId, title);
         if (path) markDirectory(payload.sessionId, path);
-        if (notification && (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()))
-          markAttention(payload.sessionId);
+        if (
+          notification &&
+          (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()) &&
+          markAttention(payload.sessionId)
+        ) {
+          const session = sessionsRef.current.find((item) => item.id === payload.sessionId);
+          if (notificationsRef.current && session)
+            void invoke("send_notification", { title: session.name }).catch(() => {});
+        }
         if (activity !== false) markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
@@ -1463,6 +1480,14 @@ function App() {
       timers.clear();
     };
   }, [forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
+
+  const changeNotifications = useCallback(async (enabled: boolean) => {
+    if (enabled && !(await invoke<boolean>("request_notification_permission")))
+      throw new Error("Allow notifications for Lite in macOS System Settings.");
+    localStorage.setItem(NOTIFICATIONS_KEY, String(enabled));
+    notificationsRef.current = enabled;
+    setNotifications(enabled);
+  }, []);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
     if (runs.current.has(session.id)) return true;
@@ -2226,36 +2251,21 @@ function App() {
                 </TooltipTrigger>
                 <TooltipContent>{theme === "dark" ? "Light mode" : "Dark mode"}</TooltipContent>
               </Tooltip>
-              <DropdownMenu>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Options" />} />
-                    }
-                  >
-                    <MoreHorizontal />
-                  </TooltipTrigger>
-                  <TooltipContent>Options</TooltipContent>
-                </Tooltip>
-                <DropdownMenuContent align="end" className="w-48">
-                  {version ? (
-                    <DropdownMenuGroup>
-                      <DropdownMenuLabel>
-                        {commit ? `Lite ${version} · local ${commit}` : `Lite ${version}`}
-                      </DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                    </DropdownMenuGroup>
-                  ) : null}
-                  <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-                    <KeyRound />
-                    API keys
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void checkForUpdates()}>
-                    <RefreshCw />
-                    Check for updates
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Settings"
+                      onClick={() => setSettingsOpen(true)}
+                    />
+                  }
+                >
+                  <SettingsIcon />
+                </TooltipTrigger>
+                <TooltipContent>Settings</TooltipContent>
+              </Tooltip>
             </div>
           </header>
           <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
@@ -2823,7 +2833,20 @@ function App() {
             onCreate={createSession}
             sessions={sessions}
           />
-          <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
+          <SettingsDialog
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            onSignIn={signIn}
+            notifications={notifications}
+            onNotificationsChange={changeNotifications}
+            theme={theme}
+            onThemeChange={setTheme}
+            version={version}
+            commit={commit}
+            built={built}
+            repo={repo}
+            onCheckForUpdates={() => void checkForUpdates()}
+          />
           <Toaster />
         </div>
       </AppContextMenu>

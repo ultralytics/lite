@@ -12,6 +12,7 @@ import {
   CircleDot,
   Container,
   Database,
+  Eye,
   File,
   FileArchive,
   FileAudio,
@@ -36,15 +37,26 @@ import {
   Hammer,
   type LucideIcon,
   RefreshCw,
+  Save,
   Scale,
   Search,
+  SquarePen,
+  Trash2,
   X,
 } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { GitHubLogomark, ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
-import { ActionIconButton } from "@/components/ui/button";
+import { ActionIconButton, Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
@@ -448,6 +460,9 @@ function FileTree({
   const [loadingPaths, setLoadingPaths] = useState(() => new Set<string>());
   const [expandingAll, setExpandingAll] = useState(false);
   const [error, setError] = useState("");
+  const [deleting, setDeleting] = useState<FileEntry>();
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   const load = useCallback(
     async (path: string, after: DirectoryCursor | null = null) => {
@@ -528,6 +543,30 @@ function FileTree({
 
   const lowered = query.trim().toLowerCase();
 
+  async function deleteFile() {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await invoke("delete_file", { rootId, path: deleting.path });
+      setChildren((current) => {
+        const next = { ...current };
+        for (const [path, listing] of Object.entries(next)) {
+          if (listing.entries.some((entry) => entry.path === deleting.path)) {
+            next[path] = { ...listing, entries: listing.entries.filter((entry) => entry.path !== deleting.path) };
+          }
+        }
+        return next;
+      });
+      setDeleting(undefined);
+      setError("");
+    } catch (reason) {
+      setDeleteError(String(reason));
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
+
   // A search has to see the whole tree, so the first searching keystroke loads it and the next query
   // — not the render a failure causes — retries a walk that failed; one that succeeded is not
   // repeated, and a cleared search forgets the failure so the same query asks again.
@@ -577,31 +616,55 @@ function FileTree({
           const open = entry.isDirectory && (expanded.has(entry.path) || matching.has(entry.path));
           return (
             <div key={entry.path}>
-              <button
-                type="button"
-                className="flex h-6 w-full items-center gap-1 rounded-sm pr-2 text-left text-[13px] hover:bg-muted"
-                style={{ paddingLeft: `${6 + depth * 12}px` }}
-                data-context-value={entry.path}
-                data-context-label="Copy path"
-                data-context-directory={entry.isDirectory ? "" : undefined}
-                data-context-expanded={entry.isDirectory ? expanded.has(entry.path) : undefined}
-                onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
-              >
-                {entry.isDirectory ? (
-                  <>
-                    <ChevronRight
-                      className={`size-3 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
-                    />
-                    <FileIcon name={entry.name} directory />
-                  </>
-                ) : (
-                  <>
-                    <span className="w-3" />
-                    <FileIcon name={entry.name} />
-                  </>
-                )}
-                <span className="truncate">{entry.name}</span>
-              </button>
+              <div data-context-file-row>
+                <button
+                  type="button"
+                  className="flex h-6 w-full items-center gap-1 rounded-sm pr-2 text-left text-[13px] hover:bg-muted"
+                  style={{ paddingLeft: `${6 + depth * 12}px` }}
+                  data-context-value={entry.path}
+                  data-context-label="Copy path"
+                  data-context-directory={entry.isDirectory ? "" : undefined}
+                  data-context-expanded={entry.isDirectory ? expanded.has(entry.path) : undefined}
+                  onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
+                  onKeyDown={(event) => {
+                    if (
+                      entry.isDirectory ||
+                      (event.key !== "Delete" &&
+                        !(navigator.platform.includes("Mac") && event.metaKey && event.key === "Backspace"))
+                    )
+                      return;
+                    event.preventDefault();
+                    setDeleteError("");
+                    setDeleting(entry);
+                  }}
+                >
+                  {entry.isDirectory ? (
+                    <>
+                      <ChevronRight
+                        className={`size-3 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
+                      />
+                      <FileIcon name={entry.name} directory />
+                    </>
+                  ) : (
+                    <>
+                      <span className="w-3" />
+                      <FileIcon name={entry.name} />
+                    </>
+                  )}
+                  <span className="truncate">{entry.name}</span>
+                </button>
+                {!entry.isDirectory ? (
+                  <button
+                    type="button"
+                    hidden
+                    data-context-delete-file
+                    onClick={() => {
+                      setDeleteError("");
+                      setDeleting(entry);
+                    }}
+                  />
+                ) : null}
+              </div>
               {open ? rows(entry.path, depth + 1) : null}
             </div>
           );
@@ -637,6 +700,28 @@ function FileTree({
   const rootOpen = !!lowered || expanded.has(root);
   return (
     <div className="py-1">
+      <Dialog open={Boolean(deleting)} onOpenChange={(open) => !open && !deleteBusy && setDeleting(undefined)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete “{deleting?.name}”?</DialogTitle>
+            <DialogDescription>This permanently deletes the file from your computer.</DialogDescription>
+            {deleteError ? (
+              <p role="alert" className="text-sm text-destructive">
+                {deleteError}
+              </p>
+            ) : null}
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" disabled={deleteBusy} onClick={() => setDeleting(undefined)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={deleteBusy} onClick={() => void deleteFile()}>
+              {deleteBusy ? <Spinner /> : <Trash2 />}
+              {deleteBusy ? "Deleting…" : "Delete File"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div className="flex items-center pr-1">
         <button
           type="button"
@@ -692,22 +777,41 @@ const PREVIEW_FONT_KEY = "lite.preview.fontSize";
 function FileViewer({
   entry,
   source,
+  draft,
   error,
+  loading,
   onBack,
+  onDraftChange,
+  onSave,
 }: {
   entry: FileEntry;
   source: string;
+  draft: string;
   error: string;
+  loading: boolean;
   onBack: () => void;
+  onDraftChange: (contents: string) => void;
+  onSave: (contents: string) => Promise<void>;
 }) {
   const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
+  const [editing, setEditing] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [discardOpen, setDiscardOpen] = useState(false);
   const viewer = useRef<HTMLElement>(null);
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const dirty = draft !== source;
+  const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
 
   // Reading is keyboard work, so the viewer takes focus as it opens and the zoom keys land here
   // rather than wherever the pointer last was.
   useEffect(() => {
     viewer.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (editing) editor.current?.focus();
+  }, [editing]);
 
   // Escape and ArrowLeft step back to the tree from anywhere focus has wandered — after a menu closes,
   // after a click on nothing — but never out from under typing: a terminal, a field, or an open layer
@@ -725,11 +829,30 @@ function FileViewer({
       )
         return;
       event.preventDefault();
-      onBack();
+      if (dirty) setDiscardOpen(true);
+      else onBack();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onBack]);
+  }, [dirty, onBack]);
+
+  async function save() {
+    setSaving(true);
+    setSaveError("");
+    try {
+      await onSave(draft);
+    } catch (reason) {
+      setSaveError(String(reason));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function closeFile() {
+    if (saving) return;
+    if (dirty) setDiscardOpen(true);
+    else onBack();
+  }
 
   function zoom(step: -1 | 0 | 1) {
     setFontSize(zoomedFontSize(PREVIEW_FONT_KEY, fontSize, step));
@@ -744,36 +867,139 @@ function FileViewer({
       className="flex min-h-0 flex-1 flex-col outline-none"
       style={{ fontSize, lineHeight: 1.6 }}
       onKeyDown={(event) => {
-        if (!(event.metaKey || event.ctrlKey)) return;
+        const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
+        if (!command) return;
+        if (event.key.toLowerCase() === "s") {
+          event.preventDefault();
+          if (!saving && dirty) void save();
+          return;
+        }
+        if (event.key.toLowerCase() === "w") {
+          event.preventDefault();
+          closeFile();
+          return;
+        }
         const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
         if (!step && event.key !== "0") return;
         event.preventDefault();
         zoom(step);
       }}
     >
+      <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Discard changes to “{entry.name}”?</DialogTitle>
+            <DialogDescription>Your unsaved edits will be lost.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDiscardOpen(false)}>
+              Keep Editing
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={saving}
+              onClick={() => {
+                setDiscardOpen(false);
+                onBack();
+              }}
+            >
+              Discard Changes
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div
         className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]"
         data-context-value={entry.path}
         data-context-label="Copy path"
       >
-        <ActionIconButton size="icon-sm" tooltip="Back to files" aria-label="Back to files" onClick={onBack}>
+        <ActionIconButton
+          size="icon-sm"
+          tooltip="Back to files"
+          aria-label="Back to files"
+          disabled={saving}
+          onClick={closeFile}
+        >
           <ArrowLeft />
         </ActionIconButton>
         <FileIcon name={entry.name} />
-        <span className="min-w-0 flex-1 truncate font-medium">{entry.name}</span>
-        <ActionIconButton size="icon-sm" tooltip="Close file" aria-label="Close file" onClick={onBack}>
-          <X />
-        </ActionIconButton>
+        <span className="min-w-0 flex-1 truncate font-medium">
+          {entry.name}
+          {dirty ? " •" : ""}
+        </span>
+        {editing ? (
+          <>
+            <ActionIconButton
+              size="icon-sm"
+              tooltip="Preview file"
+              aria-label="Preview file"
+              disabled={loading}
+              onClick={() => setEditing(false)}
+            >
+              <Eye />
+            </ActionIconButton>
+            <Button size="sm" disabled={saving || draft === source} onClick={() => void save()}>
+              {saving ? <Spinner /> : <Save />}
+              {saving ? "Saving…" : "Save"}
+            </Button>
+          </>
+        ) : (
+          <>
+            {!error ? (
+              <ActionIconButton
+                size="icon-sm"
+                tooltip="Edit file"
+                aria-label="Edit file"
+                onClick={() => {
+                  setSaveError("");
+                  setEditing(true);
+                }}
+              >
+                <SquarePen />
+              </ActionIconButton>
+            ) : null}
+            <ActionIconButton
+              size="icon-sm"
+              tooltip="Close file"
+              aria-label="Close file"
+              disabled={saving}
+              onClick={closeFile}
+            >
+              <X />
+            </ActionIconButton>
+          </>
+        )}
       </div>
       <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
       <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
       <ScrollArea className="min-h-0 flex-1">
-        {error ? (
+        {loading ? (
+          <Loading label="Opening file…" />
+        ) : error ? (
           <div className="p-3 text-xs text-muted-foreground">{error}</div>
+        ) : editing ? (
+          <div className="flex min-h-full flex-col">
+            <textarea
+              ref={editor}
+              name="file-contents"
+              aria-label={`Edit ${entry.name}`}
+              spellCheck={false}
+              value={draft}
+              className="min-h-[calc(100vh-8rem)] flex-1 resize-none bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              onChange={(event) =>
+                onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
+              }
+            />
+            {saveError ? (
+              <p role="alert" className="border-t p-2 text-xs text-destructive">
+                {saveError}
+              </p>
+            ) : null}
+          </div>
         ) : (
           <Suspense fallback={<Loading label="Opening file…" />}>
-            <CodePreview path={entry.path} source={source} />
+            <CodePreview path={entry.path} source={draft} />
           </Suspense>
         )}
       </ScrollArea>
@@ -781,21 +1007,85 @@ function FileViewer({
   );
 }
 
-function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
-  const [selected, setSelected] = useState<FileEntry | null>(null);
-  const [source, setSource] = useState("");
+interface FileEditorState {
+  rootId: string;
+  selected: FileEntry;
+  source: string;
+  draft: string;
+}
+
+const fileEditorsBySession = new Map<string, FileEditorState>();
+
+function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string; sessionId: string }) {
+  const [cached] = useState(() => {
+    const current = fileEditorsBySession.get(sessionId);
+    if (current?.rootId === rootId) return current;
+    fileEditorsBySession.delete(sessionId);
+  });
+  const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
+  const [source, setSource] = useState(cached?.source ?? "");
+  const [draft, setDraft] = useState(cached?.draft ?? "");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
+  const request = useRef(0);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+
+  useEffect(
+    () => () => {
+      request.current++;
+    },
+    [],
+  );
 
   async function openFile(entry: FileEntry) {
+    const id = ++request.current;
+    selectedRef.current = entry;
     setSelected(entry);
+    setSource("");
+    setDraft("");
     setError("");
+    setLoading(true);
     try {
-      setSource(await invoke<string>("read_text_file", { rootId, path: entry.path }));
+      const contents = await invoke<string>("read_text_file", { rootId, path: entry.path });
+      if (request.current === id) {
+        setSource(contents);
+        setDraft(contents);
+        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents });
+      }
     } catch (reason) {
-      setSource("");
-      setError(String(reason));
+      if (request.current === id) {
+        setSource("");
+        setError(String(reason));
+      }
+    } finally {
+      if (request.current === id) setLoading(false);
     }
+  }
+
+  async function saveFile(contents: string) {
+    const entry = selectedRef.current;
+    if (!entry) return;
+    const id = request.current;
+    await invoke("write_text_file", { rootId, path: entry.path, contents });
+    if (request.current !== id) return;
+    const current = fileEditorsBySession.get(sessionId);
+    if (current?.rootId === rootId && current.selected.path === entry.path)
+      fileEditorsBySession.set(sessionId, { ...current, source: contents });
+    if (selectedRef.current?.path === entry.path) setSource(contents);
+  }
+
+  function changeDraft(contents: string) {
+    setDraft(contents);
+    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents });
+  }
+
+  function closeFile() {
+    request.current++;
+    fileEditorsBySession.delete(sessionId);
+    selectedRef.current = null;
+    setSelected(null);
   }
 
   // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
@@ -804,7 +1094,19 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   // stays, since its content was already read.
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {selected ? <FileViewer entry={selected} source={source} error={error} onBack={() => setSelected(null)} /> : null}
+      {selected ? (
+        <FileViewer
+          key={selected.path}
+          entry={selected}
+          source={source}
+          draft={draft}
+          error={error}
+          loading={loading}
+          onBack={closeFile}
+          onDraftChange={changeDraft}
+          onSave={saveFile}
+        />
+      ) : null}
       <div data-context-files className={`min-h-0 flex-1 flex-col ${selected ? "hidden" : "flex"}`}>
         <SearchInput value={query} placeholder="Search files" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
@@ -901,6 +1203,7 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
   githubItemsBySession.delete(sessionId);
+  fileEditorsBySession.delete(sessionId);
 }
 
 function GitPanel({
@@ -1264,7 +1567,12 @@ export function Inspector({
           </div>
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
-              <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
+              <FilesPanel
+                key={`${session.rootId}:${reload.files}`}
+                root={session.cwd}
+                rootId={session.rootId}
+                sessionId={session.id}
+              />
             </TabsContent>
           ) : null}
           {visited.has("git") ? (

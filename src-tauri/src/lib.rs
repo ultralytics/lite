@@ -40,6 +40,60 @@ const SUPPORTED_KEYS: [&str; 6] = [
     "kimi",
 ];
 
+#[tauri::command]
+fn notifications_supported() -> bool {
+    cfg!(target_os = "macos")
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn request_notification_permission() -> Result<bool, String> {
+    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
+
+    let (sender, receiver) = std::sync::mpsc::channel();
+    UNUserNotificationCenter::currentNotificationCenter()
+        .requestAuthorizationWithOptions_completionHandler(
+            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
+            &block2::RcBlock::new(move |granted: objc2::runtime::Bool, _| {
+                let _ = sender.send(granted.as_bool());
+            }),
+        );
+    tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn request_notification_permission() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn send_notification(title: String) {
+    use objc2_foundation::NSString;
+    use objc2_user_notifications::{
+        UNMutableNotificationContent, UNNotificationRequest, UNUserNotificationCenter,
+    };
+
+    let content = UNMutableNotificationContent::new();
+    content.setTitle(&NSString::from_str(&title));
+    content.setBody(&NSString::from_str("This session needs your attention."));
+    let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
+        &NSString::from_str(&uuid::Uuid::new_v4().to_string()),
+        &content,
+        None,
+    );
+    UNUserNotificationCenter::currentNotificationCenter()
+        .addNotificationRequest_withCompletionHandler(&request, None);
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn send_notification() {}
+
 #[derive(Clone, Copy)]
 struct CodexProvider {
     id: &'static str,
@@ -243,6 +297,19 @@ fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
     } else {
         Err("Path is outside the selected folder".into())
     }
+}
+
+// Deletion scopes the selected entry through its canonical parent rather than canonicalizing the
+// entry itself: following a symlink here would delete its target instead of the link the user chose.
+fn scoped_entry(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(path);
+    let name = path.file_name().ok_or("Path is not a file")?;
+    let parent = path.parent().ok_or("Path is outside the selected folder")?;
+    let parent = fs::canonicalize(parent).map_err(|error| error.to_string())?;
+    if !parent.starts_with(root) {
+        return Err("Path is outside the selected folder".into());
+    }
+    Ok(parent.join(name))
 }
 
 fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
@@ -3405,6 +3472,47 @@ async fn read_text_file(
     String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text".into())
 }
 
+#[tauri::command]
+async fn write_text_file(
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+    contents: String,
+) -> Result<(), String> {
+    if contents.len() > MAX_FILE_BYTES as usize {
+        return Err("File is larger than 500 KB".into());
+    }
+    let root = root_path(&roots, &root_id)?;
+    let path = scoped_path(&root, &path)?;
+    if is_sensitive_path(&root, &path) {
+        return Err("Sensitive files cannot be edited in Lite".into());
+    }
+    if !path.is_file() {
+        return Err("Only files can be edited".into());
+    }
+    let permissions = fs::metadata(&path)
+        .map_err(|error| error.to_string())?
+        .permissions();
+    write_atomic(&path, contents.as_bytes())?;
+    fs::set_permissions(path, permissions).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn delete_file(roots: State<'_, Roots>, root_id: String, path: String) -> Result<(), String> {
+    let root = root_path(&roots, &root_id)?;
+    let path = scoped_entry(&root, &path)?;
+    if is_sensitive_path(&root, &path) {
+        return Err("Sensitive files cannot be deleted from Lite".into());
+    }
+    let file_type = fs::symlink_metadata(&path)
+        .map_err(|error| error.to_string())?
+        .file_type();
+    if !file_type.is_file() && !file_type.is_symlink() {
+        return Err("Only files can be deleted".into());
+    }
+    fs::remove_file(path).map_err(|error| error.to_string())
+}
+
 fn bounded_git_lines(
     git: &Path,
     path: &Path,
@@ -4553,6 +4661,8 @@ pub fn run() {
             delete_session_data,
             list_directory,
             read_text_file,
+            write_text_file,
+            delete_file,
             git_status,
             git_remote,
             git_repo,
@@ -4571,6 +4681,9 @@ pub fn run() {
             provider_auth,
             save_api_key,
             delete_api_key,
+            notifications_supported,
+            request_notification_permission,
+            send_notification,
             check_update,
             install_update,
             local_commit,
@@ -4605,5 +4718,24 @@ mod tests {
             command.get_env("LC_CTYPE"),
             cfg!(target_os = "macos").then_some(OsStr::new("UTF-8"))
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scoped_entry_keeps_a_symlink_as_the_deletion_target() {
+        use std::os::unix::fs::symlink;
+
+        let base = std::env::temp_dir().join(format!("lite-scoped-entry-{}", uuid::Uuid::new_v4()));
+        let root = base.join("root");
+        let outside = base.join("outside.txt");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&outside, "keep").unwrap();
+        let link = root.join("link.txt");
+        symlink(&outside, &link).unwrap();
+
+        let root = fs::canonicalize(root).unwrap();
+        let entry = scoped_entry(&root, link.to_str().unwrap()).unwrap();
+        fs::remove_dir_all(base).unwrap();
+        assert_eq!(entry, root.join("link.txt"));
     }
 }

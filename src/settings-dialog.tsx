@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Eye, EyeOff, Trash2 } from "lucide-react";
+import { Bell, Eye, EyeOff, Info, KeyRound, Moon, RefreshCw, SlidersHorizontal, Sun, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -17,10 +17,22 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import { Item, ItemActions, ItemContent, ItemFooter, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemFooter,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { without } from "@/lib/utils";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import type { Theme } from "@/theme";
 import type { Agent } from "@/types";
 
 // Each CLI signs in on its own; a key here is the alternative for anyone who would rather not.
@@ -30,10 +42,28 @@ export function SettingsDialog({
   open: isOpen,
   onOpenChange,
   onSignIn,
+  notifications,
+  onNotificationsChange,
+  theme,
+  onThemeChange,
+  version,
+  commit,
+  built,
+  repo,
+  onCheckForUpdates,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSignIn: (agent: Agent) => void;
+  notifications: boolean;
+  onNotificationsChange: (enabled: boolean) => Promise<void>;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
+  version: string;
+  commit?: string;
+  built: string;
+  repo: string;
+  onCheckForUpdates: () => void;
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -41,6 +71,7 @@ export function SettingsDialog({
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [notificationsSupported, setNotificationsSupported] = useState<boolean>();
 
   const read = useCallback(async () => {
     setAuth(await invoke<ProviderAuth[]>("provider_auth"));
@@ -52,7 +83,9 @@ export function SettingsDialog({
     setDrafts({});
     setEditing(new Set());
     setRevealed(new Set());
-    void read().catch((reason) => setError(String(reason)));
+    void Promise.all([read(), invoke<boolean>("notifications_supported").then(setNotificationsSupported)]).catch(
+      (reason) => setError(String(reason)),
+    );
   }, [isOpen, read]);
 
   function edit(id: string, open: boolean) {
@@ -97,114 +130,238 @@ export function SettingsDialog({
     }
   }
 
+  async function changeNotifications(enabled: boolean) {
+    setError("");
+    setBusy("notifications");
+    try {
+      await onNotificationsChange(enabled);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:h-[36rem] sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>API keys</DialogTitle>
-          <DialogDescription>
-            Each row shows how new sessions sign in. API keys saved here stay on this computer and take priority over
-            provider sign-in.
-          </DialogDescription>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>Personalize Lite and manage how agent sessions sign in.</DialogDescription>
         </DialogHeader>
-        <DialogBody>
-          <ItemGroup>
-            {providers.map((option) => {
-              const status = auth?.find((entry) => entry.name === option.id);
-              const open = editing.has(option.id);
-              const draft = drafts[option.id] ?? "";
-              const shown = revealed.has(option.id);
-              return (
-                <Item key={option.id} variant="outline">
-                  <ItemMedia variant="icon">
-                    <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
-                  </ItemMedia>
+        <DialogBody className="flex">
+          <Tabs defaultValue="general" orientation="vertical" className="min-h-full w-full gap-6">
+            <TabsList variant="line" className="w-36 shrink-0 items-stretch justify-start border-r pr-4">
+              <TabsTrigger value="general">
+                <SlidersHorizontal />
+                General
+              </TabsTrigger>
+              <TabsTrigger value="keys">
+                <KeyRound />
+                API Keys
+              </TabsTrigger>
+              <TabsTrigger value="about">
+                <Info />
+                About
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="general" className="min-w-0">
+              <h2 className="text-base font-semibold">General</h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">Personalize how Lite looks and responds.</p>
+              <ItemGroup>
+                <Item variant="outline">
+                  <ItemMedia variant="icon">{theme === "dark" ? <Moon /> : <Sun />}</ItemMedia>
                   <ItemContent>
-                    <ItemTitle>
-                      {option.label}
-                      <Badge variant="outline" className="font-mono font-normal">
-                        {option.variable}
-                      </Badge>
-                    </ItemTitle>
-                    <ProviderAuthDescription provider={option} status={status} />
+                    <ItemTitle>Dark Mode</ItemTitle>
+                    <ItemDescription>Use Lite’s dark appearance.</ItemDescription>
                   </ItemContent>
-                  {open ? null : (
-                    <ItemActions>
-                      {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (
-                        <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
-                          Sign in
-                        </Button>
-                      ) : null}
-                      <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
-                        {status?.keyHint || status?.cliAuthMethod === "apiKey" ? "Replace API key" : "Use API key"}
-                      </Button>
-                      {status?.keyHint || status?.cliKeyHint ? (
-                        <ActionIconButton
-                          size="icon-sm"
-                          className="hover:text-destructive"
-                          tooltip="Delete this key"
-                          aria-label={`Delete the ${option.label} key`}
-                          disabled={busy === option.id}
-                          onClick={() => void remove(option.id)}
-                        >
-                          {busy === option.id ? <Spinner /> : <Trash2 />}
-                        </ActionIconButton>
-                      ) : null}
-                    </ItemActions>
-                  )}
-                  {open ? (
-                    <ItemFooter>
-                      <InputGroup>
-                        <InputGroupInput
-                          autoFocus
-                          type={shown ? "text" : "password"}
-                          value={draft}
-                          className="font-mono"
-                          placeholder="Paste a key"
-                          aria-label={`${option.label} API key`}
-                          onChange={(event) =>
-                            setDrafts((current) => ({ ...current, [option.id]: event.target.value }))
-                          }
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" && draft.trim()) void save(option.id);
-                            if (event.key === "Escape") edit(option.id, false);
-                          }}
-                        />
-                        <InputGroupAddon align="inline-end">
-                          <InputGroupButton
-                            size="icon-xs"
-                            aria-label={shown ? "Hide the key" : "Show the key"}
-                            onClick={() => reveal(option.id)}
-                          >
-                            {shown ? <EyeOff /> : <Eye />}
-                          </InputGroupButton>
-                        </InputGroupAddon>
-                      </InputGroup>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!draft.trim() || busy === option.id}
-                        onClick={() => void save(option.id)}
-                      >
-                        {busy === option.id ? <Spinner /> : null}
-                        Save
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
-                        Cancel
-                      </Button>
-                    </ItemFooter>
-                  ) : null}
+                  <ItemActions>
+                    <Switch
+                      aria-label="Dark Mode"
+                      checked={theme === "dark"}
+                      onCheckedChange={(checked) => onThemeChange(checked ? "dark" : "light")}
+                    />
+                  </ItemActions>
                 </Item>
-              );
-            })}
-          </ItemGroup>
+                {notificationsSupported ? (
+                  <Item variant="outline">
+                    <ItemMedia variant="icon">
+                      <Bell />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>macOS Notifications</ItemTitle>
+                      <ItemDescription>Notify you when a background session needs attention.</ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <Switch
+                        aria-label="macOS notifications"
+                        checked={notifications}
+                        disabled={busy === "notifications"}
+                        onCheckedChange={(checked) => void changeNotifications(checked)}
+                      />
+                    </ItemActions>
+                  </Item>
+                ) : null}
+              </ItemGroup>
+            </TabsContent>
+            <TabsContent value="keys" className="min-w-0">
+              <h2 className="text-base font-semibold">API Keys</h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+                Saved keys stay on this computer and take priority over provider sign-in.
+              </p>
+              <ItemGroup>
+                {providers.map((option) => {
+                  const status = auth?.find((entry) => entry.name === option.id);
+                  const open = editing.has(option.id);
+                  const draft = drafts[option.id] ?? "";
+                  const shown = revealed.has(option.id);
+                  return (
+                    <Item key={option.id} variant="outline">
+                      <ItemMedia variant="icon">
+                        <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle>
+                          {option.label}
+                          <Badge variant="outline" className="font-mono font-normal">
+                            {option.variable}
+                          </Badge>
+                        </ItemTitle>
+                        <ProviderAuthDescription provider={option} status={status} />
+                      </ItemContent>
+                      {open ? null : (
+                        <ItemActions>
+                          {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (
+                            <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
+                              Sign in
+                            </Button>
+                          ) : null}
+                          <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
+                            {status?.keyHint || status?.cliAuthMethod === "apiKey" ? "Replace API key" : "Use API key"}
+                          </Button>
+                          {status?.keyHint || status?.cliKeyHint ? (
+                            <ActionIconButton
+                              size="icon-sm"
+                              className="hover:text-destructive"
+                              tooltip="Delete this key"
+                              aria-label={`Delete the ${option.label} key`}
+                              disabled={busy === option.id}
+                              onClick={() => void remove(option.id)}
+                            >
+                              {busy === option.id ? <Spinner /> : <Trash2 />}
+                            </ActionIconButton>
+                          ) : null}
+                        </ItemActions>
+                      )}
+                      {open ? (
+                        <ItemFooter>
+                          <InputGroup>
+                            <InputGroupInput
+                              autoFocus
+                              type={shown ? "text" : "password"}
+                              value={draft}
+                              className="font-mono"
+                              placeholder="Paste a key"
+                              aria-label={`${option.label} API key`}
+                              onChange={(event) =>
+                                setDrafts((current) => ({ ...current, [option.id]: event.target.value }))
+                              }
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter" && draft.trim()) void save(option.id);
+                                if (event.key === "Escape") edit(option.id, false);
+                              }}
+                            />
+                            <InputGroupAddon align="inline-end">
+                              <InputGroupButton
+                                size="icon-xs"
+                                aria-label={shown ? "Hide the key" : "Show the key"}
+                                onClick={() => reveal(option.id)}
+                              >
+                                {shown ? <EyeOff /> : <Eye />}
+                              </InputGroupButton>
+                            </InputGroupAddon>
+                          </InputGroup>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={!draft.trim() || busy === option.id}
+                            onClick={() => void save(option.id)}
+                          >
+                            {busy === option.id ? <Spinner /> : null}
+                            Save
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
+                            Cancel
+                          </Button>
+                        </ItemFooter>
+                      ) : null}
+                    </Item>
+                  );
+                })}
+              </ItemGroup>
+            </TabsContent>
+            <TabsContent value="about" className="min-w-0">
+              <h2 className="text-base font-semibold">About</h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">Version, build, and update information.</p>
+              <Item variant="outline">
+                <ItemMedia variant="icon">
+                  <Info />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{version ? `Lite ${version}` : "Lite"}</ItemTitle>
+                  <ItemDescription>A fast, local workspace for AI coding agents.</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      onOpenChange(false);
+                      onCheckForUpdates();
+                    }}
+                  >
+                    <RefreshCw />
+                    Check for Updates
+                  </Button>
+                </ItemActions>
+              </Item>
+              <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+                {version ? (
+                  <>
+                    <dt className="text-muted-foreground">Version</dt>
+                    <dd className="truncate font-mono">{version}</dd>
+                  </>
+                ) : null}
+                {commit ? (
+                  <>
+                    <dt className="text-muted-foreground">Revision</dt>
+                    <dd className="truncate font-mono">{commit}</dd>
+                  </>
+                ) : null}
+                {built ? (
+                  <>
+                    <dt className="text-muted-foreground">Built</dt>
+                    <dd className="truncate">{built}</dd>
+                  </>
+                ) : null}
+                {repo ? (
+                  <>
+                    <dt className="text-muted-foreground">Source</dt>
+                    <dd className="truncate font-mono" title={repo}>
+                      {repo}
+                    </dd>
+                  </>
+                ) : null}
+              </dl>
+            </TabsContent>
+          </Tabs>
+        </DialogBody>
+        <DialogFooter className={error ? "sm:justify-between" : undefined}>
           {error ? (
-            <p role="alert" className="mt-4 text-sm text-destructive">
+            <p role="alert" className="self-center text-sm text-destructive">
               {error}
             </p>
           ) : null}
-        </DialogBody>
-        <DialogFooter>
           <Button onClick={() => onOpenChange(false)}>Done</Button>
         </DialogFooter>
       </DialogContent>
