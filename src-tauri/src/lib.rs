@@ -3668,6 +3668,7 @@ async fn git_diff(
                 "diff",
                 "--no-index",
                 "--no-ext-diff",
+                "--no-textconv",
                 "--no-color",
                 "--",
                 null,
@@ -3677,7 +3678,7 @@ async fn git_diff(
         );
     }
     let head = command_output(&git, &repository, &["rev-parse", "--verify", "HEAD"]).is_ok();
-    let mut args = vec!["diff", "--no-ext-diff", "--no-color"];
+    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-color"];
     if head {
         args.push("HEAD");
     } else {
