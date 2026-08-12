@@ -184,7 +184,7 @@ impl Drop for PlatformWakeLock {
 }
 
 #[cfg(target_os = "windows")]
-struct PlatformWakeLock(windows::Win32::Foundation::HANDLE);
+struct PlatformWakeLock(isize);
 
 #[cfg(target_os = "windows")]
 impl PlatformWakeLock {
@@ -210,7 +210,7 @@ impl PlatformWakeLock {
             },
         };
         let handle = unsafe { PowerCreateRequest(&context) }.map_err(|error| error.to_string())?;
-        let wake_lock = Self(handle);
+        let wake_lock = Self(handle.0 as isize);
         unsafe {
             PowerSetRequest(handle, PowerRequestSystemRequired)
                 .and_then(|_| PowerSetRequest(handle, PowerRequestDisplayRequired))
@@ -223,16 +223,17 @@ impl PlatformWakeLock {
 #[cfg(target_os = "windows")]
 impl Drop for PlatformWakeLock {
     fn drop(&mut self) {
+        let handle = windows::Win32::Foundation::HANDLE(self.0 as *mut _);
         unsafe {
             let _ = windows::Win32::System::Power::PowerClearRequest(
-                self.0,
+                handle,
                 windows::Win32::System::Power::PowerRequestSystemRequired,
             );
             let _ = windows::Win32::System::Power::PowerClearRequest(
-                self.0,
+                handle,
                 windows::Win32::System::Power::PowerRequestDisplayRequired,
             );
-            let _ = windows::Win32::Foundation::CloseHandle(self.0);
+            let _ = windows::Win32::Foundation::CloseHandle(handle);
         }
     }
 }
