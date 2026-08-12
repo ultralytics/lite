@@ -11,6 +11,7 @@ import java from "highlight.js/lib/languages/java";
 import javascript from "highlight.js/lib/languages/javascript";
 import json from "highlight.js/lib/languages/json";
 import kotlin from "highlight.js/lib/languages/kotlin";
+import markdown from "highlight.js/lib/languages/markdown";
 import php from "highlight.js/lib/languages/php";
 import python from "highlight.js/lib/languages/python";
 import ruby from "highlight.js/lib/languages/ruby";
@@ -34,6 +35,7 @@ const languages = {
   javascript,
   json,
   kotlin,
+  markdown,
   php,
   python,
   ruby,
@@ -49,27 +51,38 @@ const extensionLanguages: Record<string, string> = {
   bash: "bash",
   c: "cpp",
   cc: "cpp",
+  cjs: "javascript",
   cpp: "cpp",
   cs: "csharp",
   css: "css",
+  cts: "typescript",
+  cxx: "cpp",
   diff: "diff",
   go: "go",
   h: "cpp",
   hpp: "cpp",
+  htm: "xml",
   html: "xml",
   java: "java",
   js: "javascript",
   json: "json",
   jsx: "javascript",
   kt: "kotlin",
+  md: "markdown",
+  mdx: "markdown",
+  mjs: "javascript",
+  mts: "typescript",
   php: "php",
   py: "python",
+  pyi: "python",
+  pyw: "python",
   rb: "ruby",
   rs: "rust",
   sh: "bash",
   sql: "sql",
   ts: "typescript",
   tsx: "typescript",
+  svg: "xml",
   xml: "xml",
   yaml: "yaml",
   yml: "yaml",
@@ -103,9 +116,17 @@ function LineNumbers({ count }: { count: number }) {
   );
 }
 
-export default function CodePreview({ path, source }: { path: string; source: string }) {
+export default function CodePreview({
+  path,
+  source,
+  rendered = false,
+}: {
+  path: string;
+  source: string;
+  rendered?: boolean;
+}) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
-  if (extension === "md" || extension === "mdx") {
+  if (rendered && (extension === "md" || extension === "mdx")) {
     return (
       <article className="markdown-viewer max-w-none px-6 py-5">
         <ReactMarkdown
@@ -131,6 +152,16 @@ export default function CodePreview({ path, source }: { path: string; source: st
           {source}
         </ReactMarkdown>
       </article>
+    );
+  }
+  if (rendered && ["htm", "html", "svg"].includes(extension)) {
+    return (
+      <iframe
+        title={`Preview of ${path.split(/[\\/]/).pop() ?? path}`}
+        sandbox=""
+        srcDoc={source}
+        className="min-h-[calc(100vh-8rem)] w-full border-0 bg-white"
+      />
     );
   }
   return (
