@@ -178,7 +178,7 @@ function SessionViewOptions({
         <TooltipTrigger render={<span className="inline-flex">{trigger}</span>} />
         <TooltipContent>Session view: {label}</TooltipContent>
       </Tooltip>
-      <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuContent align="start" className="w-48">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Sort by</DropdownMenuLabel>
           {SESSION_SORTS.map((option) => {

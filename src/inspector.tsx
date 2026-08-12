@@ -1011,10 +1011,15 @@ function FileViewer({
           </TabsList>
         ) : null}
         {!error ? (
-          <Button size="sm" disabled={saving || draft === source} onClick={() => void save()}>
+          <ActionIconButton
+            size="icon-sm"
+            tooltip={saving ? "Saving file…" : "Save file"}
+            aria-label={saving ? "Saving file" : "Save file"}
+            disabled={saving || draft === source}
+            onClick={() => void save()}
+          >
             {saving ? <Spinner aria-hidden="true" /> : <Save aria-hidden="true" />}
-            {saving ? "Saving…" : "Save"}
-          </Button>
+          </ActionIconButton>
         ) : null}
       </PreviewHeader>
       <PreviewZoomControls zoom={zoom} />
