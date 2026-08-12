@@ -1138,11 +1138,12 @@ function App() {
   const recoverRef = useRef<(session: Session) => Promise<void>>(() => Promise.resolve());
   const markAttention = useCallback((sessionId: string) => {
     const current = attentionRef.current;
-    if (current[current.length - 1] === sessionId) return;
+    if (current[current.length - 1] === sessionId) return false;
     const next = current.filter((id) => id !== sessionId);
     next.push(sessionId);
     attentionRef.current = next;
     setAttention(next);
+    return true;
   }, []);
   const clearAttention = useCallback((sessionId: string) => {
     const current = attentionRef.current;
@@ -1425,8 +1426,11 @@ function App() {
         const { title, path, activity, notification } = appendOutput(payload.sessionId, payload.data);
         if (title) markTitle(payload.sessionId, title);
         if (path) markDirectory(payload.sessionId, path);
-        if (notification && (selectedRef.current?.id !== payload.sessionId || !document.hasFocus())) {
-          markAttention(payload.sessionId);
+        if (
+          notification &&
+          (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()) &&
+          markAttention(payload.sessionId)
+        ) {
           const session = sessionsRef.current.find((item) => item.id === payload.sessionId);
           if (notificationsRef.current && session)
             void invoke("send_notification", { title: session.name }).catch(() => {});

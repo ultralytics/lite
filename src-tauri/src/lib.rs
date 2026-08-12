@@ -49,12 +49,20 @@ fn notifications_supported() -> bool {
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn request_notification_permission(app: AppHandle) -> Result<bool, String> {
-    use tauri::plugin::PermissionState;
+async fn request_notification_permission() -> Result<bool, String> {
+    use objc2_user_notifications::{UNAuthorizationOptions, UNUserNotificationCenter};
 
-    app.notification()
-        .request_permission()
-        .map(|permission| permission == PermissionState::Granted)
+    let (sender, receiver) = std::sync::mpsc::channel();
+    UNUserNotificationCenter::currentNotificationCenter()
+        .requestAuthorizationWithOptions_completionHandler(
+            UNAuthorizationOptions::Alert | UNAuthorizationOptions::Sound,
+            &block2::RcBlock::new(move |granted: objc2::runtime::Bool, _| {
+                let _ = sender.send(granted.as_bool());
+            }),
+        );
+    tauri::async_runtime::spawn_blocking(move || receiver.recv())
+        .await
+        .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
 }
 
