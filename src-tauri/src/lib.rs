@@ -3556,8 +3556,13 @@ fn bounded_git_changes(
                 .read_until(0, &mut source)
                 .map_err(|error| error.to_string())?;
         }
-        let Ok(path) = String::from_utf8(record[3..].to_vec()) else {
-            continue;
+        let path = match String::from_utf8(record[3..].to_vec()) {
+            Ok(path) => path,
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Git status contains a non-UTF-8 path".into());
+            }
         };
         changes.push(GitChange { status, path });
         if changes.len() > MAX_GIT_CHANGES {
@@ -3652,11 +3657,19 @@ async fn git_diff(
     if is_sensitive_path(&granted, &file) || is_sensitive_path(&granted, &ancestor) {
         return Err("Sensitive files are hidden from Git diffs".into());
     }
+    let pathspec = path_text(relative);
     let file = path_text(&file);
     let untracked = !command_output(
         &git,
         &repository,
-        &["ls-files", "--others", "--exclude-standard", "--", &file],
+        &[
+            "--literal-pathspecs",
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--",
+            &pathspec,
+        ],
     )?
     .is_empty();
     if untracked {
@@ -3669,6 +3682,7 @@ async fn git_diff(
                 "--no-index",
                 "--no-ext-diff",
                 "--no-textconv",
+                "--no-renames",
                 "--no-color",
                 "--",
                 null,
@@ -3678,13 +3692,20 @@ async fn git_diff(
         );
     }
     let head = command_output(&git, &repository, &["rev-parse", "--verify", "HEAD"]).is_ok();
-    let mut args = vec!["diff", "--no-ext-diff", "--no-textconv", "--no-color"];
+    let mut args = vec![
+        "--literal-pathspecs",
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--no-renames",
+        "--no-color",
+    ];
     if head {
         args.push("HEAD");
     } else {
         args.push("--cached");
     }
-    args.extend(["--", &file]);
+    args.extend(["--", &pathspec]);
     bounded_git_output(&git, &repository, &args, &[0])
 }
 
@@ -3711,6 +3732,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         &git,
         &repository,
         &[
+            "--literal-pathspecs",
             "status",
             "--porcelain=v1",
             "-z",
@@ -3723,7 +3745,15 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
     let mut line_diffs = Command::new(&git)
         .arg("-C")
         .arg(&repository)
-        .args(["diff", "--numstat", "-z", "HEAD", "--", &scope_text])
+        .args([
+            "--literal-pathspecs",
+            "diff",
+            "--numstat",
+            "-z",
+            "HEAD",
+            "--",
+            &scope_text,
+        ])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -4944,5 +4974,36 @@ mod tests {
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].status, "??");
         assert_eq!(changes[0].path, "sub/a -> b.ts");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn git_changes_reject_non_utf8_paths() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt};
+
+        let root = std::env::temp_dir().join(format!("lite-git-status-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join(OsString::from_vec(vec![b'f', 0xff])), "change").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("init")
+                .arg(&root)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let error = bounded_git_changes(
+            Path::new("git"),
+            &root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .err()
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
+
+        assert_eq!(error, "Git status contains a non-UTF-8 path");
     }
 }

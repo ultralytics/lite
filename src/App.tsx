@@ -1001,11 +1001,10 @@ function SessionRow({
           });
         }
         event.preventDefault();
-        const parent = pointer.row.parentElement;
-        const rows = [...(parent?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
-        const parentTop = parent?.getBoundingClientRect().top ?? 0;
+        const list = pointer.row.closest("[data-session-list]");
+        const rows = [...(list?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
         const before = rows.find(
-          (row) => row !== pointer.row && event.clientY < parentTop + row.offsetTop + row.offsetHeight / 2,
+          (row) => row !== pointer.row && event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2,
         );
         const last = rows[rows.length - 1];
         const row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
@@ -1018,10 +1017,14 @@ function SessionRow({
         const start = sourceIndex < targetIndex ? sourceIndex + 1 : targetIndex + Number(after);
         const end = sourceIndex < targetIndex ? targetIndex + Number(after) : sourceIndex;
         const shifts: [HTMLElement, number][] = [];
-        for (let index = start; index < end; index++) {
-          const shiftedRow = rows[index];
-          const neighbor = rows[index + (sourceIndex < targetIndex ? -1 : 1)];
-          shifts.push([shiftedRow, neighbor.offsetTop - shiftedRow.offsetTop]);
+        // Group headers do not move during a drag, so cross-group drops use the insertion marker
+        // without pretending the rows can close a gap that includes a header.
+        if (pointer.row.parentElement === row.parentElement) {
+          for (let index = start; index < end; index++) {
+            const shiftedRow = rows[index];
+            const neighbor = rows[index + (sourceIndex < targetIndex ? -1 : 1)];
+            shifts.push([shiftedRow, neighbor.getBoundingClientRect().top - shiftedRow.getBoundingClientRect().top]);
+          }
         }
         clearDrop();
         row.dataset.drop = after ? "after" : "before";
@@ -1845,13 +1848,28 @@ function App() {
 
   function reorderSession(draggedId: string, targetId: string, after: boolean) {
     setSessions((current) => {
-      const draggedIndex = current.findIndex((session) => session.id === draggedId);
-      const targetIndex = current.findIndex((session) => session.id === targetId);
+      const ordered = groupSessions(current).flatMap((group) => group.sessions);
+      const draggedIndex = ordered.findIndex((session) => session.id === draggedId);
+      const targetIndex = ordered.findIndex((session) => session.id === targetId);
       if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return current;
-      const next = [...current];
-      const [dragged] = next.splice(draggedIndex, 1);
+      const dragged = ordered[draggedIndex];
+      const target = ordered[targetIndex];
+      const draggedGroup = dragged.repo ?? dragged.cwd;
+      const targetGroup = target.repo ?? target.cwd;
+      if (draggedGroup !== targetGroup) {
+        const moved = ordered.filter((session) => (session.repo ?? session.cwd) === draggedGroup);
+        const next = ordered.filter((session) => (session.repo ?? session.cwd) !== draggedGroup);
+        const targets = next.flatMap((session, index) =>
+          (session.repo ?? session.cwd) === targetGroup ? [index] : [],
+        );
+        const destination = after ? targets[targets.length - 1] + 1 : targets[0];
+        next.splice(destination, 0, ...moved);
+        return next;
+      }
+      const next = [...ordered];
+      const [moved] = next.splice(draggedIndex, 1);
       const destination = next.findIndex((session) => session.id === targetId) + Number(after);
-      next.splice(destination, 0, dragged);
+      next.splice(destination, 0, moved);
       return next;
     });
   }
@@ -1899,6 +1917,10 @@ function App() {
 
   // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
   // session it resumed by id is retained only until the shared Undo window expires.
+  function replaceRecentSession(from: string, to: string) {
+    recentSessions.current = recentSessions.current.map((id) => (id === from ? to : id));
+  }
+
   function restartSession(session: Session, select = true, recovered = false) {
     // A close in flight owns this session's fate: restarting now would inherit a worktree the
     // close dialog is about to take away.
@@ -1922,6 +1944,7 @@ function App() {
       restarted,
       () => {
         const restored = { ...session, running: false };
+        replaceRecentSession(fresh.id, session.id);
         setStartingIds((current) => swapped(current, fresh.id, session.id));
         setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
         setSelectedId((current) => (current === fresh.id ? session.id : current));
@@ -1932,6 +1955,7 @@ function App() {
           try {
             await invoke("stop_session", { sessionId: fresh.id });
           } catch (reason) {
+            replaceRecentSession(session.id, fresh.id);
             setStartingIds((current) => swapped(current, session.id, fresh.id));
             const relaunched = { ...fresh, running: false };
             setSessions((current) => current.map((item) => (item.id === session.id ? relaunched : item)));
@@ -1963,6 +1987,7 @@ function App() {
 
   async function restartSessionNow(session: Session, fresh: Session, select: boolean): Promise<boolean> {
     runs.current.delete(session.id);
+    replaceRecentSession(session.id, fresh.id);
     setStartingIds((current) => new Set(current).add(fresh.id));
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
     if (select) {
@@ -1972,6 +1997,7 @@ function App() {
     try {
       await invoke("stop_session", { sessionId: session.id });
     } catch (reason) {
+      replaceRecentSession(fresh.id, session.id);
       const restored = { ...session, running: false };
       setStartingIds((current) => swapped(current, fresh.id, session.id));
       setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
@@ -1983,6 +2009,7 @@ function App() {
       return false;
     }
     if (!(await launch(fresh, false))) {
+      replaceRecentSession(fresh.id, session.id);
       await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
       clearOutput(fresh.id);
       clearInspectorCache(fresh.id);
@@ -2575,7 +2602,7 @@ function App() {
                       </ActionIconButton>
                     </div>
                     <ScrollArea className="min-h-0 flex-1">
-                      <div className="space-y-0.5 px-2 pb-2">
+                      <div className="space-y-0.5 px-2 pb-2" data-session-list>
                         {query && !visible.length ? (
                           <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
                         ) : null}
@@ -2630,8 +2657,8 @@ function App() {
                                       onRenamingChange={(renaming) => setRenamingId(renaming ? session.id : "")}
                                       onReorder={(targetId, after) => reorderSession(session.id, targetId, after)}
                                       onMove={(direction) => {
-                                        const index = group.sessions.findIndex((item) => item.id === session.id);
-                                        const target = group.sessions[index + direction];
+                                        const index = displayed.findIndex((item) => item.id === session.id);
+                                        const target = displayed[index + direction];
                                         if (target) reorderSession(session.id, target.id, direction > 0);
                                       }}
                                       onRestart={() => void restartSession(session)}
