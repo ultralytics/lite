@@ -3683,7 +3683,7 @@ async fn git_diff(
     }
     let pathspec = path_text(relative);
     let file = path_text(&file);
-    let untracked = !command_output(
+    let untracked = !bounded_git_output(
         &git,
         &repository,
         &[
@@ -3691,9 +3691,11 @@ async fn git_diff(
             "ls-files",
             "--others",
             "--exclude-standard",
+            "-z",
             "--",
             &pathspec,
         ],
+        &[0],
     )?
     .is_empty();
     if untracked {
