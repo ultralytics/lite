@@ -280,14 +280,21 @@ impl Drop for PlatformWakeLock {
 }
 
 #[derive(Default)]
-struct WakeLock(Mutex<Option<PlatformWakeLock>>);
+struct WakeLock(Mutex<Option<PlatformWakeLock>>, AtomicU64);
 
-fn update_keep_awake(wake_lock: &WakeLock, enabled: bool) -> Result<(), String> {
-    let mut wake_lock = wake_lock.0.lock().map_err(|error| error.to_string())?;
-    if enabled && wake_lock.is_none() {
-        *wake_lock = Some(PlatformWakeLock::new()?);
+fn update_keep_awake(wake_lock: &WakeLock, enabled: bool, generation: u64) -> Result<(), String> {
+    let mut platform_lock = wake_lock.0.lock().map_err(|error| error.to_string())?;
+    if generation != wake_lock.1.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if enabled && platform_lock.is_none() {
+        let next = PlatformWakeLock::new();
+        if generation != wake_lock.1.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        *platform_lock = Some(next?);
     } else if !enabled {
-        *wake_lock = None;
+        *platform_lock = None;
     }
     Ok(())
 }
@@ -295,8 +302,9 @@ fn update_keep_awake(wake_lock: &WakeLock, enabled: bool) -> Result<(), String> 
 #[cfg(target_os = "linux")]
 #[tauri::command]
 async fn set_keep_awake(app: AppHandle, enabled: bool) -> Result<(), String> {
+    let generation = app.state::<WakeLock>().1.fetch_add(1, Ordering::SeqCst) + 1;
     tauri::async_runtime::spawn_blocking(move || {
-        update_keep_awake(&app.state::<WakeLock>(), enabled)
+        update_keep_awake(&app.state::<WakeLock>(), enabled, generation)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -305,7 +313,8 @@ async fn set_keep_awake(app: AppHandle, enabled: bool) -> Result<(), String> {
 #[cfg(not(target_os = "linux"))]
 #[tauri::command]
 fn set_keep_awake(wake_lock: State<WakeLock>, enabled: bool) -> Result<(), String> {
-    update_keep_awake(&wake_lock, enabled)
+    let generation = wake_lock.1.fetch_add(1, Ordering::SeqCst) + 1;
+    update_keep_awake(&wake_lock, enabled, generation)
 }
 
 #[derive(Default)]
