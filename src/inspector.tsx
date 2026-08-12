@@ -787,6 +787,7 @@ function FileViewer({
   const viewer = useRef<HTMLElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const dirty = draft !== source;
+  const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
 
   // Reading is keyboard work, so the viewer takes focus as it opens and the zoom keys land here
   // rather than wherever the pointer last was.
@@ -962,7 +963,9 @@ function FileViewer({
               spellCheck={false}
               value={draft}
               className="min-h-[calc(100vh-8rem)] flex-1 resize-none bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-              onChange={(event) => setDraft(event.target.value)}
+              onChange={(event) =>
+                setDraft(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
+              }
             />
             {saveError ? (
               <p role="alert" className="border-t p-2 text-xs text-destructive">
