@@ -184,19 +184,39 @@ impl Drop for PlatformWakeLock {
 }
 
 #[cfg(target_os = "windows")]
-struct PlatformWakeLock;
+struct PlatformWakeLock(windows::Win32::Foundation::HANDLE);
 
 #[cfg(target_os = "windows")]
 impl PlatformWakeLock {
     fn new() -> Result<Self, String> {
         use windows::Win32::System::Power::{
-            ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
+            PowerCreateRequest, PowerRequestDisplayRequired, PowerRequestSystemRequired,
+            PowerSetRequest,
         };
+        use windows::Win32::System::Threading::{
+            POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0,
+        };
+        use windows::core::PWSTR;
 
-        unsafe {
-            SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)
+        let mut reason: Vec<u16> = "Lite has active sessions"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let context = REASON_CONTEXT {
+            Version: 0,
+            Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+            Reason: REASON_CONTEXT_0 {
+                SimpleReasonString: PWSTR(reason.as_mut_ptr()),
+            },
         };
-        Ok(Self)
+        let handle = unsafe { PowerCreateRequest(&context) }.map_err(|error| error.to_string())?;
+        let wake_lock = Self(handle);
+        unsafe {
+            PowerSetRequest(handle, PowerRequestSystemRequired)
+                .and_then(|_| PowerSetRequest(handle, PowerRequestDisplayRequired))
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(wake_lock)
     }
 }
 
@@ -204,10 +224,16 @@ impl PlatformWakeLock {
 impl Drop for PlatformWakeLock {
     fn drop(&mut self) {
         unsafe {
-            windows::Win32::System::Power::SetThreadExecutionState(
-                windows::Win32::System::Power::ES_CONTINUOUS,
-            )
-        };
+            let _ = windows::Win32::System::Power::PowerClearRequest(
+                self.0,
+                windows::Win32::System::Power::PowerRequestSystemRequired,
+            );
+            let _ = windows::Win32::System::Power::PowerClearRequest(
+                self.0,
+                windows::Win32::System::Power::PowerRequestDisplayRequired,
+            );
+            let _ = windows::Win32::Foundation::CloseHandle(self.0);
+        }
     }
 }
 
