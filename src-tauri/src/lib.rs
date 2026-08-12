@@ -3657,7 +3657,14 @@ async fn git_diff(
         &["rev-parse", "--show-toplevel"],
     )?)
     .map_err(|error| error.to_string())?;
-    let file = repository.join(relative);
+    let file = relative
+        .components()
+        .fold(repository.clone(), |mut file, component| {
+            if let Component::Normal(part) = component {
+                file.push(part);
+            }
+            file
+        });
     let mut ancestor = file.as_path();
     while !ancestor.exists() {
         ancestor = ancestor

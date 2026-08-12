@@ -1008,10 +1008,16 @@ function SessionRow({
           (row) => row !== pointer.row && event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2,
         );
         const last = rows[rows.length - 1];
-        const row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
-        const after = !before;
+        let row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
+        let after = !before;
         pointer.row.style.transform = `translate3d(0, ${event.clientY - pointer.y}px, 0)`;
         if (!row) return clearDrop();
+        if (row.parentElement !== pointer.row.parentElement) {
+          const targetRows = [...(row.parentElement?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
+          const targetRect = row.parentElement?.getBoundingClientRect();
+          after = Boolean(targetRect && event.clientY >= targetRect.top + targetRect.height / 2);
+          row = targetRows[after ? targetRows.length - 1 : 0];
+        }
         if (drop.current?.row === row && drop.current?.after === after) return;
         const sourceIndex = rows.indexOf(pointer.row);
         const targetIndex = rows.indexOf(row);
@@ -1024,7 +1030,7 @@ function SessionRow({
           for (let index = start; index < end; index++) {
             const shiftedRow = rows[index];
             const neighbor = rows[index + (sourceIndex < targetIndex ? -1 : 1)];
-            shifts.push([shiftedRow, neighbor.getBoundingClientRect().top - shiftedRow.getBoundingClientRect().top]);
+            shifts.push([shiftedRow, neighbor.offsetTop - shiftedRow.offsetTop]);
           }
         }
         clearDrop();
@@ -1353,17 +1359,19 @@ function App() {
   selectedRef.current = selected;
   notificationsRef.current = notifications;
   closeRef.current = closeSession;
+  function expandSessionGroup(session: Session) {
+    const group = session.repo ?? session.cwd;
+    if (!collapsedGroups.has(group)) return;
+    setCollapsedGroups((current) => {
+      if (!current.has(group)) return current;
+      const next = new Set(current);
+      next.delete(group);
+      return next;
+    });
+  }
   openRef.current = (session) => {
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
-    const group = session.repo ?? session.cwd;
-    if (collapsedGroups.has(group)) {
-      setCollapsedGroups((current) => {
-        if (!current.has(group)) return current;
-        const next = new Set(current);
-        next.delete(group);
-        return next;
-      });
-    }
+    expandSessionGroup(session);
     clearAttention(session.id);
     setSelectedId(session.id);
     if (session.running) {
@@ -1844,6 +1852,7 @@ function App() {
   function createSession(session: Session) {
     resumed.current = session.id;
     recentSessions.current = [session.id, ...recentSessions.current];
+    expandSessionGroup(session);
     setSessions((current) => [session, ...current]);
     setSelectedId(session.id);
     void launch(session, false);
@@ -2225,6 +2234,7 @@ function App() {
     function restore(running: boolean) {
       keptWorktrees.current.delete(session.id);
       forceWorktree.current.delete(session.id);
+      expandSessionGroup(session);
       if (!recentSessions.current.includes(session.id)) {
         recentSessions.current.splice(Math.min(Math.max(recentIndex, 0), recentSessions.current.length), 0, session.id);
       }
