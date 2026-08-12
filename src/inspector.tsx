@@ -55,7 +55,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { without } from "@/lib/utils";
-import { MAX_OUTPUT_BYTES, readOutput } from "@/output-store";
+import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
 import { storedFontSize, zoomedFontSize } from "@/theme";
 import {
   type DirectoryCursor,
@@ -79,7 +79,10 @@ const CodePreview = lazy(() => import("@/code-preview"));
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
 const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
-const GH_VIEW = /\bgh\s+(issue|pr)\s+view\s+([1-9]\d{0,8})((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
+const ITEM_MENTION =
+  /(?:^|[^\w./-])(?:(\w[\w.-]*\/\w[\w.-]*)\s+)?(pull requests?|PRs?|issues?)\s+#?([1-9]\d{0,8})(?![\w.])/gi;
+const GH_ITEM_COMMAND =
+  /\bgh\s+(issue|pr)\s+(?!create\b|list\b|status\b)[\w-]+\s+([1-9]\d{0,8})((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
 const githubItemsBySession = new Map<string, Set<string>>();
@@ -93,8 +96,13 @@ function namedInSession(sessionId: string, remote: string) {
     urls.add(`${prefix}${match[1]}/${match[2]}/issues/${match[3]}`);
   }
   const base = remote.toLowerCase().startsWith(prefix) ? prefix + remote.slice(prefix.length) : "";
-  for (const match of text.matchAll(GH_VIEW)) {
-    const repository = match[3].match(/(?:^|\s)(?:--repo|-R)(?:=|\s+)([\w.-]+\/[\w.-]+)/)?.[1];
+  for (const match of text.matchAll(ITEM_MENTION)) {
+    const repositoryUrl = match[1] ? `${prefix}${match[1]}` : base;
+    if (repositoryUrl)
+      urls.add(`${repositoryUrl}/${match[2].toLowerCase().startsWith("issue") ? "issues" : "pull"}/${match[3]}`);
+  }
+  for (const match of text.matchAll(GH_ITEM_COMMAND)) {
+    const repository = match[3].match(/(?:^|\s)(?:--repo|-R)(?:=|\s+)["']?([\w.-]+\/[\w.-]+)/)?.[1];
     const repositoryUrl = repository ? `${prefix}${repository}` : base;
     if (repositoryUrl) urls.add(`${repositoryUrl}/${match[1].toLowerCase() === "pr" ? "pull" : "issues"}/${match[2]}`);
   }
@@ -892,17 +900,50 @@ export function clearInspectorCache(sessionId: string) {
   githubItemsBySession.delete(sessionId);
 }
 
-function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
-  // Read once when the panel is built, like every other thing this panel shows: the refresh button
-  // rebuilds it, and nothing here watches the session between those two moments.
-  const urls = useMemo(() => namedInSession(sessionId, remote), [sessionId, remote]);
+function GitPanel({
+  rootId,
+  sessionId,
+  remote,
+  active,
+}: {
+  rootId: string;
+  sessionId: string;
+  remote: string;
+  active: boolean;
+}) {
+  const [urls, setUrls] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
   const [items, setItems] = useState<GitHubItem[]>();
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
 
-  // The panel is only built when the tab is requested and again whenever it is refreshed, so asking
-  // GitHub here asks it exactly on those two occasions and never between them.
+  // While Git is visible, follow the output stream it summarizes. Subscribing replays the existing
+  // chunks synchronously, so one initial scan replaces rescanning the whole bounded buffer per chunk.
+  useEffect(() => {
+    if (!active) return;
+    let replaying = true;
+    let settle = 0;
+    const scan = () => {
+      const next = namedInSession(sessionId, remote);
+      setUrls((current) =>
+        current.length === next.length && current.every((url, index) => url === next[index]) ? current : next,
+      );
+    };
+    const unsubscribe = subscribeOutput(sessionId, () => {
+      if (replaying) return;
+      window.clearTimeout(settle);
+      settle = window.setTimeout(scan, 250);
+    });
+    replaying = false;
+    scan();
+    return () => {
+      window.clearTimeout(settle);
+      unsubscribe();
+    };
+  }, [active, remote, sessionId]);
+
+  // A visible panel follows newly named items, while refresh rebuilds the current snapshot. Either way,
+  // GitHub is asked only when the set of explicit references changes.
   useEffect(() => {
     if (!urls.length) return setItems([]);
     let disposed = false;
@@ -1225,7 +1266,13 @@ export function Inspector({
           ) : null}
           {visited.has("git") ? (
             <TabsContent value="git" keepMounted className="min-h-0 overflow-hidden">
-              <GitPanel key={reload.git} rootId={session.rootId} sessionId={session.id} remote={remote} />
+              <GitPanel
+                key={reload.git}
+                rootId={session.rootId}
+                sessionId={session.id}
+                remote={remote}
+                active={tab === "git"}
+              />
             </TabsContent>
           ) : null}
           {visited.has("usage") ? (
