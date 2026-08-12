@@ -797,14 +797,14 @@ function FileViewer({
   onSave: (contents: string) => Promise<void>;
 }) {
   const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
-  const [view, setView] = useState<"source" | "preview">("source");
-  const [editing, setEditing] = useState(false);
+  const [view, setView] = useState<"source" | "preview" | "edit">("source");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
   const viewer = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const dirty = draft !== source;
+  const editing = view === "edit";
   const renderable = RENDERED_FILE.test(entry.path);
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
 
@@ -866,7 +866,7 @@ function FileViewer({
   return (
     <Tabs
       ref={viewer}
-      value={view}
+      value={editing ? "source" : view}
       onValueChange={(value) => setView(value as "source" | "preview")}
       aria-label={entry.name}
       tabIndex={-1}
@@ -951,10 +951,7 @@ function FileViewer({
               tooltip={renderable ? "Preview file" : "Stop editing"}
               aria-label={renderable ? "Preview file" : "Stop editing"}
               disabled={loading}
-              onClick={() => {
-                setEditing(false);
-                if (renderable) setView("preview");
-              }}
+              onClick={() => setView(renderable ? "preview" : "source")}
             >
               <Eye />
             </ActionIconButton>
@@ -972,7 +969,7 @@ function FileViewer({
                 aria-label="Edit file"
                 onClick={() => {
                   setSaveError("");
-                  setEditing(true);
+                  setView("edit");
                 }}
               >
                 <SquarePen />
