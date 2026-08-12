@@ -95,7 +95,8 @@ const ITEM_MENTION =
   /(?:^|[^\w./-])(?:(\w[\w.-]*\/\w[\w.-]*)\s+)?(pull requests?|PRs?|issues?)\s+#?([1-9]\d{0,8})(?![\w.])/gi;
 const GH_ITEM_COMMAND =
   /\bgh\s+(issue|pr)\s+(?!create\b|list\b|status\b)[\w-]+((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
-const GH_REPOSITORY = /(?:^|\s)(?:--repo|-R)(?:=|\s+)["']?([\w.-]+\/[\w.-]+)["']?/i;
+const GH_REPOSITORY =
+  /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
 const githubItemsBySession = new Map<string, Set<string>>();
@@ -115,8 +116,9 @@ function namedInSession(sessionId: string, remote: string) {
       urls.add(`${repositoryUrl}/${match[2].toLowerCase().startsWith("issue") ? "issues" : "pull"}/${match[3]}`);
   }
   for (const match of text.matchAll(GH_ITEM_COMMAND)) {
-    const repository = match[2].match(GH_REPOSITORY)?.[1];
-    const number = match[2].replace(GH_REPOSITORY, " ").match(/^\s+([1-9]\d{0,8})(?![\w.])/)?.[1];
+    const repositoryMatch = match[2].match(GH_REPOSITORY);
+    const repository = repositoryMatch?.slice(2).find(Boolean);
+    const number = match[2].replace(GH_REPOSITORY, "$1").match(/^\s+([1-9]\d{0,8})(?![\w.])/)?.[1];
     const repositoryUrl = repository ? `${prefix}${repository}` : base;
     if (repositoryUrl && number)
       urls.add(`${repositoryUrl}/${match[1].toLowerCase() === "pr" ? "pull" : "issues"}/${number}`);
