@@ -3696,16 +3696,33 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         Ok(root) => root,
         Err(_) => return Ok(None),
     };
+    let repository = fs::canonicalize(&root).map_err(|error| error.to_string())?;
+    let scope = path
+        .strip_prefix(&repository)
+        .map_err(|_| "The selected folder is outside the Git repository")?;
+    let scope_text = if scope.as_os_str().is_empty() {
+        ".".into()
+    } else {
+        path_text(scope)
+    };
     let branch = command_output(&git, &path, &["branch", "--show-current"])?;
-    let (changes, changes_truncated) = bounded_git_changes(
+    let (mut changes, changes_truncated) = bounded_git_changes(
         &git,
-        Path::new(&root),
-        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        &repository,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            &scope_text,
+        ],
     )?;
-    let line_diffs = Command::new(&git)
+    changes.retain(|change| Path::new(&change.path).starts_with(scope));
+    let mut line_diffs = Command::new(&git)
         .arg("-C")
-        .arg(&root)
-        .args(["diff", "--numstat", "-z", "HEAD"])
+        .arg(&repository)
+        .args(["diff", "--numstat", "-z", "HEAD", "--", &scope_text])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -3776,6 +3793,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             diffs
         })
         .unwrap_or_default();
+    line_diffs.retain(|path, _| Path::new(path).starts_with(scope));
     Ok(Some(GitStatus {
         branch: if branch.is_empty() {
             "Detached HEAD".into()
@@ -4888,11 +4906,13 @@ mod tests {
         assert_eq!(entry, root.join("link.txt"));
     }
 
+    #[cfg(not(windows))]
     #[test]
     fn git_changes_preserve_human_status_markers_in_filenames() {
         let root = std::env::temp_dir().join(format!("lite-git-status-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("a -> b.ts"), "change").unwrap();
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("sub/a -> b.ts"), "change").unwrap();
+        fs::write(root.join("outside.txt"), "outside").unwrap();
         assert!(
             Command::new("git")
                 .arg("init")
@@ -4907,7 +4927,14 @@ mod tests {
         let (changes, truncated) = bounded_git_changes(
             Path::new("git"),
             &root,
-            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+            &[
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+                "--",
+                "sub",
+            ],
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -4915,6 +4942,6 @@ mod tests {
         assert!(!truncated);
         assert_eq!(changes.len(), 1);
         assert_eq!(changes[0].status, "??");
-        assert_eq!(changes[0].path, "a -> b.ts");
+        assert_eq!(changes[0].path, "sub/a -> b.ts");
     }
 }
