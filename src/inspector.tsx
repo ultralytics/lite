@@ -1763,7 +1763,7 @@ export function Inspector({
           {visited.has("git") ? (
             <TabsContent value="git" keepMounted className="min-h-0 overflow-hidden">
               <GitPanel
-                key={reload.git}
+                key={`${session.rootId}:${reload.git}`}
                 rootId={session.rootId}
                 sessionId={session.id}
                 remote={remote}
