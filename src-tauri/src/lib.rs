@@ -153,6 +153,30 @@ fn stop_pty(session: &mut PtySession) -> Result<(), String> {
 struct Sessions(Mutex<HashMap<String, PtySession>>);
 
 #[derive(Default)]
+struct WakeLock(Mutex<Option<keepawake::KeepAwake>>);
+
+#[tauri::command]
+fn set_keep_awake(wake_lock: State<WakeLock>, enabled: bool) -> Result<(), String> {
+    let mut wake_lock = wake_lock.0.lock().map_err(|error| error.to_string())?;
+    if enabled && wake_lock.is_none() {
+        *wake_lock = Some(
+            keepawake::Builder::default()
+                .display(true)
+                .idle(true)
+                .sleep(true)
+                .reason("Lite has active sessions")
+                .app_name("Lite")
+                .app_reverse_domain("com.ultralytics.lite")
+                .create()
+                .map_err(|error| format!("Could not keep the system awake: {error}"))?,
+        );
+    } else if !enabled {
+        *wake_lock = None;
+    }
+    Ok(())
+}
+
+#[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
 
 #[derive(Default)]
@@ -4858,6 +4882,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sessions::default())
+        .manage(WakeLock::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
@@ -4879,6 +4904,7 @@ pub fn run() {
             watch_shell_agent,
             resize_session,
             stop_session,
+            set_keep_awake,
             delete_session_data,
             list_directory,
             read_text_file,

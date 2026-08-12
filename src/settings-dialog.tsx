@@ -1,7 +1,19 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Bell, Eye, EyeOff, Info, KeyRound, Moon, RefreshCw, SlidersHorizontal, Sun, Trash2 } from "lucide-react";
+import {
+  Bell,
+  Coffee,
+  Eye,
+  EyeOff,
+  Info,
+  KeyRound,
+  Moon,
+  RefreshCw,
+  SlidersHorizontal,
+  Sun,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -44,6 +56,8 @@ export function SettingsDialog({
   onSignIn,
   notifications,
   onNotificationsChange,
+  keepAwake,
+  onKeepAwakeChange,
   theme,
   onThemeChange,
   version,
@@ -57,6 +71,8 @@ export function SettingsDialog({
   onSignIn: (agent: Agent) => void;
   notifications: boolean;
   onNotificationsChange: (enabled: boolean) => Promise<void>;
+  keepAwake: boolean;
+  onKeepAwakeChange: (enabled: boolean) => Promise<void>;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   version: string;
@@ -142,6 +158,18 @@ export function SettingsDialog({
     }
   }
 
+  async function changeKeepAwake(enabled: boolean) {
+    setError("");
+    setBusy("keep-awake");
+    try {
+      await onKeepAwakeChange(enabled);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="sm:h-[36rem] sm:max-w-3xl">
@@ -180,6 +208,23 @@ export function SettingsDialog({
                       aria-label="Dark Mode"
                       checked={theme === "dark"}
                       onCheckedChange={(checked) => onThemeChange(checked ? "dark" : "light")}
+                    />
+                  </ItemActions>
+                </Item>
+                <Item variant="outline">
+                  <ItemMedia variant="icon">
+                    <Coffee />
+                  </ItemMedia>
+                  <ItemContent>
+                    <ItemTitle>Keep System Awake</ItemTitle>
+                    <ItemDescription>Prevent sleep and the screensaver while a session is active.</ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Switch
+                      aria-label="Keep system awake"
+                      checked={keepAwake}
+                      disabled={busy === "keep-awake"}
+                      onCheckedChange={(checked) => void changeKeepAwake(checked)}
                     />
                   </ItemActions>
                 </Item>

@@ -169,6 +169,7 @@ const RELEASE_NOTE = {
 } as const;
 
 const NOTIFICATIONS_KEY = "lite.notifications";
+const KEEP_AWAKE_KEY = "lite.keep-awake";
 
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
 
@@ -1234,6 +1235,7 @@ function App() {
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) === "true");
+  const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
   const [closingAll, setClosingAll] = useState(false);
   // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
   // cleanup has settled, so nothing can be reopened under its own cleanup.
@@ -1508,6 +1510,13 @@ function App() {
     );
   }, [sessions]);
 
+  const hasActiveSessions = sessions.some((session) => session.running);
+  useEffect(() => {
+    void invoke("set_keep_awake", { enabled: keepAwake && hasActiveSessions }).catch((reason) =>
+      setError(String(reason)),
+    );
+  }, [hasActiveSessions, keepAwake]);
+
   useEffect(() => {
     void getVersion()
       .then(setVersion)
@@ -1689,6 +1698,14 @@ function App() {
     localStorage.setItem(NOTIFICATIONS_KEY, String(enabled));
     notificationsRef.current = enabled;
     setNotifications(enabled);
+  }, []);
+
+  const changeKeepAwake = useCallback(async (enabled: boolean) => {
+    await invoke("set_keep_awake", {
+      enabled: enabled && sessionsRef.current.some((session) => session.running),
+    });
+    localStorage.setItem(KEEP_AWAKE_KEY, String(enabled));
+    setKeepAwake(enabled);
   }, []);
 
   const launch = useCallback(async (session: Session, resume: boolean) => {
@@ -3146,6 +3163,8 @@ function App() {
             onSignIn={signIn}
             notifications={notifications}
             onNotificationsChange={changeNotifications}
+            keepAwake={keepAwake}
+            onKeepAwakeChange={changeKeepAwake}
             theme={theme}
             onThemeChange={setTheme}
             version={version}

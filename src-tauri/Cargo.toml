@@ -34,6 +34,7 @@ sysinfo = { version = "0.38.4", default-features = false, features = ["system"] 
 tauri-plugin-dialog = "2.7.2"
 tungstenite = "0.30"
 uuid = { version = "1", features = ["v4"] }
+keepawake = "0.6.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
