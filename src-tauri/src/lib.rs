@@ -288,11 +288,14 @@ fn update_keep_awake(wake_lock: &WakeLock, enabled: bool, generation: u64) -> Re
         return Ok(());
     }
     if enabled && platform_lock.is_none() {
-        let next = PlatformWakeLock::new();
-        if generation != wake_lock.1.load(Ordering::SeqCst) {
-            return Ok(());
+        match PlatformWakeLock::new() {
+            Ok(next) if generation == wake_lock.1.load(Ordering::SeqCst) => {
+                *platform_lock = Some(next);
+            }
+            Ok(_) => {}
+            Err(error) if generation == wake_lock.1.load(Ordering::SeqCst) => return Err(error),
+            Err(_) => {}
         }
-        *platform_lock = Some(next?);
     } else if !enabled {
         *platform_lock = None;
     }
