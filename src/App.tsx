@@ -1341,9 +1341,10 @@ function App() {
   );
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
   recentSessions.current = recentSessions.current.filter((id) => sessionsById.has(id));
+  const recentIds = new Set(recentSessions.current);
   const switcherSessions = recentSessions.current.flatMap((id) => sessionsById.get(id) ?? []);
   for (const session of sessions) {
-    if (!recentSessions.current.includes(session.id)) switcherSessions.push(session);
+    if (!recentIds.has(session.id)) switcherSessions.push(session);
   }
   visibleRef.current = shut.sidebar ? sessions : displayed;
   sessionsRef.current = sessions;
@@ -2208,6 +2209,7 @@ function App() {
     if (startingIds.has(session.id)) return;
     clearAttention(session.id);
     const index = sessions.findIndex((item) => item.id === session.id);
+    const recentIndex = recentSessions.current.indexOf(session.id);
     const wasSelected = selectedId === session.id;
     const nextSelectedId = sessions.find((item) => item.id !== session.id)?.id ?? "";
     runs.current.delete(session.id);
@@ -2222,6 +2224,9 @@ function App() {
     function restore(running: boolean) {
       keptWorktrees.current.delete(session.id);
       forceWorktree.current.delete(session.id);
+      if (!recentSessions.current.includes(session.id)) {
+        recentSessions.current.splice(Math.min(Math.max(recentIndex, 0), recentSessions.current.length), 0, session.id);
+      }
       setSessions((current) => {
         if (current.some((item) => item.id === session.id)) {
           return current.map((item) => (item.id === session.id ? { ...item, running } : item));
