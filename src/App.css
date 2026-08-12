@@ -22,16 +22,13 @@ html[data-session-dragging] * {
   height: 0.375rem;
 }
 
-/* xterm draws a scrollbar of its own over the viewport's, and coloring the viewport's makes the
-   platform show it instead of hiding it, so only the one matching the panels is kept. */
-.xterm .xterm-scrollable-element > .scrollbar {
-  display: none;
-}
-
 [data-context-session] .xterm .xterm-viewport {
   background-color: var(--background);
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 40%, transparent) transparent;
+  scrollbar-width: none;
+}
+
+[data-context-session] .xterm .xterm-viewport::-webkit-scrollbar {
+  display: none;
 }
 
 /* GitHub syntax theme driven by the --syntax-* tokens, so highlighting follows light and dark. */

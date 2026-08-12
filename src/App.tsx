@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  ArrowDownToLine,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -2460,6 +2461,20 @@ function App() {
                         data-terminal-action
                         onMouseDown={(event) => event.preventDefault()}
                       >
+                        <ActionIconButton
+                          size="icon-sm"
+                          tooltip="Scroll to bottom"
+                          aria-label="Scroll to bottom"
+                          onClick={() =>
+                            document
+                              .querySelector<HTMLElement>(
+                                `[data-context-session="${CSS.escape(selected.id)}"] [data-terminal-scroll-bottom]`,
+                              )
+                              ?.click()
+                          }
+                        >
+                          <ArrowDownToLine />
+                        </ActionIconButton>
                         <SessionActionButtons
                           name={selected.name}
                           onRestart={() => void restartSession(selected)}

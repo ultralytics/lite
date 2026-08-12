@@ -16,6 +16,9 @@ const themes: Record<Theme, ITheme> = {
   light: {
     background: "#ffffff",
     foreground: "#0a0a0a",
+    scrollbarSliderBackground: "#6e778166",
+    scrollbarSliderHoverBackground: "#6e778199",
+    scrollbarSliderActiveBackground: "#6e7781cc",
     cursor: "#0a0a0a",
     cursorAccent: "#ffffff",
     selectionBackground: "#0969da33",
@@ -39,6 +42,9 @@ const themes: Record<Theme, ITheme> = {
   dark: {
     background: "#0a0a0a",
     foreground: "#fafafa",
+    scrollbarSliderBackground: "#8b949e66",
+    scrollbarSliderHoverBackground: "#8b949e99",
+    scrollbarSliderActiveBackground: "#8b949ecc",
     cursor: "#fafafa",
     cursorAccent: "#0a0a0a",
     selectionBackground: "#58a6ff40",
@@ -125,6 +131,7 @@ export function TerminalView({
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize,
       lineHeight: 1.25,
+      overviewRuler: { width: 6 },
       linkHandler: {
         activate: (event, url) => {
           event.preventDefault();
@@ -271,6 +278,7 @@ export function TerminalView({
       <button type="button" hidden data-context-zoom-in onClick={() => zoomRef.current(1)} />
       <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
+      <button type="button" hidden data-terminal-scroll-bottom onClick={() => terminalRef.current?.scrollToBottom()} />
       <div ref={containerRef} className="h-full w-full" />
     </div>
   );
