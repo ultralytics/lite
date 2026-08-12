@@ -1340,6 +1340,7 @@ function App() {
     query.trim() || !collapsedGroups.has(group.path) ? group.sessions : [],
   );
   const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  recentSessions.current = recentSessions.current.filter((id) => sessionsById.has(id));
   const switcherSessions = recentSessions.current.flatMap((id) => sessionsById.get(id) ?? []);
   for (const session of sessions) {
     if (!recentSessions.current.includes(session.id)) switcherSessions.push(session);
