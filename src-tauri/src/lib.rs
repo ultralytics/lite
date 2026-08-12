@@ -7,7 +7,7 @@ use std::{
     collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         Arc, Mutex,
@@ -3544,6 +3544,111 @@ fn bounded_git_lines(
     Ok((lines, truncated))
 }
 
+fn bounded_git_output(
+    git: &Path,
+    directory: &Path,
+    args: &[&str],
+    accepted_codes: &[i32],
+) -> Result<String, String> {
+    let mut child = Command::new(git)
+        .arg("-C")
+        .arg(path_text(directory))
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or("Could not read Git diff")?;
+    let mut output = Vec::new();
+    stdout
+        .take(MAX_GIT_DIFF_BYTES + 1)
+        .read_to_end(&mut output)
+        .map_err(|error| error.to_string())?;
+    if output.len() > MAX_GIT_DIFF_BYTES as usize {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err("Diff is larger than 1 MB".into());
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if !status
+        .code()
+        .is_some_and(|code| accepted_codes.contains(&code))
+    {
+        return Err("Could not read Git diff".into());
+    }
+    Ok(String::from_utf8_lossy(&output).into_owned())
+}
+
+#[tauri::command]
+async fn git_diff(
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+) -> Result<String, String> {
+    let granted = root_path(&roots, &root_id)?;
+    let relative = Path::new(&path);
+    if relative.is_absolute()
+        || relative
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+    {
+        return Err("Path is outside the selected folder".into());
+    }
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let repository = PathBuf::from(command_output(
+        &git,
+        &granted,
+        &["rev-parse", "--show-toplevel"],
+    )?);
+    let file = repository.join(relative);
+    let mut ancestor = file.as_path();
+    while !ancestor.exists() {
+        ancestor = ancestor
+            .parent()
+            .ok_or("Path is outside the selected folder")?;
+    }
+    let ancestor = fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
+    if !ancestor.starts_with(&granted) {
+        return Err("Path is outside the selected folder".into());
+    }
+    if is_sensitive_path(&granted, &file) {
+        return Err("Sensitive files are hidden from Git diffs".into());
+    }
+    let file = path_text(&file);
+    let untracked = !command_output(
+        &git,
+        &repository,
+        &["ls-files", "--others", "--exclude-standard", "--", &file],
+    )?
+    .is_empty();
+    if untracked {
+        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+        return bounded_git_output(
+            &git,
+            &repository,
+            &[
+                "diff",
+                "--no-index",
+                "--no-ext-diff",
+                "--no-color",
+                "--",
+                null,
+                &file,
+            ],
+            &[0, 1],
+        );
+    }
+    let head = command_output(&git, &repository, &["rev-parse", "--verify", "HEAD"]).is_ok();
+    let mut args = vec!["diff", "--no-ext-diff", "--no-color"];
+    if head {
+        args.push("HEAD");
+    } else {
+        args.push("--cached");
+    }
+    args.extend(["--", &file]);
+    bounded_git_output(&git, &repository, &args, &[0])
+}
+
 #[tauri::command]
 async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<GitStatus>, String> {
     let path = root_path(&roots, &root_id)?;
@@ -4664,6 +4769,7 @@ pub fn run() {
             write_text_file,
             delete_file,
             git_status,
+            git_diff,
             git_remote,
             git_repo,
             create_worktree,

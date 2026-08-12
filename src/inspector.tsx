@@ -1119,7 +1119,103 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
   );
 }
 
-function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
+function changedPath(change: string) {
+  const path = change.slice(3);
+  return path.split(" -> ").pop() ?? path;
+}
+
+function DiffViewer({
+  path,
+  source,
+  error,
+  loading,
+  onBack,
+}: {
+  path: string;
+  source: string;
+  error: string;
+  loading: boolean;
+  onBack: () => void;
+}) {
+  const viewer = useRef<HTMLElement>(null);
+  const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
+
+  useEffect(() => viewer.current?.focus(), []);
+
+  function zoom(step: -1 | 0 | 1) {
+    setFontSize(zoomedFontSize(PREVIEW_FONT_KEY, fontSize, step));
+  }
+
+  return (
+    <section
+      ref={viewer}
+      aria-label={`Diff for ${path}`}
+      tabIndex={-1}
+      data-context-zoom
+      className="flex h-full min-h-0 flex-col outline-none"
+      style={{ fontSize, lineHeight: 1.6 }}
+      onKeyDown={(event) => {
+        const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
+        if (command && event.key.toLowerCase() === "w") {
+          event.preventDefault();
+          onBack();
+          return;
+        }
+        if (command) {
+          const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
+          if (step || event.key === "0") {
+            event.preventDefault();
+            zoom(step);
+          }
+          return;
+        }
+        if (event.key === "Escape" || event.key === "ArrowLeft") {
+          event.preventDefault();
+          onBack();
+        }
+      }}
+    >
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]">
+        <ActionIconButton size="icon-sm" tooltip="Back to Git" aria-label="Back to Git" onClick={onBack}>
+          <ArrowLeft />
+        </ActionIconButton>
+        <FileDiff aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+        <span className="min-w-0 flex-1 truncate font-mono font-medium" title={path}>
+          {path}
+        </span>
+        <ActionIconButton size="icon-sm" tooltip="Close diff" aria-label="Close diff" onClick={onBack}>
+          <X />
+        </ActionIconButton>
+      </div>
+      <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
+      <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
+      <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
+      <ScrollArea className="min-h-0 flex-1">
+        {loading ? (
+          <Loading label="Reading diff…" />
+        ) : error ? (
+          <p role="alert" className="p-3 text-xs text-destructive">
+            {error}
+          </p>
+        ) : source ? (
+          <Suspense fallback={<Loading label="Opening diff…" />}>
+            <CodePreview path={`${path}.diff`} source={source} />
+          </Suspense>
+        ) : (
+          <p className="p-3 text-xs text-muted-foreground">This file has no text diff.</p>
+        )}
+      </ScrollArea>
+    </section>
+  );
+}
+
+function RepositoryCard({
+  repository,
+  onOpenDiff,
+}: {
+  repository: RepositoryGroup;
+  onOpenDiff: (path: string) => void;
+}) {
   const pullRequests = repository.items.filter((item) => item.kind === "pull request");
   const issues = repository.items.filter((item) => item.kind === "issue");
   const header = (
@@ -1169,10 +1265,16 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
         <div className="border-t px-2.5 py-2">
           <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
           {repository.changes.map((change) => {
-            const path = change.slice(3);
-            const diff = repository.lineDiffs[path.split(" -> ").pop() ?? path];
+            const path = changedPath(change);
+            const diff = repository.lineDiffs[path];
             return (
-              <div key={change} className="flex items-center gap-2 rounded-md px-1.5 py-1 hover:bg-muted">
+              <button
+                key={change}
+                type="button"
+                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                aria-label={`View diff for ${path}`}
+                onClick={() => onOpenDiff(path)}
+              >
                 <span
                   className={`${change.startsWith("??") ? "w-16" : "w-5"} shrink-0 font-mono text-xs text-muted-foreground`}
                 >
@@ -1189,7 +1291,7 @@ function RepositoryCard({ repository }: { repository: RepositoryGroup }) {
                 {diff?.deletions ? (
                   <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{diff.deletions}</span>
                 ) : null}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -1224,6 +1326,11 @@ function GitPanel({
   const [items, setItems] = useState<GitHubItem[]>();
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
+  const [diffPath, setDiffPath] = useState("");
+  const [diffSource, setDiffSource] = useState("");
+  const [diffError, setDiffError] = useState("");
+  const [diffLoading, setDiffLoading] = useState(false);
+  const diffRequest = useRef(0);
 
   // While Git is visible, follow the output stream it summarizes. Subscribing replays the existing
   // chunks synchronously, so one initial scan replaces rescanning the whole bounded buffer per chunk.
@@ -1283,6 +1390,27 @@ function GitPanel({
     }
   }, [rootId]);
 
+  async function openDiff(path: string) {
+    const request = ++diffRequest.current;
+    setDiffPath(path);
+    setDiffSource("");
+    setDiffError("");
+    setDiffLoading(true);
+    try {
+      const source = await invoke<string>("git_diff", { rootId, path });
+      if (diffRequest.current === request) setDiffSource(source);
+    } catch (reason) {
+      if (diffRequest.current === request) setDiffError(String(reason));
+    } finally {
+      if (diffRequest.current === request) setDiffLoading(false);
+    }
+  }
+
+  function closeDiff() {
+    diffRequest.current++;
+    setDiffPath("");
+  }
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -1308,29 +1436,38 @@ function GitPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <SearchInput value={query} placeholder="Search items" onChange={setQuery} />
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3 p-3">
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          {!error && status === undefined ? <Loading label="Reading Git status…" /> : null}
-          {shown.map((repository) => (
-            <RepositoryCard key={(repository.url ?? repository.path)?.toLowerCase()} repository={repository} />
-          ))}
-          {lowered && status !== undefined && items && repositories.length && !shown.length ? (
-            <p className="text-sm text-muted-foreground">No matches</p>
-          ) : null}
-          {items === undefined && urls.length ? <Loading label="Checking GitHub links…" /> : null}
-          {status === null && items && !repositories.length ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyDescription>
-                  This folder is not a Git repository, and this session has not named a GitHub pull request or issue.
-                </EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          ) : null}
-        </div>
-      </ScrollArea>
+      {diffPath ? (
+        <DiffViewer path={diffPath} source={diffSource} error={diffError} loading={diffLoading} onBack={closeDiff} />
+      ) : null}
+      <div className={`min-h-0 flex-1 flex-col ${diffPath ? "hidden" : "flex"}`}>
+        <SearchInput value={query} placeholder="Search items" onChange={setQuery} />
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="flex flex-col gap-3 p-3">
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {!error && status === undefined ? <Loading label="Reading Git status…" /> : null}
+            {shown.map((repository) => (
+              <RepositoryCard
+                key={(repository.url ?? repository.path)?.toLowerCase()}
+                repository={repository}
+                onOpenDiff={(path) => void openDiff(path)}
+              />
+            ))}
+            {lowered && status !== undefined && items && repositories.length && !shown.length ? (
+              <p className="text-sm text-muted-foreground">No matches</p>
+            ) : null}
+            {items === undefined && urls.length ? <Loading label="Checking GitHub links…" /> : null}
+            {status === null && items && !repositories.length ? (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyDescription>
+                    This folder is not a Git repository, and this session has not named a GitHub pull request or issue.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : null}
+          </div>
+        </ScrollArea>
+      </div>
     </div>
   );
 }
