@@ -117,7 +117,7 @@ const SESSION_VIEW_KEY = "lite.sessionView.v1";
 type SessionGrouping = "none" | "repository" | "directory" | "state";
 type SessionSort = "newest" | "oldest" | "name-asc" | "name-desc" | "manual";
 const SESSION_GROUPINGS: { value: SessionGrouping; label: string }[] = [
-  { value: "none", label: "Ungrouped" },
+  { value: "none", label: "None" },
   { value: "repository", label: "Repository" },
   { value: "directory", label: "Directory" },
   { value: "state", label: "State" },
@@ -156,14 +156,12 @@ function SessionViewOptions({
   view: { grouping: SessionGrouping; sort: SessionSort };
   onChange: (view: { grouping: SessionGrouping; sort: SessionSort }) => void;
 }) {
+  const label = `${SESSION_SORT_LABELS[view.sort]} · ${SESSION_GROUPINGS.find(({ value }) => value === view.grouping)?.label}`;
   const trigger = (
     <DropdownMenuTrigger
       render={
-        <Button variant="outline" size="sm" className="mb-1 w-full justify-start gap-1.5 text-xs">
-          <SlidersHorizontal aria-hidden="true" className="size-3.5" />
-          <span className="truncate">
-            {SESSION_SORT_LABELS[view.sort]} · {SESSION_GROUPINGS.find(({ value }) => value === view.grouping)?.label}
-          </span>
+        <Button variant="ghost" size="icon-sm" aria-label={`Session view: ${label}`}>
+          <SlidersHorizontal aria-hidden="true" />
         </Button>
       }
     />
@@ -171,10 +169,10 @@ function SessionViewOptions({
   return (
     <DropdownMenu>
       <Tooltip>
-        <TooltipTrigger render={<span className="inline-flex w-full">{trigger}</span>} />
-        <TooltipContent>Session view options</TooltipContent>
+        <TooltipTrigger render={<span className="inline-flex">{trigger}</span>} />
+        <TooltipContent>Session view: {label}</TooltipContent>
       </Tooltip>
-      <DropdownMenuContent className="w-48">
+      <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuGroup>
           <DropdownMenuLabel>Sort by</DropdownMenuLabel>
           {SESSION_SORTS.map((option) => {
@@ -2804,6 +2802,14 @@ function App() {
                       >
                         <Plus />
                       </ActionIconButton>
+                      <SessionViewOptions
+                        view={sessionView}
+                        onChange={(view) => {
+                          localStorage.setItem(SESSION_VIEW_KEY, JSON.stringify(view));
+                          if (view.grouping !== sessionView.grouping) setCollapsedGroups(new Set());
+                          setSessionView(view);
+                        }}
+                      />
                       <ActionIconButton
                         size="icon-sm"
                         tooltip="Collapse sessions"
@@ -2813,16 +2819,6 @@ function App() {
                       >
                         <ChevronLeft />
                       </ActionIconButton>
-                    </div>
-                    <div className="shrink-0 px-2">
-                      <SessionViewOptions
-                        view={sessionView}
-                        onChange={(view) => {
-                          localStorage.setItem(SESSION_VIEW_KEY, JSON.stringify(view));
-                          if (view.grouping !== sessionView.grouping) setCollapsedGroups(new Set());
-                          setSessionView(view);
-                        }}
-                      />
                     </div>
                     <ScrollArea className="min-h-0 flex-1">
                       <div className="space-y-0.5 px-2 pb-2" data-session-list>
