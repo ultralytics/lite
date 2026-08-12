@@ -1699,9 +1699,16 @@ function App() {
 
   const hasActiveSessions = sessions.some((session) => session.running);
   useEffect(() => {
+    let current = true;
     void invoke("set_keep_awake", { enabled: keepAwake && hasActiveSessions }).catch((reason) => {
+      if (!current) return;
+      localStorage.setItem(KEEP_AWAKE_KEY, "false");
+      setKeepAwake(false);
       setError(String(reason));
     });
+    return () => {
+      current = false;
+    };
   }, [hasActiveSessions, keepAwake]);
 
   useEffect(() => {
