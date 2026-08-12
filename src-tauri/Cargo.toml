@@ -34,7 +34,6 @@ sysinfo = { version = "0.38.4", default-features = false, features = ["system"] 
 tauri-plugin-dialog = "2.7.2"
 tungstenite = "0.30"
 uuid = { version = "1", features = ["v4"] }
-keepawake = "0.6.0"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
@@ -42,5 +41,13 @@ tauri-plugin-updater = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 objc2 = "0.6.4"
+objc2-core-foundation = { version = "0.3.2", features = ["CFString"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
+objc2-io-kit = { version = "0.3.2", features = ["pwr_mgt"] }
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus = "0.9.12"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_System_Power"] }

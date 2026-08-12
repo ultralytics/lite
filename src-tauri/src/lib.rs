@@ -152,22 +152,140 @@ fn stop_pty(session: &mut PtySession) -> Result<(), String> {
 #[derive(Default)]
 struct Sessions(Mutex<HashMap<String, PtySession>>);
 
+#[cfg(target_os = "macos")]
+struct PlatformWakeLock(u32);
+
+#[cfg(target_os = "macos")]
+impl PlatformWakeLock {
+    fn new() -> Result<Self, String> {
+        use objc2_core_foundation::CFString;
+        use objc2_io_kit::{IOPMAssertionCreateWithName, kIOPMAssertionLevelOn, kIOReturnSuccess};
+
+        let mut id = 0;
+        let result = unsafe {
+            IOPMAssertionCreateWithName(
+                Some(&CFString::from_static_str("PreventUserIdleDisplaySleep")),
+                kIOPMAssertionLevelOn,
+                Some(&CFString::from_static_str("Lite has active sessions")),
+                &mut id,
+            )
+        };
+        (result == kIOReturnSuccess)
+            .then_some(Self(id))
+            .ok_or_else(|| format!("Could not keep the system awake: IOKit error {result}"))
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for PlatformWakeLock {
+    fn drop(&mut self) {
+        objc2_io_kit::IOPMAssertionRelease(self.0);
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct PlatformWakeLock;
+
+#[cfg(target_os = "windows")]
+impl PlatformWakeLock {
+    fn new() -> Result<Self, String> {
+        use windows::Win32::System::Power::{
+            ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
+            SetThreadExecutionState,
+        };
+
+        (unsafe {
+            SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)
+        } != EXECUTION_STATE(0))
+        .then_some(Self)
+        .ok_or_else(|| {
+            format!(
+                "Could not keep the system awake: {}",
+                windows::core::Error::from_thread()
+            )
+        })
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for PlatformWakeLock {
+    fn drop(&mut self) {
+        unsafe {
+            windows::Win32::System::Power::SetThreadExecutionState(
+                windows::Win32::System::Power::ES_CONTINUOUS,
+            )
+        };
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct PlatformWakeLock {
+    session: dbus::blocking::Connection,
+    cookie: u32,
+    _system: dbus::blocking::Connection,
+    _idle: dbus::arg::OwnedFd,
+}
+
+#[cfg(target_os = "linux")]
+impl PlatformWakeLock {
+    fn new() -> Result<Self, String> {
+        let system = dbus::blocking::Connection::new_system().map_err(|error| error.to_string())?;
+        let (idle,) = system
+            .with_proxy(
+                "org.freedesktop.login1",
+                "/org/freedesktop/login1",
+                Duration::from_secs(5),
+            )
+            .method_call(
+                "org.freedesktop.login1.Manager",
+                "Inhibit",
+                ("idle", "Lite", "Lite has active sessions", "block"),
+            )
+            .map_err(|error| format!("Could not keep the system awake: {error}"))?;
+        let session =
+            dbus::blocking::Connection::new_session().map_err(|error| error.to_string())?;
+        let (cookie,) = session
+            .with_proxy(
+                "org.freedesktop.ScreenSaver",
+                "/org/freedesktop/ScreenSaver",
+                Duration::from_secs(5),
+            )
+            .method_call(
+                "org.freedesktop.ScreenSaver",
+                "Inhibit",
+                ("com.ultralytics.lite", "Lite has active sessions"),
+            )
+            .map_err(|error| format!("Could not keep the display awake: {error}"))?;
+        Ok(Self {
+            session,
+            cookie,
+            _system: system,
+            _idle: idle,
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for PlatformWakeLock {
+    fn drop(&mut self) {
+        let _: Result<(), _> = self
+            .session
+            .with_proxy(
+                "org.freedesktop.ScreenSaver",
+                "/org/freedesktop/ScreenSaver",
+                Duration::from_secs(5),
+            )
+            .method_call("org.freedesktop.ScreenSaver", "UnInhibit", (self.cookie,));
+    }
+}
+
 #[derive(Default)]
-struct WakeLock(Mutex<Option<keepawake::KeepAwake>>);
+struct WakeLock(Mutex<Option<PlatformWakeLock>>);
 
 fn update_keep_awake(wake_lock: &WakeLock, enabled: bool) -> Result<(), String> {
     let mut wake_lock = wake_lock.0.lock().map_err(|error| error.to_string())?;
     if enabled && wake_lock.is_none() {
-        *wake_lock = Some(
-            keepawake::Builder::default()
-                .display(true)
-                .idle(true)
-                .reason("Lite has active sessions")
-                .app_name("Lite")
-                .app_reverse_domain("com.ultralytics.lite")
-                .create()
-                .map_err(|error| format!("Could not keep the system awake: {error}"))?,
-        );
+        *wake_lock = Some(PlatformWakeLock::new()?);
     } else if !enabled {
         *wake_lock = None;
     }

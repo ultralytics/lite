@@ -1,19 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import {
-  Bell,
-  Coffee,
-  Eye,
-  EyeOff,
-  Info,
-  KeyRound,
-  Moon,
-  RefreshCw,
-  SlidersHorizontal,
-  Sun,
-  Trash2,
-} from "lucide-react";
+import { Bell, Eye, EyeOff, Info, KeyRound, Moon, RefreshCw, SlidersHorizontal, Sun, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -72,7 +60,7 @@ export function SettingsDialog({
   notifications: boolean;
   onNotificationsChange: (enabled: boolean) => Promise<void>;
   keepAwake: boolean;
-  onKeepAwakeChange: (enabled: boolean) => Promise<void>;
+  onKeepAwakeChange: (enabled: boolean) => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   version: string;
@@ -158,18 +146,6 @@ export function SettingsDialog({
     }
   }
 
-  async function changeKeepAwake(enabled: boolean) {
-    setError("");
-    setBusy("keep-awake");
-    try {
-      await onKeepAwakeChange(enabled);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy("");
-    }
-  }
-
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="sm:h-[36rem] sm:max-w-3xl">
@@ -213,7 +189,7 @@ export function SettingsDialog({
                 </Item>
                 <Item variant="outline">
                   <ItemMedia variant="icon">
-                    <Coffee />
+                    <Sun />
                   </ItemMedia>
                   <ItemContent>
                     <ItemTitle>Keep System Awake</ItemTitle>
@@ -222,12 +198,7 @@ export function SettingsDialog({
                     </ItemDescription>
                   </ItemContent>
                   <ItemActions>
-                    <Switch
-                      aria-label="Keep system awake"
-                      checked={keepAwake}
-                      disabled={busy === "keep-awake"}
-                      onCheckedChange={(checked) => void changeKeepAwake(checked)}
-                    />
+                    <Switch aria-label="Keep system awake" checked={keepAwake} onCheckedChange={onKeepAwakeChange} />
                   </ItemActions>
                 </Item>
                 {notificationsSupported ? (

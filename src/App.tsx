@@ -1512,9 +1512,11 @@ function App() {
 
   const hasActiveSessions = sessions.some((session) => session.running);
   useEffect(() => {
-    void invoke("set_keep_awake", { enabled: keepAwake && hasActiveSessions }).catch((reason) =>
-      setError(String(reason)),
-    );
+    void invoke("set_keep_awake", { enabled: keepAwake && hasActiveSessions }).catch((reason) => {
+      localStorage.setItem(KEEP_AWAKE_KEY, "false");
+      setKeepAwake(false);
+      setError(String(reason));
+    });
   }, [hasActiveSessions, keepAwake]);
 
   useEffect(() => {
@@ -1700,10 +1702,7 @@ function App() {
     setNotifications(enabled);
   }, []);
 
-  const changeKeepAwake = useCallback(async (enabled: boolean) => {
-    await invoke("set_keep_awake", {
-      enabled: enabled && sessionsRef.current.some((session) => session.running),
-    });
+  const changeKeepAwake = useCallback((enabled: boolean) => {
     localStorage.setItem(KEEP_AWAKE_KEY, String(enabled));
     setKeepAwake(enabled);
   }, []);
