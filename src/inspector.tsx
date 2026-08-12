@@ -1584,7 +1584,7 @@ export function Inspector({
                 rootId={session.rootId}
                 sessionId={session.id}
                 remote={remote}
-                active={tab === "git"}
+                active={tab === "git" && !collapsed}
               />
             </TabsContent>
           ) : null}
