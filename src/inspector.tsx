@@ -991,7 +991,8 @@ interface FileEditorState {
 const fileEditorsBySession = new Map<string, FileEditorState>();
 
 function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string; sessionId: string }) {
-  const cached = fileEditorsBySession.get(sessionId);
+  const editorId = `${sessionId}:${rootId}`;
+  const cached = fileEditorsBySession.get(editorId);
   const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
   const [source, setSource] = useState(cached?.source ?? "");
   const [draft, setDraft] = useState(cached?.draft ?? "");
@@ -1022,7 +1023,7 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
       if (request.current === id) {
         setSource(contents);
         setDraft(contents);
-        fileEditorsBySession.set(sessionId, { selected: entry, source: contents, draft: contents });
+        fileEditorsBySession.set(editorId, { selected: entry, source: contents, draft: contents });
       }
     } catch (reason) {
       if (request.current === id) {
@@ -1037,19 +1038,22 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
   async function saveFile(contents: string) {
     const entry = selectedRef.current;
     if (!entry) return;
+    const id = request.current;
     await invoke("write_text_file", { rootId, path: entry.path, contents });
-    const current = fileEditorsBySession.get(sessionId);
-    if (current?.selected.path === entry.path) fileEditorsBySession.set(sessionId, { ...current, source: contents });
+    if (request.current !== id) return;
+    const current = fileEditorsBySession.get(editorId);
+    if (current?.selected.path === entry.path) fileEditorsBySession.set(editorId, { ...current, source: contents });
     if (selectedRef.current?.path === entry.path) setSource(contents);
   }
 
   function changeDraft(contents: string) {
     setDraft(contents);
-    if (selected) fileEditorsBySession.set(sessionId, { selected, source, draft: contents });
+    if (selected) fileEditorsBySession.set(editorId, { selected, source, draft: contents });
   }
 
   function closeFile() {
-    fileEditorsBySession.delete(sessionId);
+    request.current++;
+    fileEditorsBySession.delete(editorId);
     selectedRef.current = null;
     setSelected(null);
   }
@@ -1169,7 +1173,9 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
   githubItemsBySession.delete(sessionId);
-  fileEditorsBySession.delete(sessionId);
+  for (const key of fileEditorsBySession.keys()) {
+    if (key.startsWith(`${sessionId}:`)) fileEditorsBySession.delete(key);
+  }
 }
 
 function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
