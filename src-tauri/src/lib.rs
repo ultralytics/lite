@@ -190,20 +190,13 @@ struct PlatformWakeLock;
 impl PlatformWakeLock {
     fn new() -> Result<Self, String> {
         use windows::Win32::System::Power::{
-            ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, EXECUTION_STATE,
-            SetThreadExecutionState,
+            ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED, SetThreadExecutionState,
         };
 
-        (unsafe {
+        unsafe {
             SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED)
-        } != EXECUTION_STATE(0))
-        .then_some(Self)
-        .ok_or_else(|| {
-            format!(
-                "Could not keep the system awake: {}",
-                windows::core::Error::from_thread()
-            )
-        })
+        };
+        Ok(Self)
     }
 }
 
