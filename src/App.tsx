@@ -122,7 +122,13 @@ const SESSION_GROUPINGS: { value: SessionGrouping; label: string }[] = [
   { value: "directory", label: "Directory" },
   { value: "state", label: "State" },
 ];
-const SESSION_SORTS = [
+const SESSION_SORTS: {
+  value: string;
+  label: string;
+  ascValue?: SessionSort;
+  descValue?: SessionSort;
+  defaultDirection?: "asc" | "desc";
+}[] = [
   { value: "created", label: "Created", ascValue: "oldest", descValue: "newest", defaultDirection: "desc" as const },
   { value: "name", label: "Name", ascValue: "name-asc", descValue: "name-desc", defaultDirection: "asc" as const },
   { value: "manual", label: "Manual" },
@@ -2143,7 +2149,13 @@ function App() {
     if ((!recovered && startingIds.has(session.id)) || closingIds.current.has(session.id)) return;
     recoveryFailures.current.delete(session.id);
     clearAttention(session.id);
-    const fresh: Session = { ...session, id: crypto.randomUUID(), providerSessionId: undefined, running: false };
+    const fresh: Session = {
+      ...session,
+      id: crypto.randomUUID(),
+      createdAt: Date.now(),
+      providerSessionId: undefined,
+      running: false,
+    };
     const restarted = restartSessionNow(session, fresh, select);
     sessionUndoToast(
       session,
