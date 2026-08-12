@@ -766,21 +766,24 @@ const PREVIEW_FONT_KEY = "lite.preview.fontSize";
 function FileViewer({
   entry,
   source,
+  draft,
   error,
   loading,
   onBack,
+  onDraftChange,
   onSave,
 }: {
   entry: FileEntry;
   source: string;
+  draft: string;
   error: string;
   loading: boolean;
   onBack: () => void;
+  onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
   const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
   const [editing, setEditing] = useState(true);
-  const [draft, setDraft] = useState(source);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -798,10 +801,6 @@ function FileViewer({
   useEffect(() => {
     if (editing) editor.current?.focus();
   }, [editing]);
-
-  useEffect(() => {
-    if (!loading) setDraft(source);
-  }, [loading, source]);
 
   // Escape and ArrowLeft step back to the tree from anywhere focus has wandered — after a menu closes,
   // after a click on nothing — but never out from under typing: a terminal, a field, or an open layer
@@ -964,7 +963,7 @@ function FileViewer({
               value={draft}
               className="min-h-[calc(100vh-8rem)] flex-1 resize-none bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onChange={(event) =>
-                setDraft(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
+                onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
               }
             />
             {saveError ? (
@@ -983,23 +982,48 @@ function FileViewer({
   );
 }
 
-function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
-  const [selected, setSelected] = useState<FileEntry | null>(null);
-  const [source, setSource] = useState("");
+interface FileEditorState {
+  selected: FileEntry;
+  source: string;
+  draft: string;
+}
+
+const fileEditorsBySession = new Map<string, FileEditorState>();
+
+function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string; sessionId: string }) {
+  const cached = fileEditorsBySession.get(sessionId);
+  const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
+  const [source, setSource] = useState(cached?.source ?? "");
+  const [draft, setDraft] = useState(cached?.draft ?? "");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
   const request = useRef(0);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
+
+  useEffect(
+    () => () => {
+      request.current++;
+    },
+    [],
+  );
 
   async function openFile(entry: FileEntry) {
     const id = ++request.current;
+    selectedRef.current = entry;
     setSelected(entry);
     setSource("");
+    setDraft("");
     setError("");
     setLoading(true);
     try {
       const contents = await invoke<string>("read_text_file", { rootId, path: entry.path });
-      if (request.current === id) setSource(contents);
+      if (request.current === id) {
+        setSource(contents);
+        setDraft(contents);
+        fileEditorsBySession.set(sessionId, { selected: entry, source: contents, draft: contents });
+      }
     } catch (reason) {
       if (request.current === id) {
         setSource("");
@@ -1011,9 +1035,23 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
   }
 
   async function saveFile(contents: string) {
-    if (!selected) return;
-    await invoke("write_text_file", { rootId, path: selected.path, contents });
-    setSource(contents);
+    const entry = selectedRef.current;
+    if (!entry) return;
+    await invoke("write_text_file", { rootId, path: entry.path, contents });
+    const current = fileEditorsBySession.get(sessionId);
+    if (current?.selected.path === entry.path) fileEditorsBySession.set(sessionId, { ...current, source: contents });
+    if (selectedRef.current?.path === entry.path) setSource(contents);
+  }
+
+  function changeDraft(contents: string) {
+    setDraft(contents);
+    if (selected) fileEditorsBySession.set(sessionId, { selected, source, draft: contents });
+  }
+
+  function closeFile() {
+    fileEditorsBySession.delete(sessionId);
+    selectedRef.current = null;
+    setSelected(null);
   }
 
   // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
@@ -1027,9 +1065,11 @@ function FilesPanel({ root, rootId }: { root: string; rootId: string }) {
           key={selected.path}
           entry={selected}
           source={source}
+          draft={draft}
           error={error}
           loading={loading}
-          onBack={() => setSelected(null)}
+          onBack={closeFile}
+          onDraftChange={changeDraft}
           onSave={saveFile}
         />
       ) : null}
@@ -1129,6 +1169,7 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
   githubItemsBySession.delete(sessionId);
+  fileEditorsBySession.delete(sessionId);
 }
 
 function GitPanel({ rootId, sessionId, remote }: { rootId: string; sessionId: string; remote: string }) {
@@ -1459,7 +1500,7 @@ export function Inspector({
           </div>
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
-              <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
+              <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} sessionId={session.id} />
             </TabsContent>
           ) : null}
           {visited.has("git") ? (
