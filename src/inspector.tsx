@@ -838,6 +838,7 @@ function FileViewer({
   }
 
   function closeFile() {
+    if (saving) return;
     if (dirty) setDiscardOpen(true);
     else onBack();
   }
@@ -885,6 +886,7 @@ function FileViewer({
             </Button>
             <Button
               variant="destructive"
+              disabled={saving}
               onClick={() => {
                 setDiscardOpen(false);
                 onBack();
@@ -900,7 +902,13 @@ function FileViewer({
         data-context-value={entry.path}
         data-context-label="Copy path"
       >
-        <ActionIconButton size="icon-sm" tooltip="Back to files" aria-label="Back to files" onClick={closeFile}>
+        <ActionIconButton
+          size="icon-sm"
+          tooltip="Back to files"
+          aria-label="Back to files"
+          disabled={saving}
+          onClick={closeFile}
+        >
           <ArrowLeft />
         </ActionIconButton>
         <FileIcon name={entry.name} />
@@ -939,7 +947,13 @@ function FileViewer({
                 <SquarePen />
               </ActionIconButton>
             ) : null}
-            <ActionIconButton size="icon-sm" tooltip="Close file" aria-label="Close file" onClick={closeFile}>
+            <ActionIconButton
+              size="icon-sm"
+              tooltip="Close file"
+              aria-label="Close file"
+              disabled={saving}
+              onClick={closeFile}
+            >
               <X />
             </ActionIconButton>
           </>
