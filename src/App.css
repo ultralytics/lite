@@ -31,6 +31,12 @@ html[data-session-dragging] * {
   display: none;
 }
 
+[data-context-session] .xterm .xterm-scrollable-element > .scrollbar.vertical.invisible.fade {
+  opacity: 1;
+  pointer-events: auto;
+  transition: none;
+}
+
 /* GitHub syntax theme driven by the --syntax-* tokens, so highlighting follows light and dark. */
 .hljs {
   display: block;
