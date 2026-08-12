@@ -176,6 +176,7 @@ type AppMenuContext = {
   collapsePanel: HTMLButtonElement | null;
   collapseSessions: HTMLButtonElement | null;
   directory: HTMLButtonElement | null;
+  deleteFile: HTMLButtonElement | null;
   editable: Editable | null;
   expandFiles: HTMLButtonElement | null;
   expandPanel: HTMLButtonElement | null;
@@ -197,6 +198,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   collapsePanel: null,
   collapseSessions: null,
   directory: null,
+  deleteFile: null,
   editable: null,
   expandFiles: null,
   expandPanel: null,
@@ -225,6 +227,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const link = target.closest<HTMLElement>("a[href], [data-context-url]");
   const value = target.closest<HTMLElement>("[data-context-value]");
   const directory = target.closest<HTMLButtonElement>("[data-context-directory]");
+  const fileRow = target.closest<HTMLElement>("[data-context-file-row]");
   const session = target.closest<HTMLElement>("[data-context-session]");
   const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
   const files = target.closest<HTMLElement>("[data-context-files]");
@@ -239,6 +242,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     collapsePanel: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-panel]") ?? null,
     collapseSessions: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-sessions]") ?? null,
     directory,
+    deleteFile: fileRow?.querySelector<HTMLButtonElement>("[data-context-delete-file]") ?? null,
     editable,
     expandFiles: files?.querySelector<HTMLButtonElement>("[data-context-expand-files]") ?? null,
     expandPanel: surface?.querySelector<HTMLButtonElement>("[data-context-expand-panel]") ?? null,
@@ -417,6 +421,15 @@ function AppContextMenu({
             <Copy />
             {context.valueLabel}
           </ContextMenuItem>
+        ) : null}
+        {context.deleteFile ? (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem variant="destructive" onClick={() => context.deleteFile?.click()}>
+              <Trash2 />
+              Delete File
+            </ContextMenuItem>
+          </>
         ) : null}
         {linkGroup && surfaceGroup ? <ContextMenuSeparator /> : null}
         {context.refresh ? (
@@ -1261,7 +1274,7 @@ function App() {
   // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (!event.metaKey && !event.ctrlKey) return;
+      if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
       if (event.key === "n") setNewSessionOpen(true);
       else if (event.key === ",") setSettingsOpen(true);
       else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
