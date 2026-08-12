@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Bell, Eye, EyeOff, KeyRound, Trash2 } from "lucide-react";
+import { Bell, Eye, EyeOff, Info, KeyRound, Moon, RefreshCw, SlidersHorizontal, Sun, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -32,6 +32,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { without } from "@/lib/utils";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import type { Theme } from "@/theme";
 import type { Agent } from "@/types";
 
 // Each CLI signs in on its own; a key here is the alternative for anyone who would rather not.
@@ -43,12 +44,26 @@ export function SettingsDialog({
   onSignIn,
   notifications,
   onNotificationsChange,
+  theme,
+  onThemeChange,
+  version,
+  commit,
+  built,
+  repo,
+  onCheckForUpdates,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSignIn: (agent: Agent) => void;
   notifications: boolean;
   onNotificationsChange: (enabled: boolean) => Promise<void>;
+  theme: Theme;
+  onThemeChange: (theme: Theme) => void;
+  version: string;
+  commit?: string;
+  built: string;
+  repo: string;
+  onCheckForUpdates: () => void;
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -138,43 +153,59 @@ export function SettingsDialog({
           <Tabs defaultValue="general" orientation="vertical" className="min-h-full w-full gap-6">
             <TabsList variant="line" className="w-36 shrink-0 items-stretch justify-start border-r pr-4">
               <TabsTrigger value="general">
-                <Bell />
+                <SlidersHorizontal />
                 General
               </TabsTrigger>
               <TabsTrigger value="keys">
                 <KeyRound />
-                API keys
+                API Keys
+              </TabsTrigger>
+              <TabsTrigger value="about">
+                <Info />
+                About
               </TabsTrigger>
             </TabsList>
             <TabsContent value="general" className="min-w-0">
               <h2 className="text-base font-semibold">General</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">Choose how Lite gets your attention.</p>
-              {notificationsSupported ? (
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">Personalize how Lite looks and responds.</p>
+              <ItemGroup>
                 <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <Bell />
-                  </ItemMedia>
+                  <ItemMedia variant="icon">{theme === "dark" ? <Moon /> : <Sun />}</ItemMedia>
                   <ItemContent>
-                    <ItemTitle>macOS notifications</ItemTitle>
-                    <ItemDescription>Notify you when a background session needs attention.</ItemDescription>
+                    <ItemTitle>Dark Mode</ItemTitle>
+                    <ItemDescription>Use Lite’s dark appearance.</ItemDescription>
                   </ItemContent>
                   <ItemActions>
                     <Switch
-                      aria-label="macOS notifications"
-                      checked={notifications}
-                      disabled={busy === "notifications"}
-                      onCheckedChange={(checked) => void changeNotifications(checked)}
+                      aria-label="Dark Mode"
+                      checked={theme === "dark"}
+                      onCheckedChange={(checked) => onThemeChange(checked ? "dark" : "light")}
                     />
                   </ItemActions>
                 </Item>
-              ) : notificationsSupported === false ? (
-                <p className="text-sm text-muted-foreground">
-                  No personal settings are available on this platform yet.
-                </p>
-              ) : null}
+                {notificationsSupported ? (
+                  <Item variant="outline">
+                    <ItemMedia variant="icon">
+                      <Bell />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle>macOS Notifications</ItemTitle>
+                      <ItemDescription>Notify you when a background session needs attention.</ItemDescription>
+                    </ItemContent>
+                    <ItemActions>
+                      <Switch
+                        aria-label="macOS notifications"
+                        checked={notifications}
+                        disabled={busy === "notifications"}
+                        onCheckedChange={(checked) => void changeNotifications(checked)}
+                      />
+                    </ItemActions>
+                  </Item>
+                ) : null}
+              </ItemGroup>
             </TabsContent>
             <TabsContent value="keys" className="min-w-0">
-              <h2 className="text-base font-semibold">API keys</h2>
+              <h2 className="text-base font-semibold">API Keys</h2>
               <p className="mt-1 mb-4 text-sm text-muted-foreground">
                 Saved keys stay on this computer and take priority over provider sign-in.
               </p>
@@ -268,6 +299,60 @@ export function SettingsDialog({
                   );
                 })}
               </ItemGroup>
+            </TabsContent>
+            <TabsContent value="about" className="min-w-0">
+              <h2 className="text-base font-semibold">About</h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">Version, build, and update information.</p>
+              <Item variant="outline">
+                <ItemMedia variant="icon">
+                  <Info />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle>{version ? `Lite ${version}` : "Lite"}</ItemTitle>
+                  <ItemDescription>A fast, local workspace for AI coding agents.</ItemDescription>
+                </ItemContent>
+                <ItemActions>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      onOpenChange(false);
+                      onCheckForUpdates();
+                    }}
+                  >
+                    <RefreshCw />
+                    Check for Updates
+                  </Button>
+                </ItemActions>
+              </Item>
+              <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+                {version ? (
+                  <>
+                    <dt className="text-muted-foreground">Version</dt>
+                    <dd className="truncate font-mono">{version}</dd>
+                  </>
+                ) : null}
+                {commit ? (
+                  <>
+                    <dt className="text-muted-foreground">Revision</dt>
+                    <dd className="truncate font-mono">{commit}</dd>
+                  </>
+                ) : null}
+                {built ? (
+                  <>
+                    <dt className="text-muted-foreground">Built</dt>
+                    <dd className="truncate">{built}</dd>
+                  </>
+                ) : null}
+                {repo ? (
+                  <>
+                    <dt className="text-muted-foreground">Source</dt>
+                    <dd className="truncate font-mono" title={repo}>
+                      {repo}
+                    </dd>
+                  </>
+                ) : null}
+              </dl>
             </TabsContent>
           </Tabs>
         </DialogBody>

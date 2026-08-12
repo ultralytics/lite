@@ -14,10 +14,8 @@ import {
   Copy,
   ExternalLink,
   GitBranch,
-  KeyRound,
   Link,
   Moon,
-  MoreHorizontal,
   Pencil,
   Play,
   Plus,
@@ -25,6 +23,7 @@ import {
   RotateCcw,
   Scissors,
   Search,
+  Settings as SettingsIcon,
   SquareTerminal,
   Sun,
   TextSelect,
@@ -66,15 +65,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
@@ -2247,36 +2237,21 @@ function App() {
                 </TooltipTrigger>
                 <TooltipContent>{theme === "dark" ? "Light mode" : "Dark mode"}</TooltipContent>
               </Tooltip>
-              <DropdownMenu>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Options" />} />
-                    }
-                  >
-                    <MoreHorizontal />
-                  </TooltipTrigger>
-                  <TooltipContent>Options</TooltipContent>
-                </Tooltip>
-                <DropdownMenuContent align="end" className="w-48">
-                  {version ? (
-                    <DropdownMenuGroup>
-                      <DropdownMenuLabel>
-                        {commit ? `Lite ${version} · local ${commit}` : `Lite ${version}`}
-                      </DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                    </DropdownMenuGroup>
-                  ) : null}
-                  <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-                    <KeyRound />
-                    API keys
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => void checkForUpdates()}>
-                    <RefreshCw />
-                    Check for updates
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Settings"
+                      onClick={() => setSettingsOpen(true)}
+                    />
+                  }
+                >
+                  <SettingsIcon />
+                </TooltipTrigger>
+                <TooltipContent>Settings</TooltipContent>
+              </Tooltip>
             </div>
           </header>
           <ResizablePanelGroup orientation="horizontal" className="min-h-0 flex-1">
@@ -2850,6 +2825,13 @@ function App() {
             onSignIn={signIn}
             notifications={notifications}
             onNotificationsChange={changeNotifications}
+            theme={theme}
+            onThemeChange={setTheme}
+            version={version}
+            commit={commit}
+            built={built}
+            repo={repo}
+            onCheckForUpdates={() => void checkForUpdates()}
           />
           <Toaster />
         </div>
