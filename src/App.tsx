@@ -1275,6 +1275,7 @@ function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
       if (event.key === "n") setNewSessionOpen(true);
       else if (event.key === ",") setSettingsOpen(true);
       else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
