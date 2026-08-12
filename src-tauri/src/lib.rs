@@ -3651,11 +3651,12 @@ async fn git_diff(
         );
     }
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let repository = PathBuf::from(command_output(
+    let repository = fs::canonicalize(command_output(
         &git,
         &granted,
         &["rev-parse", "--show-toplevel"],
-    )?);
+    )?)
+    .map_err(|error| error.to_string())?;
     let file = repository.join(relative);
     let mut ancestor = file.as_path();
     while !ancestor.exists() {
@@ -3748,6 +3749,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             "status",
             "--porcelain=v1",
             "-z",
+            "--no-renames",
             "--untracked-files=all",
             "--",
             &scope_text,
@@ -3757,7 +3759,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
     let base = git_diff_base(&git, &repository)?;
     let mut line_diffs = Command::new(&git)
         .arg("-C")
-        .arg(&repository)
+        .arg(path_text(&repository))
         .args([
             "--literal-pathspecs",
             "diff",
@@ -3805,8 +3807,10 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         })
         .map(|output| {
             let mut diffs = BTreeMap::<String, LineDiff>::new();
-            let mut records = output.split(|byte| *byte == 0);
-            while let Some(header) = records.next().filter(|record| !record.is_empty()) {
+            for header in output
+                .split(|byte| *byte == 0)
+                .filter(|record| !record.is_empty())
+            {
                 let mut fields = header.splitn(3, |byte| *byte == b'\t');
                 let Some(additions) = fields
                     .next()
@@ -3821,14 +3825,9 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     continue;
                 };
                 let Some(path) = fields.next() else { continue };
-                // With -z, a rename leaves the header path empty and follows it with old and new paths.
-                let path = if path.is_empty() {
-                    let _ = records.next();
-                    records.next()
-                } else {
-                    Some(path)
-                };
-                let Some(path) = path else { continue };
+                if path.is_empty() {
+                    continue;
+                }
                 diffs.insert(
                     String::from_utf8_lossy(path).into_owned(),
                     LineDiff {

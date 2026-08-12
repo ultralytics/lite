@@ -747,6 +747,10 @@ function SessionSwitcher({
     setActiveId(selectedId);
   }, [open, selectedId]);
 
+  useEffect(() => {
+    if (open && !matches.some((session) => session.id === activeId)) setActiveId(matches[0]?.id ?? "");
+  }, [activeId, matches, open]);
+
   function move(direction: -1 | 1) {
     if (!matches.length) return;
     const index = matches.findIndex((session) => session.id === activeId);
@@ -787,10 +791,7 @@ function SessionSwitcher({
             name="session-switcher"
             autoComplete="off"
             spellCheck={false}
-            onChange={(event) => {
-              setQuery(event.target.value);
-              setActiveId("");
-            }}
+            onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "ArrowDown" || event.key === "ArrowUp") {
                 event.preventDefault();

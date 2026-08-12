@@ -44,7 +44,17 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactNode,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { GitHubLogomark, ProviderIcon } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
@@ -774,6 +784,117 @@ function FileTree({
 const PREVIEW_FONT_KEY = "lite.preview.fontSize";
 const RENDERED_FILE = /\.(?:html?|mdx?|svg)$/i;
 
+function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
+  const viewer = useRef<T>(null);
+  const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
+  const zoom = useCallback((step: -1 | 0 | 1) => {
+    setFontSize((current) => zoomedFontSize(PREVIEW_FONT_KEY, current, step));
+  }, []);
+
+  useEffect(() => viewer.current?.focus(), []);
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!viewer.current || viewer.current.offsetParent === null) return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest("input, textarea, [contenteditable=true], [role=dialog], [role=menu], [data-context-session]")
+      )
+        return;
+      event.preventDefault();
+      onBack();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onBack]);
+
+  return { viewer, fontSize, zoom };
+}
+
+function previewKeyDown(
+  event: ReactKeyboardEvent<HTMLElement>,
+  onClose: () => void,
+  zoom: (step: -1 | 0 | 1) => void,
+  onSave?: () => void,
+) {
+  const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
+  if (!command) return;
+  if (onSave && event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    onSave();
+    return;
+  }
+  if (event.key.toLowerCase() === "w") {
+    event.preventDefault();
+    onClose();
+    return;
+  }
+  const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
+  if (!step && event.key !== "0") return;
+  event.preventDefault();
+  zoom(step);
+}
+
+function PreviewHeader({
+  path,
+  backLabel,
+  closeLabel,
+  icon,
+  title,
+  disabled,
+  showClose = true,
+  onClose,
+  children,
+}: {
+  path: string;
+  backLabel: string;
+  closeLabel: string;
+  icon: ReactNode;
+  title: ReactNode;
+  disabled?: boolean;
+  showClose?: boolean;
+  onClose: () => void;
+  children?: ReactNode;
+}) {
+  return (
+    <div
+      className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]"
+      data-context-value={path}
+      data-context-label="Copy path"
+    >
+      <ActionIconButton size="icon-sm" tooltip={backLabel} aria-label={backLabel} disabled={disabled} onClick={onClose}>
+        <ArrowLeft />
+      </ActionIconButton>
+      {icon}
+      {title}
+      {children}
+      {showClose ? (
+        <ActionIconButton
+          size="icon-sm"
+          tooltip={closeLabel}
+          aria-label={closeLabel}
+          disabled={disabled}
+          onClick={onClose}
+        >
+          <X />
+        </ActionIconButton>
+      ) : null}
+    </div>
+  );
+}
+
+function PreviewZoomControls({ zoom }: { zoom: (step: -1 | 0 | 1) => void }) {
+  return (
+    <>
+      <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
+      <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
+      <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
+    </>
+  );
+}
+
 // The preview inherits its type from here, so one zoom scales code, prose, and the line-number gutter
 // together while the header chrome keeps its own size. Zooming lives in this component so a step
 // re-renders the view alone, never the tree hidden behind it.
@@ -796,50 +917,23 @@ function FileViewer({
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
-  const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
   const [view, setView] = useState<"source" | "preview" | "edit">("source");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
-  const viewer = useRef<HTMLDivElement>(null);
   const editor = useRef<HTMLTextAreaElement>(null);
   const dirty = draft !== source;
   const editing = view === "edit";
   const renderable = RENDERED_FILE.test(entry.path);
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
-
-  // Reading is keyboard work, so the viewer takes focus as it opens and the zoom keys land here
-  // rather than wherever the pointer last was.
-  useEffect(() => {
-    viewer.current?.focus();
-  }, []);
+  const { viewer, fontSize, zoom } = usePreviewViewer<HTMLDivElement>(() => {
+    if (dirty) setDiscardOpen(true);
+    else onBack();
+  });
 
   useEffect(() => {
     if (editing) editor.current?.focus();
   }, [editing]);
-
-  // Escape and ArrowLeft step back to the tree from anywhere focus has wandered — after a menu closes,
-  // after a click on nothing — but never out from under typing: a terminal, a field, or an open layer
-  // reads its own keys, and a key one of them has already answered is not answered again. The panel
-  // stays mounted behind other tabs and the collapsed rail, so a viewer nobody can see answers nothing.
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (!viewer.current || viewer.current.offsetParent === null) return;
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-      if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest("input, textarea, [contenteditable=true], [role=dialog], [role=menu], [data-context-session]")
-      )
-        return;
-      event.preventDefault();
-      if (dirty) setDiscardOpen(true);
-      else onBack();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [dirty, onBack]);
 
   async function save() {
     setSaving(true);
@@ -859,10 +953,6 @@ function FileViewer({
     else onBack();
   }
 
-  function zoom(step: -1 | 0 | 1) {
-    setFontSize(zoomedFontSize(PREVIEW_FONT_KEY, fontSize, step));
-  }
-
   return (
     <Tabs
       ref={viewer}
@@ -873,24 +963,7 @@ function FileViewer({
       data-context-zoom
       className="flex min-h-0 flex-1 flex-col gap-0 outline-none"
       style={{ fontSize, lineHeight: 1.6 }}
-      onKeyDown={(event) => {
-        const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
-        if (!command) return;
-        if (event.key.toLowerCase() === "s") {
-          event.preventDefault();
-          if (!saving && dirty) void save();
-          return;
-        }
-        if (event.key.toLowerCase() === "w") {
-          event.preventDefault();
-          closeFile();
-          return;
-        }
-        const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
-        if (!step && event.key !== "0") return;
-        event.preventDefault();
-        zoom(step);
-      }}
+      onKeyDown={(event) => previewKeyDown(event, closeFile, zoom, () => !saving && dirty && void save())}
     >
       <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
         <DialogContent>
@@ -915,25 +988,21 @@ function FileViewer({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <div
-        className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]"
-        data-context-value={entry.path}
-        data-context-label="Copy path"
+      <PreviewHeader
+        path={entry.path}
+        backLabel="Back to files"
+        closeLabel="Close file"
+        icon={<FileIcon name={entry.name} />}
+        title={
+          <span className="min-w-0 flex-1 truncate font-medium">
+            {entry.name}
+            {dirty ? " •" : ""}
+          </span>
+        }
+        disabled={saving}
+        showClose={!editing}
+        onClose={closeFile}
       >
-        <ActionIconButton
-          size="icon-sm"
-          tooltip="Back to files"
-          aria-label="Back to files"
-          disabled={saving}
-          onClick={closeFile}
-        >
-          <ArrowLeft />
-        </ActionIconButton>
-        <FileIcon name={entry.name} />
-        <span className="min-w-0 flex-1 truncate font-medium">
-          {entry.name}
-          {dirty ? " •" : ""}
-        </span>
         {renderable && !editing && !error ? (
           <TabsList aria-label="File view" className="h-7 shrink-0">
             <TabsTrigger value="source" className="text-xs">
@@ -960,36 +1029,21 @@ function FileViewer({
               {saving ? "Saving…" : "Save"}
             </Button>
           </>
-        ) : (
-          <>
-            {!error ? (
-              <ActionIconButton
-                size="icon-sm"
-                tooltip="Edit file"
-                aria-label="Edit file"
-                onClick={() => {
-                  setSaveError("");
-                  setView("edit");
-                }}
-              >
-                <SquarePen />
-              </ActionIconButton>
-            ) : null}
-            <ActionIconButton
-              size="icon-sm"
-              tooltip="Close file"
-              aria-label="Close file"
-              disabled={saving}
-              onClick={closeFile}
-            >
-              <X />
-            </ActionIconButton>
-          </>
-        )}
-      </div>
-      <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
-      <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
-      <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
+        ) : !error ? (
+          <ActionIconButton
+            size="icon-sm"
+            tooltip="Edit file"
+            aria-label="Edit file"
+            onClick={() => {
+              setSaveError("");
+              setView("edit");
+            }}
+          >
+            <SquarePen />
+          </ActionIconButton>
+        ) : null}
+      </PreviewHeader>
+      <PreviewZoomControls zoom={zoom} />
       <ScrollArea className="min-h-0 flex-1">
         {loading ? (
           <Loading label="Opening file…" />
@@ -1158,32 +1212,7 @@ function DiffViewer({
   loading: boolean;
   onBack: () => void;
 }) {
-  const viewer = useRef<HTMLElement>(null);
-  const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
-
-  useEffect(() => viewer.current?.focus(), []);
-
-  useEffect(() => {
-    function onKeyDown(event: KeyboardEvent) {
-      if (!viewer.current || viewer.current.offsetParent === null) return;
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-      if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
-      const target = event.target;
-      if (
-        target instanceof Element &&
-        target.closest("input, textarea, [contenteditable=true], [role=dialog], [role=menu], [data-context-session]")
-      )
-        return;
-      event.preventDefault();
-      onBack();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onBack]);
-
-  function zoom(step: -1 | 0 | 1) {
-    setFontSize(zoomedFontSize(PREVIEW_FONT_KEY, fontSize, step));
-  }
+  const { viewer, fontSize, zoom } = usePreviewViewer<HTMLElement>(onBack);
 
   return (
     <section
@@ -1193,42 +1222,21 @@ function DiffViewer({
       data-context-zoom
       className="flex h-full min-h-0 flex-col outline-none"
       style={{ fontSize, lineHeight: 1.6 }}
-      onKeyDown={(event) => {
-        const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
-        if (command && event.key.toLowerCase() === "w") {
-          event.preventDefault();
-          onBack();
-          return;
-        }
-        if (command) {
-          const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
-          if (step || event.key === "0") {
-            event.preventDefault();
-            zoom(step);
-          }
-          return;
-        }
-      }}
+      onKeyDown={(event) => previewKeyDown(event, onBack, zoom)}
     >
-      <div
-        className="flex h-9 shrink-0 items-center gap-2 border-b px-2 text-[13px]"
-        data-context-value={path}
-        data-context-label="Copy path"
-      >
-        <ActionIconButton size="icon-sm" tooltip="Back to Git" aria-label="Back to Git" onClick={onBack}>
-          <ArrowLeft />
-        </ActionIconButton>
-        <FileDiff aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate font-mono font-medium" title={path}>
-          {path}
-        </span>
-        <ActionIconButton size="icon-sm" tooltip="Close diff" aria-label="Close diff" onClick={onBack}>
-          <X />
-        </ActionIconButton>
-      </div>
-      <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
-      <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
-      <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
+      <PreviewHeader
+        path={path}
+        backLabel="Back to Git"
+        closeLabel="Close diff"
+        icon={<FileDiff aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />}
+        title={
+          <span className="min-w-0 flex-1 truncate font-mono font-medium" title={path}>
+            {path}
+          </span>
+        }
+        onClose={onBack}
+      />
+      <PreviewZoomControls zoom={zoom} />
       <ScrollArea className="min-h-0 flex-1">
         {loading ? (
           <Loading label="Reading diff…" />
