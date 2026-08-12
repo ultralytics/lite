@@ -19,6 +19,8 @@ use std::{
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
+#[cfg(target_os = "macos")]
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_updater::UpdaterExt;
 use tungstenite::Message;
 
@@ -39,6 +41,43 @@ const SUPPORTED_KEYS: [&str; 6] = [
     "gemini",
     "kimi",
 ];
+
+#[tauri::command]
+fn notifications_supported() -> bool {
+    cfg!(target_os = "macos")
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn request_notification_permission(app: AppHandle) -> Result<bool, String> {
+    use tauri::plugin::PermissionState;
+
+    app.notification()
+        .request_permission()
+        .map(|permission| permission == PermissionState::Granted)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn request_notification_permission() -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn send_notification(app: AppHandle, title: String) -> Result<(), String> {
+    app.notification()
+        .builder()
+        .title(title)
+        .body("This session needs your attention.")
+        .show()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn send_notification() {}
 
 #[derive(Clone, Copy)]
 struct CodexProvider {
@@ -4526,7 +4565,10 @@ fn describe_app(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_plugin_notification::init());
+    builder
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sessions::default())
         .plugin(tauri_plugin_dialog::init())
@@ -4571,6 +4613,9 @@ pub fn run() {
             provider_auth,
             save_api_key,
             delete_api_key,
+            notifications_supported,
+            request_notification_permission,
+            send_notification,
             check_update,
             install_update,
             local_commit,
