@@ -165,7 +165,6 @@ async fn set_keep_awake(app: AppHandle, enabled: bool) -> Result<(), String> {
                 keepawake::Builder::default()
                     .display(true)
                     .idle(true)
-                    .sleep(true)
                     .reason("Lite has active sessions")
                     .app_name("Lite")
                     .app_reverse_domain("com.ultralytics.lite")
