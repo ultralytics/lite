@@ -176,7 +176,7 @@ const GITHUB_STATE_ICON = {
 
 interface RepositoryGroup {
   branch: string | null;
-  changes: string[];
+  changes: GitStatus["changes"];
   changesTruncated: boolean;
   lineDiffs: GitStatus["lineDiffs"];
   items: (GitHubItem & GitHubReference)[];
@@ -1145,11 +1145,6 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
   );
 }
 
-function changedPath(change: string) {
-  const path = change.slice(3);
-  return path.split(" -> ").pop() ?? path;
-}
-
 function DiffViewer({
   path,
   source,
@@ -1309,23 +1304,22 @@ function RepositoryCard({
         <div className="border-t px-2.5 py-2">
           <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
           {repository.changes.map((change) => {
-            const path = changedPath(change);
-            const diff = repository.lineDiffs[path];
+            const diff = repository.lineDiffs[change.path];
             return (
               <button
-                key={change}
+                key={`${change.status}:${change.path}`}
                 type="button"
                 className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                aria-label={`View diff for ${path}`}
-                onClick={() => onOpenDiff(path)}
+                aria-label={`View diff for ${change.path}`}
+                onClick={() => onOpenDiff(change.path)}
               >
                 <span
-                  className={`${change.startsWith("??") ? "w-16" : "w-5"} shrink-0 font-mono text-xs text-muted-foreground`}
+                  className={`${change.status === "??" ? "w-16" : "w-5"} shrink-0 font-mono text-xs text-muted-foreground`}
                 >
-                  {change.startsWith("??") ? "Untracked" : change.slice(0, 2).trim()}
+                  {change.status === "??" ? "Untracked" : change.status.trim()}
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={path}>
-                  {path}
+                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={change.path}>
+                  {change.path}
                 </span>
                 {diff?.additions ? (
                   <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
@@ -1467,7 +1461,7 @@ function GitPanel({
     ? repositories
         .map((repository) => ({
           ...repository,
-          changes: repository.changes.filter((change) => change.slice(3).toLowerCase().includes(lowered)),
+          changes: repository.changes.filter((change) => change.path.toLowerCase().includes(lowered)),
           items: repository.items.filter(
             (item) => `#${item.number}`.includes(lowered) || item.title?.toLowerCase().includes(lowered),
           ),

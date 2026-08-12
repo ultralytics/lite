@@ -232,9 +232,15 @@ fn directory_key(name: &str, path: &str, is_directory: bool) -> (u8, String, Str
 struct GitStatus {
     branch: String,
     worktree: String,
-    changes: Vec<String>,
+    changes: Vec<GitChange>,
     line_diffs: BTreeMap<String, LineDiff>,
     changes_truncated: bool,
+}
+
+#[derive(Serialize)]
+struct GitChange {
+    status: String,
+    path: String,
 }
 
 #[derive(Serialize)]
@@ -3513,11 +3519,11 @@ async fn delete_file(roots: State<'_, Roots>, root_id: String, path: String) -> 
     fs::remove_file(path).map_err(|error| error.to_string())
 }
 
-fn bounded_git_lines(
+fn bounded_git_changes(
     git: &Path,
     path: &Path,
     args: &[&str],
-) -> Result<(Vec<String>, bool), String> {
+) -> Result<(Vec<GitChange>, bool), String> {
     let mut child = Command::new(git)
         .arg("-C")
         .arg(path_text(path))
@@ -3527,21 +3533,47 @@ fn bounded_git_lines(
         .spawn()
         .map_err(|error| error.to_string())?;
     let stdout = child.stdout.take().ok_or("Could not read Git status")?;
-    let mut lines = BufReader::new(stdout)
-        .lines()
-        .take(MAX_GIT_CHANGES + 1)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| error.to_string())?;
-    let truncated = lines.len() > MAX_GIT_CHANGES;
+    let mut reader = BufReader::new(stdout);
+    let mut changes = Vec::new();
+    loop {
+        let mut record = Vec::new();
+        if reader
+            .read_until(0, &mut record)
+            .map_err(|error| error.to_string())?
+            == 0
+        {
+            break;
+        }
+        record.pop();
+        if record.len() < 4 || record[2] != b' ' {
+            continue;
+        }
+        let status = String::from_utf8_lossy(&record[..2]).into_owned();
+        // Porcelain v1 -z puts a rename's destination first and its source in the next record.
+        if status.bytes().any(|byte| matches!(byte, b'R' | b'C')) {
+            let mut source = Vec::new();
+            reader
+                .read_until(0, &mut source)
+                .map_err(|error| error.to_string())?;
+        }
+        let Ok(path) = String::from_utf8(record[3..].to_vec()) else {
+            continue;
+        };
+        changes.push(GitChange { status, path });
+        if changes.len() > MAX_GIT_CHANGES {
+            break;
+        }
+    }
+    let truncated = changes.len() > MAX_GIT_CHANGES;
     if truncated {
-        lines.truncate(MAX_GIT_CHANGES);
+        changes.truncate(MAX_GIT_CHANGES);
         let _ = child.kill();
     }
     let status = child.wait().map_err(|error| error.to_string())?;
     if !status.success() && !truncated {
         return Err("Could not read Git status".into());
     }
-    Ok((lines, truncated))
+    Ok((changes, truncated))
 }
 
 fn bounded_git_output(
@@ -3617,7 +3649,7 @@ async fn git_diff(
                 .into(),
         );
     }
-    if is_sensitive_path(&granted, &file) {
+    if is_sensitive_path(&granted, &file) || is_sensitive_path(&granted, &ancestor) {
         return Err("Sensitive files are hidden from Git diffs".into());
     }
     let file = path_text(&file);
@@ -3665,8 +3697,11 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         Err(_) => return Ok(None),
     };
     let branch = command_output(&git, &path, &["branch", "--show-current"])?;
-    let (changes, changes_truncated) =
-        bounded_git_lines(&git, &path, &["status", "--short", "--untracked-files=all"])?;
+    let (changes, changes_truncated) = bounded_git_changes(
+        &git,
+        Path::new(&root),
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
     let line_diffs = Command::new(&git)
         .arg("-C")
         .arg(&root)
@@ -4233,12 +4268,13 @@ async fn worktree_state(
     }
     let path = PathBuf::from(&recorded.path);
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let (lines, changes_truncated) = match bounded_git_lines(
+    let (entries, changes_truncated) = match bounded_git_changes(
         &git,
         &path,
         &[
             "status",
-            "--porcelain",
+            "--porcelain=v1",
+            "-z",
             "--untracked-files=all",
             "--ignored=matching",
         ],
@@ -4256,8 +4292,8 @@ async fn worktree_state(
             });
         }
     };
-    let changes = lines.iter().filter(|line| !line.starts_with("!!")).count();
-    let ignored = lines.iter().any(|line| line.starts_with("!!"));
+    let changes = entries.iter().filter(|entry| entry.status != "!!").count();
+    let ignored = entries.iter().any(|entry| entry.status == "!!");
     let submodules = !command_output(&git, &path, &["submodule", "status"])
         .unwrap_or_default()
         .is_empty();
@@ -4850,5 +4886,35 @@ mod tests {
         let entry = scoped_entry(&root, link.to_str().unwrap()).unwrap();
         fs::remove_dir_all(base).unwrap();
         assert_eq!(entry, root.join("link.txt"));
+    }
+
+    #[test]
+    fn git_changes_preserve_human_status_markers_in_filenames() {
+        let root = std::env::temp_dir().join(format!("lite-git-status-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("a -> b.ts"), "change").unwrap();
+        assert!(
+            Command::new("git")
+                .arg("init")
+                .arg(&root)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let (changes, truncated) = bounded_git_changes(
+            Path::new("git"),
+            &root,
+            &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+        )
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
+
+        assert!(!truncated);
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].status, "??");
+        assert_eq!(changes[0].path, "a -> b.ts");
     }
 }

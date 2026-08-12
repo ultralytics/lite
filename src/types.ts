@@ -87,7 +87,7 @@ export interface DirectoryListing {
 export interface GitStatus {
   branch: string;
   worktree: string;
-  changes: string[];
+  changes: { status: string; path: string }[];
   lineDiffs: Record<string, { additions: number; deletions: number }>;
   changesTruncated: boolean;
 }
