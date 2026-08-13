@@ -315,7 +315,7 @@ export function NewSessionDialog({
     !creating &&
     Boolean(
       missing ||
-        (path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim())),
+      (path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim())),
     );
   function start() {
     if (missing?.installable) void install();
