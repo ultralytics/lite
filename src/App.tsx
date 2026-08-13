@@ -302,16 +302,18 @@ const INSPECTOR_FONT_KEY = "lite.inspector.fontSize";
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
 type ReleaseInfo = { version: string; notes: string; available: boolean };
 
+const RELEASE_AUTHOR = /@([A-Za-z0-9-]+(?:\[bot\])?)/g;
+const RELEASE_PULL = /(https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+))/g;
+
 function friendlyReleaseNotes(notes: string) {
-  return notes.replace(
-    /^(\* .+?) by @([A-Za-z0-9-]+(?:\[bot\])?) in (https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+))$/gm,
-    (_line, title: string, author: string, pull: string, number: string) => {
+  return notes
+    .replace(RELEASE_AUTHOR, (_mention, author: string) => {
       const profile = author.endsWith("[bot]")
         ? `https://github.com/apps/${author.slice(0, -5)}`
         : `https://github.com/${author}`;
-      return `${title} by [@${author}](${profile}) in [#${number}](${pull})`;
-    },
-  );
+      return `[@${author}](${profile})`;
+    })
+    .replace(RELEASE_PULL, "[#$2]($1)");
 }
 
 function zoomPanelStyle(fontSize: number) {
