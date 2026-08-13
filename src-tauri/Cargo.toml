@@ -2,7 +2,7 @@
 
 [package]
 name = "lite"
-version = "0.0.27"
+version = "0.0.28"
 description = "A fast, local workspace for AI coding agents."
 authors = ["Ultralytics"]
 edition = "2024"
@@ -44,7 +44,7 @@ objc2 = "0.6.4"
 objc2-core-foundation = { version = "0.3.2", features = ["CFString"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
 objc2-io-kit = { version = "0.3.2", features = ["pwr_mgt"] }
-objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = ["block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9.12"

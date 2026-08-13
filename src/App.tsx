@@ -683,11 +683,11 @@ const SESSION_STATUS = {
   working: { dot: "bg-sky-500 animate-pulse motion-reduce:animate-none", label: "Connected, working" },
   attention: {
     dot: "bg-amber-500 animate-attention motion-reduce:animate-none",
-    label: "Connected, needs attention",
+    label: "Connected, ready",
   },
 } as const;
 const SESSION_STATE_LABELS = {
-  attention: "Needs attention",
+  attention: "Ready",
   working: "Working",
   idle: "Idle",
   disconnected: "Disconnected",
@@ -1669,6 +1669,14 @@ function App() {
     return () => void closing.then((unlisten) => unlisten());
   }, []);
 
+  useEffect(() => {
+    const clicked = listen<string>("notification-clicked", ({ payload }) => {
+      const session = sessionsRef.current.find((item) => item.id === payload);
+      if (session) openRef.current(session);
+    });
+    return () => void clicked.then((unlisten) => unlisten());
+  }, []);
+
   // Opening a session reads its current notifications. A later notification remains highlighted until
   // the user returns to that session.
   useEffect(() => {
@@ -1884,7 +1892,7 @@ function App() {
         ) {
           const session = sessionsRef.current.find((item) => item.id === payload.sessionId);
           if (notificationsRef.current && session)
-            void invoke("send_notification", { title: session.name }).catch(() => {});
+            void invoke("send_notification", { title: session.name, sessionId: session.id }).catch(() => {});
         }
         if (activity !== false) markWorking(payload.sessionId);
       }),
@@ -2875,9 +2883,7 @@ function App() {
                                 variant="ghost"
                                 size="icon-sm"
                                 aria-pressed={session.id === selectedId}
-                                aria-label={
-                                  attention.includes(session.id) ? `${session.name}; needs attention` : session.name
-                                }
+                                aria-label={attention.includes(session.id) ? `${session.name}; ready` : session.name}
                                 data-context-session={session.id}
                                 className={
                                   session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"

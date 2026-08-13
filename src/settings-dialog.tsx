@@ -220,7 +220,7 @@ export function SettingsDialog({
                     </ItemMedia>
                     <ItemContent>
                       <ItemTitle>macOS Notifications</ItemTitle>
-                      <ItemDescription>Notify you when a background session needs attention.</ItemDescription>
+                      <ItemDescription>Notify you when a background session is ready.</ItemDescription>
                     </ItemContent>
                     <ItemActions>
                       <Switch
