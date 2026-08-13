@@ -241,7 +241,7 @@ function SourceEditor({
         aria-label={`Edit ${path.split(/[\\/]/).pop() ?? path}`}
         spellCheck={false}
         value={source}
-        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-transparent"
+        className="code-editor-input absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono outline-none"
         style={{ paddingLeft: `calc(${digits}ch + 2rem)`, lineHeight: "inherit" }}
         onChange={(event) => onChange?.(event.target.value)}
         onScroll={(event) => {
