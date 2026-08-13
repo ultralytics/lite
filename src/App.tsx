@@ -108,7 +108,7 @@ import {
   writeSession,
 } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
-import { applyTheme, initialTheme, type Theme } from "@/theme";
+import { applyTheme, initialTheme, storedFontSize, type Theme, zoomedFontSize, zoomStep } from "@/theme";
 import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
@@ -295,8 +295,20 @@ const RELEASE_NOTE = {
 
 const NOTIFICATIONS_KEY = "lite.notifications";
 const KEEP_AWAKE_KEY = "lite.keep-awake";
+const SIDEBAR_FONT_KEY = "lite.sidebar.fontSize";
+const INSPECTOR_FONT_KEY = "lite.inspector.fontSize";
 
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
+
+function zoomPanelStyle(fontSize: number) {
+  const scale = fontSize / 13;
+  return {
+    width: `${100 / scale}%`,
+    height: `${100 / scale}%`,
+    transform: `scale(${scale})`,
+    transformOrigin: "top left",
+  };
+}
 
 type Editable = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
 type AppMenuContext = {
@@ -1459,6 +1471,8 @@ function App() {
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
+  const [sidebarFontSize, setSidebarFontSize] = useState(() => storedFontSize(SIDEBAR_FONT_KEY));
+  const [inspectorFontSize, setInspectorFontSize] = useState(() => storedFontSize(INSPECTOR_FONT_KEY));
   const layout = useRef<HTMLDivElement>(null);
   const sidebarPanel = useRef<PanelImperativeHandle>(null);
   const inspectorPanel = useRef<PanelImperativeHandle>(null);
@@ -1677,6 +1691,16 @@ function App() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
       if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
+      const panel = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-zoom-panel]") : null;
+      const step = zoomStep(event.key);
+      if (panel && step !== undefined) {
+        const sidebar = panel.dataset.zoomPanel === "sidebar";
+        const key = sidebar ? SIDEBAR_FONT_KEY : INSPECTOR_FONT_KEY;
+        const setFontSize = sidebar ? setSidebarFontSize : setInspectorFontSize;
+        setFontSize((current) => zoomedFontSize(key, current, step));
+        event.preventDefault();
+        return;
+      }
       const switchSession = event.key.toLowerCase() === "p" && (event.metaKey || (event.ctrlKey && event.shiftKey));
       if (switchSession) setSessionSwitcherOpen(true);
       else if (event.key === "n") setNewSessionOpen(true);
@@ -2814,7 +2838,12 @@ function App() {
               maxSize={SIDES.sidebar.max}
               onResize={(size) => rail("sidebar", size)}
             >
-              <aside data-context-surface className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
+              <aside
+                data-context-surface
+                data-zoom-panel="sidebar"
+                className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground"
+                style={zoomPanelStyle(sidebarFontSize)}
+              >
                 {shut.sidebar ? (
                   <ScrollArea className="min-h-0 flex-1">
                     <div className="flex animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200">
@@ -3146,7 +3175,11 @@ function App() {
                   maxSize={SIDES.inspector.max}
                   onResize={(size) => rail("inspector", size)}
                 >
-                  <aside className="h-full border-l">
+                  <aside
+                    data-zoom-panel="inspector"
+                    className="h-full w-full border-l"
+                    style={zoomPanelStyle(inspectorFontSize)}
+                  >
                     <PanelBoundary key={selected.id}>
                       <Inspector
                         session={selected}

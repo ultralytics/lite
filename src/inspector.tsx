@@ -76,7 +76,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { without } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
-import { storedFontSize, zoomedFontSize } from "@/theme";
+import { storedFontSize, zoomedFontSize, zoomStep } from "@/theme";
 import {
   type DirectoryCursor,
   type DirectoryListing,
@@ -829,8 +829,8 @@ function previewKeyDown(
     onClose();
     return;
   }
-  const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
-  if (!step && event.key !== "0") return;
+  const step = zoomStep(event.key);
+  if (step === undefined) return;
   event.preventDefault();
   zoom(step);
 }

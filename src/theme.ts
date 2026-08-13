@@ -36,3 +36,9 @@ export function zoomedFontSize(key: string, from: number, step: -1 | 0 | 1): num
   if (size !== from) localStorage.setItem(key, String(size));
   return size;
 }
+
+export function zoomStep(key: string): -1 | 0 | 1 | undefined {
+  if (key === "+" || key === "=") return 1;
+  if (key === "-") return -1;
+  if (key === "0") return 0;
+}

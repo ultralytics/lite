@@ -8,7 +8,7 @@ import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import { subscribeOutput, writeSession } from "@/output-store";
-import { storedFontSize, type Theme, zoomedFontSize } from "@/theme";
+import { storedFontSize, type Theme, zoomedFontSize, zoomStep } from "@/theme";
 import type { Agent } from "@/types";
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
@@ -236,8 +236,8 @@ export function TerminalView({
         return false;
       }
       if (!(event.metaKey || event.ctrlKey)) return true;
-      const step = event.key === "+" || event.key === "=" ? 1 : event.key === "-" ? -1 : 0;
-      if (!step && event.key !== "0") return true;
+      const step = zoomStep(event.key);
+      if (step === undefined) return true;
       zoomRef.current(step);
       return false;
     });
