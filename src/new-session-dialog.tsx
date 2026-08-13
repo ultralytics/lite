@@ -446,6 +446,7 @@ export function NewSessionDialog({
                         <ActionIconButton
                           type="button"
                           size="icon-sm"
+                          variant="default"
                           tooltip={
                             busy
                               ? `${action.working} ${sessionLabel(option)}…`
