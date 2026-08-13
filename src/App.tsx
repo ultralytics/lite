@@ -1669,14 +1669,6 @@ function App() {
     return () => void closing.then((unlisten) => unlisten());
   }, []);
 
-  useEffect(() => {
-    const clicked = listen<string>("notification-clicked", ({ payload }) => {
-      const session = sessionsRef.current.find((item) => item.id === payload);
-      if (session) openRef.current(session);
-    });
-    return () => void clicked.then((unlisten) => unlisten());
-  }, []);
-
   // Opening a session reads its current notifications. A later notification remains highlighted until
   // the user returns to that session.
   useEffect(() => {
@@ -1879,6 +1871,12 @@ function App() {
     let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
     let unlistenAgent: (() => void) | undefined;
+    let unlistenNotification: (() => void) | undefined;
+    const openNotification = () =>
+      invoke<string | null>("notification_session").then((sessionId) => {
+        const session = sessionsRef.current.find((item) => item.id === sessionId);
+        if (session) openRef.current(session);
+      });
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
@@ -1918,16 +1916,20 @@ function App() {
           return next;
         });
       }),
-    ]).then(([output, exit, agent]) => {
+      listen("notification-clicked", () => void openNotification()),
+    ]).then(([output, exit, agent, notification]) => {
       if (disposed) {
         output();
         exit();
         agent();
+        notification();
         return;
       }
       unlistenOutput = output;
       unlistenExit = exit;
       unlistenAgent = agent;
+      unlistenNotification = notification;
+      void openNotification();
     });
     const timers = workTimers.current;
     return () => {
@@ -1935,6 +1937,7 @@ function App() {
       unlistenOutput?.();
       unlistenExit?.();
       unlistenAgent?.();
+      unlistenNotification?.();
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };

@@ -26,7 +26,8 @@ use tungstenite::Message;
 use objc2_foundation::{NSObject, NSObjectProtocol};
 #[cfg(target_os = "macos")]
 use objc2_user_notifications::{
-    UNNotificationResponse, UNUserNotificationCenter, UNUserNotificationCenterDelegate,
+    UNNotificationDefaultActionIdentifier, UNNotificationResponse, UNUserNotificationCenter,
+    UNUserNotificationCenterDelegate,
 };
 
 const MAX_FILE_BYTES: u64 = 500_000;
@@ -47,12 +48,13 @@ const SUPPORTED_KEYS: [&str; 6] = [
     "kimi",
 ];
 
-#[cfg(target_os = "macos")]
-static NOTIFICATION_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
+#[derive(Default)]
+struct PendingNotification(Mutex<Option<String>>);
 
 #[cfg(target_os = "macos")]
 objc2::define_class!(
     #[unsafe(super(NSObject))]
+    #[ivars = AppHandle]
     struct NotificationDelegate;
 
     unsafe impl NSObjectProtocol for NotificationDelegate {}
@@ -66,9 +68,19 @@ objc2::define_class!(
             response: &UNNotificationResponse,
             completion_handler: &block2::DynBlock<dyn Fn()>,
         ) {
-            if let Some(app) = NOTIFICATION_APP.get() {
+            use objc2::DefinedClass;
+
+            let action = response.actionIdentifier();
+            // SAFETY: UserNotifications provides this immutable framework identifier.
+            if &*action == unsafe { UNNotificationDefaultActionIdentifier } {
                 let session_id = response.notification().request().identifier().to_string();
-                let _ = app.emit("notification-clicked", session_id);
+                *self
+                    .ivars()
+                    .state::<PendingNotification>()
+                    .0
+                    .lock()
+                    .unwrap() = Some(session_id);
+                let _ = self.ivars().emit("notification-clicked", ());
             }
             completion_handler.call(());
         }
@@ -76,16 +88,24 @@ objc2::define_class!(
 );
 
 #[cfg(target_os = "macos")]
+impl NotificationDelegate {
+    fn new(app: AppHandle) -> objc2::rc::Retained<Self> {
+        use objc2::AnyThread;
+
+        let this = Self::alloc().set_ivars(app);
+        unsafe { objc2::msg_send![super(this), init] }
+    }
+}
+
+#[cfg(target_os = "macos")]
 static NOTIFICATION_DELEGATE: std::sync::OnceLock<objc2::rc::Retained<NotificationDelegate>> =
     std::sync::OnceLock::new();
 
 #[cfg(target_os = "macos")]
 fn install_notification_delegate(app: &AppHandle) {
-    use objc2::{AnyThread, runtime::ProtocolObject};
+    use objc2::runtime::ProtocolObject;
 
-    let _ = NOTIFICATION_APP.set(app.clone());
-    let delegate = NOTIFICATION_DELEGATE
-        .get_or_init(|| unsafe { objc2::msg_send![NotificationDelegate::alloc(), init] });
+    let delegate = NOTIFICATION_DELEGATE.get_or_init(|| NotificationDelegate::new(app.clone()));
     UNUserNotificationCenter::currentNotificationCenter()
         .setDelegate(Some(ProtocolObject::from_ref(&**delegate)));
 }
@@ -98,6 +118,11 @@ fn notifications_supported() -> bool {
                 .ancestors()
                 .any(|path| path.extension().is_some_and(|extension| extension == "app"))
         })
+}
+
+#[tauri::command]
+fn notification_session(pending: State<'_, PendingNotification>) -> Option<String> {
+    pending.0.lock().unwrap().take()
 }
 
 #[cfg(target_os = "macos")]
@@ -5141,6 +5166,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Sessions::default())
         .manage(WakeLock::default())
+        .manage(PendingNotification::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
@@ -5191,6 +5217,7 @@ pub fn run() {
             save_api_key,
             delete_api_key,
             notifications_supported,
+            notification_session,
             request_notification_permission,
             send_notification,
             check_update,
