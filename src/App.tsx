@@ -1899,7 +1899,9 @@ function App() {
   useEffect(() => {
     if (localStorage.getItem(NOTIFICATIONS_KEY) !== null) return;
     void invoke<boolean>("notifications_supported")
-      .then((supported) => (supported ? changeNotifications(true) : undefined))
+      .then((supported) =>
+        supported && localStorage.getItem(NOTIFICATIONS_KEY) === null ? changeNotifications(true) : undefined,
+      )
       .catch(() => {
         localStorage.setItem(NOTIFICATIONS_KEY, "false");
         notificationsRef.current = false;
