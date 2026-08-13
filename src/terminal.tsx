@@ -236,7 +236,7 @@ export function TerminalView({
         return false;
       }
       if (!(event.metaKey || event.ctrlKey)) return true;
-      const step = zoomStep(event.key);
+      const step = zoomStep(event.key, event.code);
       if (step === undefined) return true;
       zoomRef.current(step);
       return false;

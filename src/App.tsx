@@ -1721,7 +1721,7 @@ function App() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
       if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
-      const step = zoomStep(event.key);
+      const step = zoomStep(event.key, event.code);
       const preview = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-context-zoom]") : null;
       if (preview && step !== undefined) {
         const action = step === 1 ? "zoom-in" : step === -1 ? "zoom-out" : "zoom-reset";

@@ -793,6 +793,14 @@ function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (!viewer.current || viewer.current.offsetParent === null) return;
+      const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
+      const step = command ? zoomStep(event.key, event.code) : undefined;
+      if (step !== undefined) {
+        event.preventDefault();
+        event.stopPropagation();
+        zoom(step);
+        return;
+      }
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
       const target = event.target;
@@ -804,9 +812,9 @@ function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
       event.preventDefault();
       onBack();
     }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onBack]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [onBack, zoom]);
 
   return { viewer, fontSize, zoom };
 }
@@ -829,7 +837,7 @@ function previewKeyDown(
     onClose();
     return;
   }
-  const step = zoomStep(event.key);
+  const step = zoomStep(event.key, event.code);
   if (step === undefined) return;
   event.preventDefault();
   zoom(step);
@@ -1036,6 +1044,7 @@ function FileViewer({
               aria-label={`Edit ${entry.name}`}
               spellCheck={false}
               value={draft}
+              style={{ fontSize }}
               className="size-full resize-none overflow-auto bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onChange={(event) =>
                 onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
