@@ -446,7 +446,7 @@ export function NewSessionDialog({
                         <ActionIconButton
                           type="button"
                           size="icon-sm"
-                          variant="default"
+                          className="absolute top-1/2 right-2 -mt-3.5 bg-background shadow-sm hover:bg-background hover:shadow-md"
                           tooltip={
                             busy
                               ? `${action.working} ${sessionLabel(option)}…`
@@ -459,7 +459,6 @@ export function NewSessionDialog({
                               ? `Install ${sessionLabel(option)}`
                               : `Update ${sessionLabel(option)} to the latest version`
                           }
-                          className="absolute top-1/2 right-2 -mt-3.5"
                           disabled={Boolean(installing)}
                           onClick={() => void install(option)}
                         >
