@@ -39,17 +39,19 @@ jobs:
               echo "increment=false" >> "$GITHUB_OUTPUT"
               exit 0
             fi
+          fi
+          GENERATED=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" --jq .body)
+          BODY=$(printf '%s\n\n<!-- lite-release-notes:start -->\n%s\n<!-- lite-release-notes:end -->' \
+            "Download the installer for your operating system below. Lite runs locally and uses your existing Claude Code and Codex authentication. The release includes a cross-platform source and dependency SBOM." \
+            "$GENERATED")
+          if [ -n "$RELEASE" ]; then
             RELEASE_ID=$(jq -r .id <<< "$RELEASE")
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f target_commitish="$GITHUB_SHA" >/dev/null
+            jq -n --arg target "$GITHUB_SHA" --arg body "$BODY" '{target_commitish: $target, body: $body}' |
+              gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" --input - >/dev/null
           else
-            RELEASE_ID=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
-              -f tag_name="$TAG" \
-              -f name="Lite $TAG" \
-              -f body="Download the installer for your operating system below. Lite runs locally and uses your existing Claude Code and Codex authentication. The release includes a cross-platform source and dependency SBOM." \
-              -f target_commitish="$GITHUB_SHA" \
-              -F draft=true \
-              -F generate_release_notes=true \
-              --jq .id)
+            RELEASE_ID=$(jq -n --arg tag "$TAG" --arg target "$GITHUB_SHA" --arg body "$BODY" \
+              '{tag_name: $tag, name: ("Lite " + $tag), body: $body, target_commitish: $target, draft: true}' |
+              gh api --method POST "repos/$GITHUB_REPOSITORY/releases" --input - --jq .id)
           fi
           {
             echo "increment=true"
@@ -167,6 +169,19 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Add release notes to updater manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.check.outputs.release_id }}
+        run: |
+          RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+          NOTES=$(jq -r '.body | capture("<!-- lite-release-notes:start -->\\n(?<notes>[\\s\\S]*?)\\n<!-- lite-release-notes:end -->").notes' <<< "$RELEASE")
+          ASSET_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq 'map(select(.name == "latest.json")) | first.id // empty')
+          test -n "$ASSET_ID"
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" > "$RUNNER_TEMP/latest.json"
+          jq --arg notes "$NOTES" '.notes = $notes' "$RUNNER_TEMP/latest.json" > "$RUNNER_TEMP/latest-with-notes.json"
+          gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
+          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" -H "Content-Type: application/json" --input "$RUNNER_TEMP/latest-with-notes.json" >/dev/null
       - name: Verify updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -179,7 +194,7 @@ jobs:
           LATEST_ID=$(jq -r 'map(select(.name == "latest.json")) | first.id // empty' <<< "$ASSETS")
           test -n "$LATEST_ID"
           gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$LATEST_ID" > "$RUNNER_TEMP/latest.json"
-          jq -e --arg version "$VERSION" '.version == $version' "$RUNNER_TEMP/latest.json" >/dev/null
+          jq -e --arg version "$VERSION" '.version == $version and (.notes | type == "string" and length > 0)' "$RUNNER_TEMP/latest.json" >/dev/null
           for PLATFORM in darwin-aarch64-app linux-x86_64-appimage windows-x86_64-nsis; do
             jq -e --arg platform "$PLATFORM" '.platforms[$platform] | (.url | type == "string" and length > 0) and (.signature | type == "string" and length > 0)' "$RUNNER_TEMP/latest.json" >/dev/null
             ASSET_ID=$(jq -r --arg platform "$PLATFORM" '.platforms[$platform].url | capture("/assets/(?<id>[0-9]+)$").id' "$RUNNER_TEMP/latest.json")

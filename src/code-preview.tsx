@@ -109,6 +109,55 @@ function LineNumbers({ count }: { count: number }) {
   );
 }
 
+export function MarkdownPreview({
+  source,
+  className = "",
+  onOpenLink,
+}: {
+  source: string;
+  className?: string;
+  onOpenLink?: (url: string) => void;
+}) {
+  return (
+    <article className={`markdown-viewer max-w-none ${className}`}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a({ href, children }) {
+            return href && onOpenLink ? (
+              <a
+                href={href}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onOpenLink(href);
+                }}
+              >
+                {children}
+              </a>
+            ) : (
+              <span className="text-foreground underline">{children}</span>
+            );
+          },
+          code({ className, children, ...props }) {
+            const language = /language-([\w-]+)/.exec(className ?? "")?.[1];
+            const source = String(children).replace(/\n$/, "");
+            return language ? (
+              <HighlightedCode source={source} language={language} />
+            ) : (
+              <code {...props}>{children}</code>
+            );
+          },
+          img({ alt }) {
+            return <span className="text-muted-foreground">[Image: {alt}]</span>;
+          },
+        }}
+      >
+        {source}
+      </ReactMarkdown>
+    </article>
+  );
+}
+
 export default function CodePreview({
   path,
   source,
@@ -120,32 +169,7 @@ export default function CodePreview({
 }) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (rendered && (extension === "md" || extension === "mdx")) {
-    return (
-      <article className="markdown-viewer max-w-none px-6 py-5">
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            a({ children }) {
-              return <span className="text-foreground underline">{children}</span>;
-            },
-            code({ className, children, ...props }) {
-              const language = /language-([\w-]+)/.exec(className ?? "")?.[1];
-              const source = String(children).replace(/\n$/, "");
-              return language ? (
-                <HighlightedCode source={source} language={language} />
-              ) : (
-                <code {...props}>{children}</code>
-              );
-            },
-            img({ alt }) {
-              return <span className="text-muted-foreground">[Image: {alt}]</span>;
-            },
-          }}
-        >
-          {source}
-        </ReactMarkdown>
-      </article>
-    );
+    return <MarkdownPreview source={source} className="px-6 py-5" />;
   }
   if (rendered && ["htm", "html", "svg"].includes(extension)) {
     return (

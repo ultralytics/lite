@@ -277,6 +277,7 @@ const SIDES = {
   inspector: { size: "25%", max: "40%" },
 } as const;
 const TerminalView = lazy(() => import("@/terminal").then((module) => ({ default: module.TerminalView })));
+const ReleaseNotes = lazy(() => import("@/code-preview").then((module) => ({ default: module.MarkdownPreview })));
 // The version is known from the start, so the badge shows it throughout and only its color waits on
 // the answer: grey while asking, which is quieter than a spinner that would resize a chip this small.
 const BADGE_VARIANT = {
@@ -299,6 +300,19 @@ const SIDEBAR_FONT_KEY = "lite.sidebar.fontSize";
 const INSPECTOR_FONT_KEY = "lite.inspector.fontSize";
 
 type UpdateStatus = "checking" | "available" | "rebuild" | "current" | "installing" | "error";
+type ReleaseInfo = { version: string; notes: string; available: boolean };
+
+function friendlyReleaseNotes(notes: string) {
+  return notes.replace(
+    /^(\* .+?) by @([A-Za-z0-9-]+(?:\[bot\])?) in (https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+))$/gm,
+    (_line, title: string, author: string, pull: string, number: string) => {
+      const profile = author.endsWith("[bot]")
+        ? `https://github.com/apps/${author.slice(0, -5)}`
+        : `https://github.com/${author}`;
+      return `${title} by [@${author}](${profile}) in [#${number}](${pull})`;
+    },
+  );
+}
 
 function zoomPanelStyle(fontSize: number) {
   const scale = fontSize / 13;
@@ -1380,7 +1394,10 @@ function runOnStart(sessionId: string, command: string) {
     window.clearTimeout(settle);
     window.clearTimeout(patience);
     unsubscribe();
-    writeSession(sessionId, `${command}\r`);
+    // Submit exactly as the terminal does: the text and Enter are separate input events. Interactive
+    // agents may treat one combined write as pasted text and leave it sitting in the composer.
+    writeSession(sessionId, command);
+    writeSession(sessionId, "\r");
   };
   // This waits rather than sends, which is also what keeps it safe: subscribing replays what the
   // session has already said, so a listener that sent from here would be sending before the two lines
@@ -1492,6 +1509,7 @@ function App() {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>("checking");
   const [availableVersion, setAvailableVersion] = useState("");
+  const [releaseNotes, setReleaseNotes] = useState("");
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState("");
   const updateDialog = useRef<HTMLDivElement>(null);
@@ -1776,8 +1794,8 @@ function App() {
     const ask = ++releaseAsk.current;
     setRelease("checking");
     try {
-      const next = await invoke<string | null>("check_update");
-      if (ask === releaseAsk.current) setRelease(next ? "behind" : "current");
+      const next = await invoke<ReleaseInfo | null>("check_update");
+      if (ask === releaseAsk.current) setRelease(next?.available ? "behind" : "current");
       return next;
     } catch (reason) {
       if (ask === releaseAsk.current) setRelease("unknown");
@@ -2628,11 +2646,19 @@ function App() {
     setUpdateOpen(true);
     setUpdateStatus("checking");
     setUpdateError("");
+    setReleaseNotes("");
     try {
       // A release would replace this build rather than update it, so a local build asks its own tree.
-      const next = commit ? await invoke<string | null>("local_update") : await askRelease();
-      setAvailableVersion(next ?? "");
-      setUpdateStatus(next ? (commit ? "rebuild" : "available") : "current");
+      if (commit) {
+        const next = await invoke<string | null>("local_update");
+        setAvailableVersion(next ?? "");
+        setUpdateStatus(next ? "rebuild" : "current");
+      } else {
+        const next = await askRelease();
+        setAvailableVersion(next?.version ?? "");
+        setReleaseNotes(next?.notes ?? "");
+        setUpdateStatus(next?.available ? "available" : "current");
+      }
     } catch (reason) {
       setUpdateError(String(reason));
       setUpdateStatus("error");
@@ -3209,7 +3235,7 @@ function App() {
             <DialogContent
               ref={updateDialog}
               initialFocus={updateDialog}
-              className="sm:max-w-lg"
+              className="sm:max-w-2xl"
               showCloseButton={updateStatus !== "checking" && updateStatus !== "installing"}
             >
               <DialogHeader>
@@ -3289,6 +3315,15 @@ function App() {
                     ) : null}
                   </dl>
                 )}
+                {releaseNotes && updateStatus !== "checking" && updateStatus !== "installing" ? (
+                  <Suspense fallback={<Spinner className="mx-auto mt-4 size-5 text-muted-foreground" />}>
+                    <ReleaseNotes
+                      source={friendlyReleaseNotes(releaseNotes)}
+                      className="mt-4 border-t pt-3 text-sm [&>h2:first-child]:mt-0"
+                      onOpenLink={(url) => void invoke("open_url", { url })}
+                    />
+                  </Suspense>
+                ) : null}
               </DialogBody>
 
               {updateStatus === "available" ? (

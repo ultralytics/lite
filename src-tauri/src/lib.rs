@@ -466,6 +466,14 @@ struct DirectoryGrant {
     path: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseInfo {
+    version: String,
+    notes: String,
+    available: bool,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct FileEntry {
@@ -5061,14 +5069,23 @@ async fn grant_repo(app: AppHandle, roots: State<'_, Roots>) -> Result<Directory
 }
 
 #[tauri::command]
-async fn check_update(app: AppHandle) -> Result<Option<String>, String> {
+async fn check_update(app: AppHandle) -> Result<Option<ReleaseInfo>, String> {
     app.updater_builder()
+        // The latest release still owns useful notes when this version is current. Asking the updater
+        // to retain an equal version lets one request answer both the update and release-note questions.
+        .version_comparator(|current, release| release.version >= current)
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|error| error.to_string())?
         .check()
         .await
-        .map(|update| update.map(|update| update.version))
+        .map(|update| {
+            update.map(|update| ReleaseInfo {
+                available: update.version != update.current_version,
+                version: update.version,
+                notes: update.body.unwrap_or_default(),
+            })
+        })
         .map_err(|error| error.to_string())
 }
 

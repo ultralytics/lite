@@ -6,15 +6,6 @@ import { ItemDescription } from "@/components/ui/item";
 import type { Agent, ModelProvider } from "@/types";
 
 export const AUTH_PROVIDERS = {
-  claude: {
-    id: "claude",
-    agent: "claude",
-    provider: undefined,
-    label: "Anthropic",
-    variable: "ANTHROPIC_API_KEY",
-    configured: "Signed in through Claude Code",
-    signIn: true,
-  },
   codex: {
     id: "codex",
     agent: "codex",
@@ -22,6 +13,15 @@ export const AUTH_PROVIDERS = {
     label: "OpenAI",
     variable: "OPENAI_API_KEY",
     configured: "Signed in through Codex",
+    signIn: true,
+  },
+  claude: {
+    id: "claude",
+    agent: "claude",
+    provider: undefined,
+    label: "Anthropic",
+    variable: "ANTHROPIC_API_KEY",
+    configured: "Signed in through Claude Code",
     signIn: true,
   },
   deepseek: {
