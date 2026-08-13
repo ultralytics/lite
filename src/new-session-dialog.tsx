@@ -403,9 +403,9 @@ export function NewSessionDialog({
                   // A registry that could not answer knows of no update, so only one it reported is
                   // offered — by the button and by the mark beside the version alike.
                   const updatable = managed && update === true;
-                  // What the button offers, if it is there at all, and the room the tile keeps for it:
-                  // a tile only ever offers the one action, so each reserves the width of its own
-                  // widest label rather than both settling for the wider.
+                  // What the button offers, if it is there at all, and the room the title keeps for it.
+                  // The status line keeps the same width it has on main instead of shrinking when the
+                  // adjacent action appears.
                   const action = state?.installable
                     ? ({ label: "Install", working: "Installing…", room: "pr-28" } as const)
                     : updatable
@@ -420,7 +420,7 @@ export function NewSessionDialog({
                         type="button"
                         size="lg"
                         variant={active ? "secondary" : "outline"}
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action?.room ?? "pr-3"}`}
+                        className="h-14 w-full min-w-0 justify-start overflow-hidden pr-3 pl-3"
                         aria-pressed={active}
                         disabled={Boolean(installing)}
                         title={"note" in option ? option.note : sessionLabel(option)}
@@ -430,7 +430,7 @@ export function NewSessionDialog({
                         <div
                           className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
-                          <span className="block truncate">{sessionLabel(option)}</span>
+                          <span className={`block truncate ${action?.room ?? ""}`}>{sessionLabel(option)}</span>
                           {state && !state.available ? (
                             <span className="block truncate text-xs font-normal text-muted-foreground">
                               {state.installable ? "Not installed" : "Setup required"}
@@ -449,7 +449,7 @@ export function NewSessionDialog({
                           type="button"
                           size="sm"
                           variant="ghost"
-                          className="absolute top-1/2 right-1.5 -mt-3.5 hover:bg-primary hover:text-primary-foreground"
+                          className="absolute top-1 right-1.5 hover:bg-primary hover:text-primary-foreground"
                           disabled={Boolean(installing)}
                           onClick={() => void install(option)}
                         >

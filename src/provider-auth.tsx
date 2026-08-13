@@ -103,10 +103,10 @@ export function ProviderAuthDescription({
   return (
     <ItemDescription className="truncate text-xs leading-4">
       {status && (hint || status.cliAuthMethod) ? (
-        <span className="flex min-w-0 items-center gap-1.5">
+        <span className="flex items-center gap-1.5">
           <Check className="size-3.5 shrink-0" />
-          <span className="min-w-0 truncate">{configured}</span>
-          {hint ? <span className="shrink-0 font-mono">••••{hint}</span> : null}
+          {configured}
+          {hint ? <span className="font-mono">••••{hint}</span> : null}
         </span>
       ) : status ? (
         "Not set up"
