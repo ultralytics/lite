@@ -1895,13 +1895,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (localStorage.getItem(NOTIFICATIONS_KEY) !== null) return;
+    // A local build has no application bundle for macOS to authorize, while an installed release
+    // does. Both default on; only the release asks the OS for its first permission.
+    if (commit === undefined || commit || localStorage.getItem(NOTIFICATIONS_KEY) !== null) return;
     void changeNotifications(true).catch(() => {
       localStorage.setItem(NOTIFICATIONS_KEY, "false");
       notificationsRef.current = false;
       setNotifications(false);
     });
-  }, [changeNotifications]);
+  }, [changeNotifications, commit]);
 
   const changeKeepAwake = useCallback((enabled: boolean) => {
     localStorage.setItem(KEEP_AWAKE_KEY, String(enabled));
