@@ -113,6 +113,7 @@ import { type Agent, defaultSessionName, folderName, repoName, type Session, ses
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
+const WORKING_KEY = "lite.working.v1";
 const SESSION_VIEW_KEY = "lite.sessionView.v1";
 type SessionGrouping = "none" | "repository" | "directory" | "state";
 type SessionSort = "newest" | "oldest" | "name-asc" | "name-desc" | "manual";
@@ -824,6 +825,15 @@ function loadSessions(): Session[] {
   }
 }
 
+function loadWorking(): Set<string> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(WORKING_KEY) ?? "[]");
+    return new Set(Array.isArray(stored) ? stored.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
 // Keeps a failing panel from taking the whole window down with it.
 class PanelBoundary extends Component<{ children: ReactNode }, { message: string }> {
   state = { message: "" };
@@ -1438,7 +1448,9 @@ function App() {
   const [startingIds, setStartingIds] = useState<Set<string>>(new Set());
   // Sessions whose terminal has written something recently, which is what separates a connected
   // session that is working from one that is merely connected.
-  const [working, setWorking] = useState<Set<string>>(new Set());
+  const [working, setWorking] = useState(loadWorking);
+  // Work that was live when the previous process disappeared is resumed once in this process.
+  const interrupted = useRef(new Set(working));
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
   const [query, setQuery] = useState("");
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
@@ -1566,7 +1578,7 @@ function App() {
     if (session.running) {
       recoveryFailures.current.delete(session.id);
       void recoverRef.current(session).catch(() => {});
-    } else if (!startingIds.has(session.id)) void launch(session, true);
+    } else if (!startingIds.has(session.id)) void resumeSession(session);
   };
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
@@ -1696,6 +1708,12 @@ function App() {
       JSON.stringify(sessions.filter((session) => !session.mode).map((session) => ({ ...session, running: false }))),
     );
   }, [sessions]);
+
+  // This is written while work changes rather than at shutdown, so a power loss still leaves the
+  // next Lite process an exact list. An install freezes the last state before it stops the PTYs.
+  useEffect(() => {
+    if (updateStatus !== "installing") localStorage.setItem(WORKING_KEY, JSON.stringify([...working]));
+  }, [updateStatus, working]);
 
   const hasActiveSessions = sessions.some((session) => session.running);
   useEffect(() => {
@@ -1970,6 +1988,30 @@ function App() {
     }
   }, []);
 
+  const resumeSession = useCallback(
+    async (session: Session) => {
+      const shouldContinue = session.agent !== "shell" && interrupted.current.has(session.id);
+      const launched = await launch(session, true);
+      if (launched && shouldContinue) {
+        interrupted.current.delete(session.id);
+        runOnStart(session.id, "continue");
+      }
+      return launched;
+    },
+    [launch],
+  );
+
+  // Busy sessions belong back where they were without waiting for each tab to be visited. Idle tabs
+  // keep their existing lazy resume behavior, and a shell never receives an agent prompt as a command.
+  useEffect(() => {
+    const pending = sessionsRef.current.filter(
+      (session) => !session.mode && session.agent !== "shell" && interrupted.current.has(session.id),
+    );
+    if (pending.some((session) => session.id === selectedRef.current?.id))
+      resumed.current = selectedRef.current?.id ?? "";
+    for (const session of pending) void resumeSession(session);
+  }, [resumeSession]);
+
   function recoverSession(session: Session): Promise<void> {
     const pending = recoveries.current.get(session.id);
     if (pending) return pending;
@@ -2027,12 +2069,12 @@ function App() {
   }
   recoverRef.current = recoverSession;
 
-  // Opening the app, or coming back to a session, brings its provider process back on its own.
+  // Opening the app, or coming back to an idle session, brings its provider process back on its own.
   useEffect(() => {
     if (!selected || selected.mode || selected.running || selectedStarting || resumed.current === selected.id) return;
     resumed.current = selected.id;
-    void launch(selected, true);
-  }, [selected, selectedStarting, launch]);
+    void resumeSession(selected);
+  }, [selected, selectedStarting, resumeSession]);
 
   // Which repository a folder was cloned from is a fact about the folder, so it is asked for once when
   // the selection changes and never watched.

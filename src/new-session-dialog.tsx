@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Download, FolderOpen, RefreshCw } from "lucide-react";
+import { Check, CircleAlert, Download, FolderOpen, RefreshCw, TriangleAlert } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -47,6 +47,12 @@ interface Repository {
   worktree: string;
 }
 
+interface DirectoryProbe {
+  exists: boolean;
+  isDirectory: boolean;
+  repository: Repository | null;
+}
+
 interface Availability {
   available: boolean;
   installable: boolean;
@@ -78,6 +84,7 @@ export function NewSessionDialog({
   const [error, setError] = useState("");
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
   const [repo, setRepo] = useState<string | null>();
+  const [folder, setFolder] = useState<"checking" | "missing" | "directory" | "other">("checking");
   const [worktree, setWorktree] = useState("");
   const [worktreeOn, setWorktreeOn] = useState(false);
   const [branch, setBranch] = useState("");
@@ -112,6 +119,7 @@ export function NewSessionDialog({
   useEffect(() => {
     if (!isOpen || !path.trim()) {
       setRepo(null);
+      setFolder("checking");
       setWorktree("");
       setWorktreeOn(false);
       return;
@@ -119,9 +127,10 @@ export function NewSessionDialog({
     setRepo(undefined);
     let disposed = false;
     const probe = window.setTimeout(() => {
-      void invoke<Repository | null>("git_repo", { path: path.trim() })
-        .then((repository) => {
+      void invoke<DirectoryProbe>("directory_probe", { path: path.trim() })
+        .then(({ exists, isDirectory, repository }) => {
           if (disposed) return;
+          setFolder(isDirectory ? "directory" : exists ? "other" : "missing");
           const root = repository?.root ?? null;
           setRepo(root);
           setWorktree(repository?.worktree ?? "");
@@ -131,6 +140,7 @@ export function NewSessionDialog({
         .catch(() => {
           if (!disposed) {
             setRepo(null);
+            setFolder("other");
             setWorktree("");
           }
         });
@@ -186,6 +196,7 @@ export function NewSessionDialog({
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setDirectory(selected);
         setPath(selected.path);
+        setFolder("directory");
         setRepo(undefined);
         setWorktree("");
       }
@@ -228,7 +239,7 @@ export function NewSessionDialog({
       // the worktree and the recorded repository always describe where the session will run.
       let root: string | null;
       try {
-        root = (await invoke<Repository | null>("git_repo", { path: folder.path }))?.root ?? null;
+        root = (await invoke<DirectoryProbe>("directory_probe", { path: folder.path })).repository?.root ?? null;
       } catch (reason) {
         setError(String(reason));
         return;
@@ -302,7 +313,10 @@ export function NewSessionDialog({
   const ready =
     !installing &&
     !creating &&
-    Boolean(missing || (path.trim() && status && repo !== undefined && (!repo || !worktreeOn || branch.trim())));
+    Boolean(
+      missing ||
+        (path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim())),
+    );
   function start() {
     if (missing?.installable) void install();
     else if (missing)
@@ -331,21 +345,42 @@ export function NewSessionDialog({
                 Project folder
               </Label>
               <div className="flex gap-2">
-                <Input
-                  id="project-folder"
-                  value={path}
-                  className="min-w-0 flex-1 font-mono"
-                  placeholder="Type or choose a project folder…"
-                  name="project-folder"
-                  autoComplete="off"
-                  onChange={(event) => {
-                    setPath(event.target.value);
-                    // The worktree section describes the probed folder; while a new one is being
-                    // typed there is nothing true to show, so it hides until the probe answers.
-                    setRepo(undefined);
-                    setWorktree("");
-                  }}
-                />
+                <div className="relative min-w-0 flex-1">
+                  <Input
+                    id="project-folder"
+                    value={path}
+                    className={`pr-8 font-mono ${folder === "directory" ? "border-success focus-visible:border-success focus-visible:ring-success/20" : folder === "missing" ? "border-amber-500 focus-visible:border-amber-500 focus-visible:ring-amber-500/20" : ""}`}
+                    placeholder="Type or choose a project folder…"
+                    name="project-folder"
+                    autoComplete="off"
+                    aria-invalid={folder === "other" || undefined}
+                    aria-describedby={folder === "missing" || folder === "other" ? "project-folder-status" : undefined}
+                    onChange={(event) => {
+                      setPath(event.target.value);
+                      // The worktree section describes the probed folder; while a new one is being
+                      // typed there is nothing true to show, so it hides until the probe answers.
+                      setFolder("checking");
+                      setRepo(undefined);
+                      setWorktree("");
+                    }}
+                  />
+                  {folder === "directory" ? (
+                    <Check
+                      className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-success"
+                      aria-hidden="true"
+                    />
+                  ) : folder === "missing" ? (
+                    <TriangleAlert
+                      className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-amber-500"
+                      aria-hidden="true"
+                    />
+                  ) : folder === "other" ? (
+                    <CircleAlert
+                      className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-destructive"
+                      aria-hidden="true"
+                    />
+                  ) : null}
+                </div>
                 <ActionIconButton
                   variant="outline"
                   size="icon"
@@ -356,6 +391,15 @@ export function NewSessionDialog({
                   <FolderOpen />
                 </ActionIconButton>
               </div>
+              {folder === "missing" ? (
+                <p id="project-folder-status" className="text-xs text-amber-600 dark:text-amber-400">
+                  This folder does not exist and will be created.
+                </p>
+              ) : folder === "other" ? (
+                <p id="project-folder-status" className="text-xs text-destructive">
+                  This path is not a folder.
+                </p>
+              ) : null}
             </div>
             {repo ? (
               <div className="space-y-2">
