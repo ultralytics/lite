@@ -901,7 +901,7 @@ function SourceEditor({
         aria-label={`Edit ${path.split(/[\\/]/).pop() ?? path}`}
         spellCheck={false}
         value={value}
-        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-transparent"
+        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-foreground"
         style={{ paddingLeft: `calc(${digits * 0.8}ch + 2rem)`, lineHeight: "inherit" }}
         onChange={(event) => onChange(event.target.value)}
         onScroll={(event) => {
