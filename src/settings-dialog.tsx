@@ -17,7 +17,6 @@ import {
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
 import { GitHubLogomark, ProviderIcon, UltralyticsLogomark } from "@/brand-icons";
-import { Badge } from "@/components/ui/badge";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -45,7 +44,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { without } from "@/lib/utils";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import type { Theme } from "@/theme";
-import type { Agent } from "@/types";
+import { type Agent, sessionLabel } from "@/types";
 
 // Each CLI signs in on its own; a key here is the alternative for anyone who would rather not.
 const providers = Object.values(AUTH_PROVIDERS).filter((provider) => "variable" in provider);
@@ -239,28 +238,23 @@ export function SettingsDialog({
               <p className="mt-1 mb-4 text-sm text-muted-foreground">
                 Saved keys stay on this computer and take priority over provider sign-in.
               </p>
-              <ItemGroup>
+              <ItemGroup className="grid grid-cols-2 gap-2.5">
                 {providers.map((option) => {
                   const status = auth?.find((entry) => entry.name === option.id);
                   const open = editing.has(option.id);
                   const draft = drafts[option.id] ?? "";
                   const shown = revealed.has(option.id);
                   return (
-                    <Item key={option.id} variant="outline">
+                    <Item key={option.id} variant="outline" className="min-w-0 content-start">
                       <ItemMedia variant="icon">
                         <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
                       </ItemMedia>
                       <ItemContent>
-                        <ItemTitle>
-                          {option.label}
-                          <Badge variant="outline" className="font-mono font-normal">
-                            {option.variable}
-                          </Badge>
-                        </ItemTitle>
+                        <ItemTitle>{sessionLabel(option)}</ItemTitle>
                         <ProviderAuthDescription provider={option} status={status} />
                       </ItemContent>
                       {open ? null : (
-                        <ItemActions>
+                        <ItemFooter className="justify-end">
                           {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (
                             <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
                               Sign in
@@ -281,7 +275,7 @@ export function SettingsDialog({
                               {busy === option.id ? <Spinner /> : <Trash2 />}
                             </ActionIconButton>
                           ) : null}
-                        </ItemActions>
+                        </ItemFooter>
                       )}
                       {open ? (
                         <ItemFooter>
