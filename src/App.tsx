@@ -1887,8 +1887,10 @@ function App() {
   }, [forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
 
   const changeNotifications = useCallback(async (enabled: boolean) => {
+    const stored = localStorage.getItem(NOTIFICATIONS_KEY);
     if (enabled && !(await invoke<boolean>("request_notification_permission")))
       throw new Error("Allow notifications for Lite in macOS System Settings.");
+    if (localStorage.getItem(NOTIFICATIONS_KEY) !== stored) return;
     localStorage.setItem(NOTIFICATIONS_KEY, String(enabled));
     notificationsRef.current = enabled;
     setNotifications(enabled);
