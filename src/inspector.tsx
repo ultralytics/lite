@@ -46,6 +46,7 @@ import {
   lazy,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type RefObject,
   Suspense,
   useCallback,
   useEffect,
@@ -873,9 +874,47 @@ function PreviewHeader({
   );
 }
 
-// The preview inherits its type from here, so one zoom scales code, prose, and the line-number gutter
-// together while the header chrome keeps its own size. Zooming lives in this component so a step
-// re-renders the view alone, never the tree hidden behind it.
+function SourceEditor({
+  path,
+  value,
+  fontSize,
+  editor,
+  onChange,
+}: {
+  path: string;
+  value: string;
+  fontSize: number;
+  editor: RefObject<HTMLTextAreaElement | null>;
+  onChange: (value: string) => void;
+}) {
+  const highlight = useRef<HTMLDivElement>(null);
+  const digits = String(value.split("\n").length).length;
+
+  return (
+    <div className="relative size-full overflow-hidden" style={{ fontSize, lineHeight: 1.5 }}>
+      <div ref={highlight} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+        <CodePreview path={path} source={value} />
+      </div>
+      <textarea
+        ref={editor}
+        name="file-contents"
+        aria-label={`Edit ${path.split(/[\\/]/).pop() ?? path}`}
+        spellCheck={false}
+        value={value}
+        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-transparent"
+        style={{ paddingLeft: `calc(${digits * 0.8}ch + 2rem)`, lineHeight: "inherit" }}
+        onChange={(event) => onChange(event.target.value)}
+        onScroll={(event) => {
+          const preview = highlight.current?.querySelector("pre");
+          if (!preview) return;
+          preview.scrollLeft = event.currentTarget.scrollLeft;
+          preview.scrollTop = event.currentTarget.scrollTop;
+        }}
+      />
+    </div>
+  );
+}
+
 function FileViewer({
   entry,
   source,
@@ -897,7 +936,7 @@ function FileViewer({
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
-  const [view, setView] = useState<"source" | "preview" | "edit">("source");
+  const [view, setView] = useState<"source" | "preview">("source");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -911,7 +950,7 @@ function FileViewer({
   });
 
   useEffect(() => {
-    if (!loading && view === "edit") editor.current?.focus();
+    if (!loading && view === "source") editor.current?.focus();
   }, [loading, view]);
 
   async function save() {
@@ -936,7 +975,7 @@ function FileViewer({
     <Tabs
       ref={viewer}
       value={view}
-      onValueChange={(value) => setView(value as "source" | "preview" | "edit")}
+      onValueChange={(value) => setView(value as "source" | "preview")}
       aria-label={entry.name}
       tabIndex={-1}
       className="flex min-h-0 flex-1 flex-col gap-0 outline-none"
@@ -980,18 +1019,13 @@ function FileViewer({
         showClose
         onClose={closeFile}
       >
-        {!error ? (
+        {renderable && !error ? (
           <TabsList aria-label="File view" className="h-7 shrink-0">
             <TabsTrigger value="source" className="text-xs">
               Source
             </TabsTrigger>
-            {renderable ? (
-              <TabsTrigger value="preview" className="text-xs">
-                Preview
-              </TabsTrigger>
-            ) : null}
-            <TabsTrigger value="edit" className="text-xs">
-              Edit
+            <TabsTrigger value="preview" className="text-xs">
+              Preview
             </TabsTrigger>
           </TabsList>
         ) : null}
@@ -1014,13 +1048,17 @@ function FileViewer({
       ) : (
         <>
           <TabsContent value="source" className="min-h-0 overflow-hidden">
-            <ScrollArea className="size-full">
-              <div style={contentZoomStyle(fontSize)}>
-                <Suspense fallback={<Loading label="Highlighting source…" />}>
-                  <CodePreview path={entry.path} source={draft} />
-                </Suspense>
-              </div>
-            </ScrollArea>
+            <Suspense fallback={<Loading label="Highlighting source…" />}>
+              <SourceEditor
+                path={entry.path}
+                value={draft}
+                fontSize={fontSize}
+                editor={editor}
+                onChange={(contents) =>
+                  onDraftChange(lineEnding === "\r\n" ? contents.replace(/\r?\n/g, "\r\n") : contents)
+                }
+              />
+            </Suspense>
           </TabsContent>
           {renderable ? (
             <TabsContent value="preview" className="min-h-0 overflow-hidden">
@@ -1033,20 +1071,6 @@ function FileViewer({
               </ScrollArea>
             </TabsContent>
           ) : null}
-          <TabsContent value="edit" className="min-h-0 overflow-hidden">
-            <textarea
-              ref={editor}
-              name="file-contents"
-              aria-label={`Edit ${entry.name}`}
-              spellCheck={false}
-              value={draft}
-              className="size-full resize-none overflow-auto bg-transparent p-3 font-mono outline-none"
-              style={{ fontSize }}
-              onChange={(event) =>
-                onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
-              }
-            />
-          </TabsContent>
         </>
       )}
       {saveError ? (
