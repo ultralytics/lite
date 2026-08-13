@@ -43,6 +43,11 @@ const SUPPORTED_KEYS: [&str; 6] = [
 #[tauri::command]
 fn notifications_supported() -> bool {
     cfg!(target_os = "macos")
+        && std::env::current_exe().is_ok_and(|executable| {
+            executable
+                .ancestors()
+                .any(|path| path.extension().is_some_and(|extension| extension == "app"))
+        })
 }
 
 #[cfg(target_os = "macos")]
@@ -78,6 +83,9 @@ fn send_notification(title: String) {
         UNMutableNotificationContent, UNNotificationRequest, UNUserNotificationCenter,
     };
 
+    if !notifications_supported() {
+        return;
+    }
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(&title));
     content.setBody(&NSString::from_str("This session needs your attention."));
