@@ -1,12 +1,11 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
-import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { bracketMatching, HighlightStyle, indentOnInput, syntaxHighlighting } from "@codemirror/language";
-import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
+import { HighlightStyle, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
+import { languages as editorLanguages } from "@codemirror/language-data";
 import { EditorState, StateEffect } from "@codemirror/state";
-import { drawSelection, dropCursor, EditorView, highlightSpecialChars, keymap, lineNumbers } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { basicSetup } from "codemirror";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import cpp from "highlight.js/lib/languages/cpp";
@@ -103,27 +102,6 @@ const editorHighlight = HighlightStyle.define([
   { tag: [tags.meta, tags.processingInstruction], color: "var(--syntax-constant)" },
   { tag: [tags.contentSeparator, tags.list, tags.quote], color: "var(--syntax-bullet)" },
 ]);
-
-function editorLanguage(path: string) {
-  const extension = path.split(".").pop()?.toLowerCase();
-  if (extension === "css") return import("@codemirror/lang-css").then(({ css }) => css());
-  if (["htm", "html"].includes(extension ?? "")) return import("@codemirror/lang-html").then(({ html }) => html());
-  if (["js", "jsx"].includes(extension ?? ""))
-    return import("@codemirror/lang-javascript").then(({ javascript }) => javascript({ jsx: extension === "jsx" }));
-  if (["ts", "tsx"].includes(extension ?? ""))
-    return import("@codemirror/lang-javascript").then(({ javascript }) =>
-      javascript({ typescript: true, jsx: extension === "tsx" }),
-    );
-  if (["json", "jsonc", "json5"].includes(extension ?? ""))
-    return import("@codemirror/lang-json").then(({ json }) => json());
-  if (["md", "mdx"].includes(extension ?? ""))
-    return import("@codemirror/lang-markdown").then(({ markdown }) => markdown());
-  if (extension === "py") return import("@codemirror/lang-python").then(({ python }) => python());
-  if (extension === "rs") return import("@codemirror/lang-rust").then(({ rust }) => rust());
-  if (extension === "sql") return import("@codemirror/lang-sql").then(({ sql }) => sql());
-  if (["svg", "xml"].includes(extension ?? "")) return import("@codemirror/lang-xml").then(({ xml }) => xml());
-  if (["yaml", "yml"].includes(extension ?? "")) return import("@codemirror/lang-yaml").then(({ yaml }) => yaml());
-}
 
 function highlighted(source: string, language?: string) {
   if (source.length <= 200_000 && language && hljs.getLanguage(language))
@@ -265,16 +243,7 @@ function SourceEditor({
       state: EditorState.create({
         doc: initialSource.current,
         extensions: [
-          lineNumbers(),
-          highlightSpecialChars(),
-          history(),
-          drawSelection(),
-          dropCursor(),
-          indentOnInput(),
-          bracketMatching(),
-          closeBrackets(),
-          highlightSelectionMatches(),
-          keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...searchKeymap, ...historyKeymap]),
+          basicSetup,
           syntaxHighlighting(editorHighlight),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) change.current?.(update.state.doc.toString());
@@ -303,9 +272,11 @@ function SourceEditor({
     view.current = editor;
     editor.contentDOM.setAttribute("aria-label", `Edit ${path.split(/[\\/]/).pop() ?? path}`);
     let disposed = false;
-    void editorLanguage(path)?.then((language) => {
-      if (!disposed) editor.dispatch({ effects: StateEffect.appendConfig.of(language) });
-    });
+    void LanguageDescription.matchFilename(editorLanguages, path)
+      ?.load()
+      .then((language) => {
+        if (!disposed) editor.dispatch({ effects: StateEffect.appendConfig.of(language) });
+      });
     editor.focus();
     return () => {
       disposed = true;
