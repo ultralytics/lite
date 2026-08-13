@@ -1,5 +1,11 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+import { HighlightStyle, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
+import { languages as editorLanguages } from "@codemirror/language-data";
+import { EditorState, StateEffect } from "@codemirror/state";
+import { EditorView } from "@codemirror/view";
+import { tags } from "@lezer/highlight";
+import { basicSetup } from "codemirror";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import cpp from "highlight.js/lib/languages/cpp";
@@ -20,7 +26,7 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
-import { type RefObject, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -81,6 +87,16 @@ const extensionLanguages: Record<string, string> = {
   yml: "yaml",
   zsh: "bash",
 };
+
+const editorHighlight = HighlightStyle.define([
+  { tag: [tags.keyword, tags.bool, tags.null], color: "var(--syntax-keyword)" },
+  { tag: [tags.string, tags.regexp, tags.character, tags.attributeValue], color: "var(--syntax-string)" },
+  { tag: [tags.number, tags.atom], color: "var(--syntax-constant)" },
+  { tag: [tags.comment, tags.docComment], color: "var(--syntax-comment)" },
+  { tag: [tags.variableName, tags.operator], color: "var(--syntax-variable)" },
+  { tag: [tags.propertyName, tags.typeName, tags.className], color: "var(--syntax-entity)" },
+  { tag: [tags.tagName, tags.attributeName], color: "var(--syntax-tag)" },
+]);
 
 function highlighted(source: string, language?: string) {
   if (source.length <= 200_000 && language && hljs.getLanguage(language))
@@ -164,7 +180,6 @@ export default function CodePreview({
   rendered = false,
   editable = false,
   fontSize,
-  editorRef,
   onChange,
 }: {
   path: string;
@@ -172,7 +187,6 @@ export default function CodePreview({
   rendered?: boolean;
   editable?: boolean;
   fontSize?: number;
-  editorRef?: RefObject<HTMLTextAreaElement | null>;
   onChange?: (source: string) => void;
 }) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
@@ -190,16 +204,7 @@ export default function CodePreview({
     );
   }
   if (editable) {
-    return (
-      <SourceEditor
-        path={path}
-        source={source}
-        language={extensionLanguages[extension]}
-        fontSize={fontSize}
-        editorRef={editorRef}
-        onChange={onChange}
-      />
-    );
+    return <SourceEditor path={path} source={source} fontSize={fontSize} onChange={onChange} />;
   }
   return (
     <pre className="flex min-h-full overflow-auto font-mono">
@@ -212,45 +217,72 @@ export default function CodePreview({
 function SourceEditor({
   path,
   source,
-  language,
   fontSize,
-  editorRef,
   onChange,
 }: {
   path: string;
   source: string;
-  language?: string;
   fontSize?: number;
-  editorRef?: RefObject<HTMLTextAreaElement | null>;
   onChange?: (source: string) => void;
 }) {
-  const preview = useRef<HTMLPreElement>(null);
-  const digits = String(source.split("\n").length).length;
+  const parent = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView>(null);
+  const change = useRef(onChange);
+  const initialSource = useRef(source);
+  change.current = onChange;
 
-  return (
-    <div className="relative size-full overflow-hidden" style={{ fontSize, lineHeight: 1.5 }}>
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
-        <pre ref={preview} className="flex min-h-full font-mono">
-          <LineNumbers count={source.split("\n").length} />
-          <HighlightedCode source={source} language={language} className="min-w-max !overflow-visible py-4 pr-4 pl-3" />
-        </pre>
-      </div>
-      <textarea
-        ref={editorRef}
-        name="file-contents"
-        aria-label={`Edit ${path.split(/[\\/]/).pop() ?? path}`}
-        spellCheck={false}
-        value={source}
-        className="code-editor-input absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono outline-none"
-        style={{ paddingLeft: `calc(${digits}ch + 2rem)`, lineHeight: "inherit" }}
-        onChange={(event) => onChange?.(event.target.value)}
-        onScroll={(event) => {
-          if (!preview.current) return;
-          preview.current.style.transform = `translateY(-${event.currentTarget.scrollTop}px)`;
-          const code = preview.current.querySelector("code");
-          if (code) code.style.transform = `translateX(-${event.currentTarget.scrollLeft}px)`;
-        }}
-      />
-    </div>
-  );
+  useEffect(() => {
+    if (!parent.current) return;
+    const editor = new EditorView({
+      parent: parent.current,
+      state: EditorState.create({
+        doc: initialSource.current,
+        extensions: [
+          basicSetup,
+          syntaxHighlighting(editorHighlight),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) change.current?.(update.state.doc.toString());
+          }),
+          EditorView.theme({
+            "&": { height: "100%", fontSize: "inherit", backgroundColor: "transparent" },
+            ".cm-scroller": { overflow: "auto", fontFamily: "var(--font-mono)", lineHeight: "1.5" },
+            ".cm-content": { padding: "1rem 0", caretColor: "var(--foreground)" },
+            ".cm-line": { padding: "0 1rem" },
+            ".cm-gutters": {
+              backgroundColor: "var(--background)",
+              color: "color-mix(in oklab, var(--muted-foreground) 60%, transparent)",
+              borderRight: "1px solid color-mix(in oklab, var(--border) 60%, transparent)",
+            },
+            ".cm-lineNumbers .cm-gutterElement": { padding: "0 0.5rem 0 0.75rem" },
+            ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "transparent" },
+            ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
+              backgroundColor: "color-mix(in oklab, var(--ring) 35%, transparent) !important",
+            },
+            ".cm-cursor": { borderLeftColor: "var(--foreground)" },
+            "&.cm-focused": { outline: "none" },
+          }),
+        ],
+      }),
+    });
+    view.current = editor;
+    editor.contentDOM.setAttribute("aria-label", `Edit ${path.split(/[\\/]/).pop() ?? path}`);
+    let disposed = false;
+    LanguageDescription.matchFilename(editorLanguages, path)
+      ?.load()
+      .then((language) => {
+        if (!disposed) editor.dispatch({ effects: StateEffect.appendConfig.of(language) });
+      });
+    editor.focus();
+    return () => {
+      disposed = true;
+      view.current = null;
+      editor.destroy();
+    };
+  }, [path]);
+
+  useEffect(() => {
+    if (fontSize !== undefined) view.current?.requestMeasure();
+  }, [fontSize]);
+
+  return <div ref={parent} className="size-full" style={{ fontSize }} />;
 }

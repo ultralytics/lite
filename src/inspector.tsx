@@ -898,7 +898,6 @@ function FileViewer({
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
-  const editor = useRef<HTMLTextAreaElement>(null);
   const dirty = draft !== source;
   const renderable = RENDERED_FILE.test(entry.path);
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
@@ -906,10 +905,6 @@ function FileViewer({
     if (dirty) setDiscardOpen(true);
     else onBack();
   });
-
-  useEffect(() => {
-    if (!loading && view === "source") editor.current?.focus();
-  }, [loading, view]);
 
   async function save() {
     setSaving(true);
@@ -1005,14 +1000,13 @@ function FileViewer({
         <div className="p-3 text-xs text-muted-foreground">{error}</div>
       ) : (
         <>
-          <TabsContent value="source" className="min-h-0 overflow-hidden">
+          <TabsContent value="source" keepMounted className="min-h-0 overflow-hidden">
             <Suspense fallback={<Loading label="Highlighting source…" />}>
               <CodePreview
                 path={entry.path}
                 source={draft}
                 editable
                 fontSize={fontSize}
-                editorRef={editor}
                 onChange={(contents) =>
                   onDraftChange(lineEnding === "\r\n" ? contents.replace(/\r?\n/g, "\r\n") : contents)
                 }
@@ -1020,7 +1014,7 @@ function FileViewer({
             </Suspense>
           </TabsContent>
           {renderable ? (
-            <TabsContent value="preview" className="min-h-0 overflow-hidden">
+            <TabsContent value="preview" keepMounted className="min-h-0 overflow-hidden">
               <ScrollArea className="size-full">
                 <div style={contentZoomStyle(fontSize)}>
                   <Suspense fallback={<Loading label="Opening preview…" />}>

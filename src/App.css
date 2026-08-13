@@ -113,20 +113,6 @@ html[data-session-dragging] * {
   background-color: var(--syntax-deletion-background);
 }
 
-/* The textarea owns input, selection, and scrolling while the inert mirror owns syntax colors. */
-.code-editor-input {
-  color: transparent;
-  -webkit-text-fill-color: transparent;
-  caret-color: var(--foreground);
-}
-
-.code-editor-input::selection {
-  color: transparent;
-  background: color-mix(in oklab, var(--ring) 35%, transparent);
-  -webkit-text-fill-color: transparent;
-  text-shadow: none;
-}
-
 .markdown-viewer h1,
 .markdown-viewer h2,
 .markdown-viewer h3 {
