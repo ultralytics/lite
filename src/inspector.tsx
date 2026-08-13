@@ -76,7 +76,6 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { without } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
-import { storedFontSize, zoomedFontSize, zoomStep } from "@/theme";
 import {
   type DirectoryCursor,
   type DirectoryListing,
@@ -779,28 +778,15 @@ function FileTree({
   );
 }
 
-const PREVIEW_FONT_KEY = "lite.preview.fontSize";
 const RENDERED_FILE = /\.(?:html?|mdx?|svg)$/i;
 
 function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
   const viewer = useRef<T>(null);
-  const [fontSize, setFontSize] = useState(() => storedFontSize(PREVIEW_FONT_KEY));
-  const zoom = useCallback((step: -1 | 0 | 1) => {
-    setFontSize((current) => zoomedFontSize(PREVIEW_FONT_KEY, current, step));
-  }, []);
 
   useEffect(() => viewer.current?.focus(), []);
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (!viewer.current || viewer.current.offsetParent === null) return;
-      const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
-      const step = command ? zoomStep(event.key, event.code) : undefined;
-      if (step !== undefined) {
-        event.preventDefault();
-        event.stopPropagation();
-        zoom(step);
-        return;
-      }
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
       if (event.key !== "Escape" && event.key !== "ArrowLeft") return;
       const target = event.target;
@@ -812,19 +798,14 @@ function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
       event.preventDefault();
       onBack();
     }
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [onBack, zoom]);
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onBack]);
 
-  return { viewer, fontSize, zoom };
+  return viewer;
 }
 
-function previewKeyDown(
-  event: ReactKeyboardEvent<HTMLElement>,
-  onClose: () => void,
-  zoom: (step: -1 | 0 | 1) => void,
-  onSave?: () => void,
-) {
+function previewKeyDown(event: ReactKeyboardEvent<HTMLElement>, onClose: () => void, onSave?: () => void) {
   const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
   if (!command) return;
   if (onSave && event.key.toLowerCase() === "s") {
@@ -837,10 +818,6 @@ function previewKeyDown(
     onClose();
     return;
   }
-  const step = zoomStep(event.key, event.code);
-  if (step === undefined) return;
-  event.preventDefault();
-  zoom(step);
 }
 
 function PreviewHeader({
@@ -891,16 +868,6 @@ function PreviewHeader({
   );
 }
 
-function PreviewZoomControls({ zoom }: { zoom: (step: -1 | 0 | 1) => void }) {
-  return (
-    <>
-      <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
-      <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
-      <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
-    </>
-  );
-}
-
 // The preview inherits its type from here, so one zoom scales code, prose, and the line-number gutter
 // together while the header chrome keeps its own size. Zooming lives in this component so a step
 // re-renders the view alone, never the tree hidden behind it.
@@ -931,7 +898,7 @@ function FileViewer({
   const dirty = draft !== source;
   const renderable = RENDERED_FILE.test(entry.path);
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
-  const { viewer, fontSize, zoom } = usePreviewViewer<HTMLDivElement>(() => {
+  const viewer = usePreviewViewer<HTMLDivElement>(() => {
     if (dirty) setDiscardOpen(true);
     else onBack();
   });
@@ -965,10 +932,8 @@ function FileViewer({
       onValueChange={(value) => setView(value as "source" | "preview")}
       aria-label={entry.name}
       tabIndex={-1}
-      data-context-zoom
       className="flex min-h-0 flex-1 flex-col gap-0 outline-none"
-      style={{ fontSize, lineHeight: 1.6 }}
-      onKeyDown={(event) => previewKeyDown(event, closeFile, zoom, () => !saving && dirty && void save())}
+      onKeyDown={(event) => previewKeyDown(event, closeFile, () => !saving && dirty && void save())}
     >
       <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
         <DialogContent>
@@ -1030,7 +995,6 @@ function FileViewer({
           </ActionIconButton>
         ) : null}
       </PreviewHeader>
-      <PreviewZoomControls zoom={zoom} />
       {loading ? (
         <Loading label="Opening file…" />
       ) : error ? (
@@ -1044,7 +1008,6 @@ function FileViewer({
               aria-label={`Edit ${entry.name}`}
               spellCheck={false}
               value={draft}
-              style={{ fontSize }}
               className="size-full resize-none overflow-auto bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
               onChange={(event) =>
                 onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
@@ -1194,17 +1157,15 @@ function DiffViewer({
   loading: boolean;
   onBack: () => void;
 }) {
-  const { viewer, fontSize, zoom } = usePreviewViewer<HTMLElement>(onBack);
+  const viewer = usePreviewViewer<HTMLElement>(onBack);
 
   return (
     <section
       ref={viewer}
       aria-label={`Diff for ${path}`}
       tabIndex={-1}
-      data-context-zoom
       className="flex h-full min-h-0 flex-col outline-none"
-      style={{ fontSize, lineHeight: 1.6 }}
-      onKeyDown={(event) => previewKeyDown(event, onBack, zoom)}
+      onKeyDown={(event) => previewKeyDown(event, onBack)}
     >
       <PreviewHeader
         path={path}
@@ -1218,7 +1179,6 @@ function DiffViewer({
         }
         onClose={onBack}
       />
-      <PreviewZoomControls zoom={zoom} />
       <ScrollArea className="min-h-0 flex-1">
         {loading ? (
           <Loading label="Reading diff…" />
