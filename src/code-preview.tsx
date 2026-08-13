@@ -20,7 +20,7 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
-import { useMemo } from "react";
+import { type RefObject, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -102,7 +102,7 @@ function LineNumbers({ count }: { count: number }) {
   return (
     <span
       aria-hidden="true"
-      className="sticky left-0 shrink-0 border-r border-border/60 bg-background py-4 pr-2 pl-3 text-right text-[0.8em] text-muted-foreground/60 tabular-nums select-none"
+      className="sticky left-0 z-10 shrink-0 border-r border-border/60 bg-background py-4 pr-2 pl-3 text-right text-[0.8em] text-muted-foreground/60 tabular-nums select-none"
     >
       {numbers}
     </span>
@@ -162,10 +162,18 @@ export default function CodePreview({
   path,
   source,
   rendered = false,
+  editable = false,
+  fontSize,
+  editorRef,
+  onChange,
 }: {
   path: string;
   source: string;
   rendered?: boolean;
+  editable?: boolean;
+  fontSize?: number;
+  editorRef?: RefObject<HTMLTextAreaElement | null>;
+  onChange?: (source: string) => void;
 }) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (rendered && (extension === "md" || extension === "mdx")) {
@@ -181,10 +189,68 @@ export default function CodePreview({
       />
     );
   }
+  if (editable) {
+    return (
+      <SourceEditor
+        path={path}
+        source={source}
+        language={extensionLanguages[extension]}
+        fontSize={fontSize}
+        editorRef={editorRef}
+        onChange={onChange}
+      />
+    );
+  }
   return (
     <pre className="flex min-h-full overflow-auto font-mono">
       <LineNumbers count={source.split("\n").length} />
       <HighlightedCode source={source} language={extensionLanguages[extension]} className="py-4 pr-4 pl-3" />
     </pre>
+  );
+}
+
+function SourceEditor({
+  path,
+  source,
+  language,
+  fontSize,
+  editorRef,
+  onChange,
+}: {
+  path: string;
+  source: string;
+  language?: string;
+  fontSize?: number;
+  editorRef?: RefObject<HTMLTextAreaElement | null>;
+  onChange?: (source: string) => void;
+}) {
+  const preview = useRef<HTMLPreElement>(null);
+  const digits = String(source.split("\n").length).length;
+
+  return (
+    <div className="relative size-full overflow-hidden" style={{ fontSize, lineHeight: 1.5 }}>
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+        <pre ref={preview} className="flex min-h-full font-mono">
+          <LineNumbers count={source.split("\n").length} />
+          <HighlightedCode source={source} language={language} className="min-w-max !overflow-visible py-4 pr-4 pl-3" />
+        </pre>
+      </div>
+      <textarea
+        ref={editorRef}
+        name="file-contents"
+        aria-label={`Edit ${path.split(/[\\/]/).pop() ?? path}`}
+        spellCheck={false}
+        value={source}
+        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-foreground"
+        style={{ paddingLeft: `calc(${digits * 0.8}ch + 2rem)`, lineHeight: "inherit" }}
+        onChange={(event) => onChange?.(event.target.value)}
+        onScroll={(event) => {
+          if (!preview.current) return;
+          preview.current.style.transform = `translateY(-${event.currentTarget.scrollTop}px)`;
+          const code = preview.current.querySelector("code");
+          if (code) code.style.transform = `translateX(-${event.currentTarget.scrollLeft}px)`;
+        }}
+      />
+    </div>
   );
 }

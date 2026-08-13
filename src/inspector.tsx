@@ -46,7 +46,6 @@ import {
   lazy,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
-  type RefObject,
   Suspense,
   useCallback,
   useEffect,
@@ -874,51 +873,6 @@ function PreviewHeader({
   );
 }
 
-function SourceEditor({
-  path,
-  value,
-  fontSize,
-  editor,
-  onChange,
-}: {
-  path: string;
-  value: string;
-  fontSize: number;
-  editor: RefObject<HTMLTextAreaElement | null>;
-  onChange: (value: string) => void;
-}) {
-  const highlight = useRef<HTMLDivElement>(null);
-  const digits = String(value.split("\n").length).length;
-
-  return (
-    <div className="relative size-full overflow-hidden" style={{ fontSize, lineHeight: 1.5 }}>
-      <div
-        ref={highlight}
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 overflow-hidden [&>pre]:size-full [&>pre]:overflow-hidden"
-      >
-        <CodePreview path={path} source={value} />
-      </div>
-      <textarea
-        ref={editor}
-        name="file-contents"
-        aria-label={`Edit ${path.split(/[\\/]/).pop() ?? path}`}
-        spellCheck={false}
-        value={value}
-        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-foreground"
-        style={{ paddingLeft: `calc(${digits * 0.8}ch + 2rem)`, lineHeight: "inherit" }}
-        onChange={(event) => onChange(event.target.value)}
-        onScroll={(event) => {
-          const preview = highlight.current?.querySelector("pre");
-          if (!preview) return;
-          preview.scrollLeft = event.currentTarget.scrollLeft;
-          preview.scrollTop = event.currentTarget.scrollTop;
-        }}
-      />
-    </div>
-  );
-}
-
 function FileViewer({
   entry,
   source,
@@ -1053,11 +1007,12 @@ function FileViewer({
         <>
           <TabsContent value="source" className="min-h-0 overflow-hidden">
             <Suspense fallback={<Loading label="Highlighting source…" />}>
-              <SourceEditor
+              <CodePreview
                 path={entry.path}
-                value={draft}
+                source={draft}
+                editable
                 fontSize={fontSize}
-                editor={editor}
+                editorRef={editor}
                 onChange={(contents) =>
                   onDraftChange(lineEnding === "\r\n" ? contents.replace(/\r?\n/g, "\r\n") : contents)
                 }
