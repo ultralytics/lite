@@ -326,6 +326,16 @@ function zoomPanelStyle(fontSize: number) {
   };
 }
 
+function PanelZoomControls({ zoom }: { zoom: (step: -1 | 0 | 1) => void }) {
+  return (
+    <>
+      <button type="button" hidden data-context-zoom-in onClick={() => zoom(1)} />
+      <button type="button" hidden data-context-zoom-out onClick={() => zoom(-1)} />
+      <button type="button" hidden data-context-zoom-reset onClick={() => zoom(0)} />
+    </>
+  );
+}
+
 type Editable = HTMLInputElement | HTMLTextAreaElement | HTMLElement;
 type AppMenuContext = {
   collapseFiles: HTMLButtonElement | null;
@@ -388,7 +398,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
   const files = target.closest<HTMLElement>("[data-context-files]");
   // The terminal and the file viewer each zoom their own type, so the menu offers whichever owns the click.
-  const zoom = target.closest<HTMLElement>("[data-context-zoom]");
+  const zoom = target.closest<HTMLElement>("[data-context-zoom], [data-zoom-panel]");
   const selectedText =
     editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement
       ? inputSelection(editable)
@@ -548,7 +558,7 @@ function AppContextMenu({
             </ContextMenuItem>
             <ContextMenuItem onClick={() => context.zoomReset?.click()}>
               <RotateCcw />
-              Actual size
+              Zoom reset
               <ContextMenuShortcut>{shortcut}0</ContextMenuShortcut>
             </ContextMenuItem>
             {!session && (linkGroup || surfaceGroup) ? <ContextMenuSeparator /> : null}
@@ -1711,8 +1721,15 @@ function App() {
     function onKeyDown(event: KeyboardEvent) {
       if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
       if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
-      const panel = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-zoom-panel]") : null;
       const step = zoomStep(event.key);
+      const preview = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-context-zoom]") : null;
+      if (preview && step !== undefined) {
+        const action = step === 1 ? "zoom-in" : step === -1 ? "zoom-out" : "zoom-reset";
+        preview.querySelector<HTMLButtonElement>(`[data-context-${action}]`)?.click();
+        event.preventDefault();
+        return;
+      }
+      const panel = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-zoom-panel]") : null;
       if (panel && step !== undefined) {
         const sidebar = panel.dataset.zoomPanel === "sidebar";
         const key = sidebar ? SIDEBAR_FONT_KEY : INSPECTOR_FONT_KEY;
@@ -2883,6 +2900,9 @@ function App() {
                 className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground"
                 style={zoomPanelStyle(sidebarFontSize)}
               >
+                <PanelZoomControls
+                  zoom={(step) => setSidebarFontSize((current) => zoomedFontSize(SIDEBAR_FONT_KEY, current, step))}
+                />
                 {shut.sidebar ? (
                   <ScrollArea className="min-h-0 flex-1">
                     <div className="flex animate-in flex-col items-center gap-0.5 py-1.5 fade-in duration-200">
@@ -3217,6 +3237,11 @@ function App() {
                     className="h-full w-full border-l"
                     style={zoomPanelStyle(inspectorFontSize)}
                   >
+                    <PanelZoomControls
+                      zoom={(step) =>
+                        setInspectorFontSize((current) => zoomedFontSize(INSPECTOR_FONT_KEY, current, step))
+                      }
+                    />
                     <PanelBoundary key={selected.id}>
                       <Inspector
                         session={selected}

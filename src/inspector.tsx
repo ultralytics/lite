@@ -1023,40 +1023,36 @@ function FileViewer({
         ) : null}
       </PreviewHeader>
       <PreviewZoomControls zoom={zoom} />
-      <ScrollArea className="min-h-0 flex-1">
-        {loading ? (
-          <Loading label="Opening file…" />
-        ) : error ? (
-          <div className="p-3 text-xs text-muted-foreground">{error}</div>
-        ) : (
-          <>
-            <TabsContent value="source" className="min-h-full">
-              <div className="flex min-h-full flex-col">
-                <textarea
-                  ref={editor}
-                  name="file-contents"
-                  aria-label={`Edit ${entry.name}`}
-                  spellCheck={false}
-                  value={draft}
-                  className="min-h-[calc(100vh-8rem)] w-full flex-1 resize-none bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                  onChange={(event) =>
-                    onDraftChange(
-                      lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value,
-                    )
-                  }
-                />
-              </div>
-            </TabsContent>
-            {renderable ? (
-              <TabsContent value="preview" className="min-h-full">
+      {loading ? (
+        <Loading label="Opening file…" />
+      ) : error ? (
+        <div className="p-3 text-xs text-muted-foreground">{error}</div>
+      ) : (
+        <>
+          <TabsContent value="source" className="min-h-0 overflow-hidden">
+            <textarea
+              ref={editor}
+              name="file-contents"
+              aria-label={`Edit ${entry.name}`}
+              spellCheck={false}
+              value={draft}
+              className="size-full resize-none overflow-auto bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              onChange={(event) =>
+                onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
+              }
+            />
+          </TabsContent>
+          {renderable ? (
+            <TabsContent value="preview" className="min-h-0 overflow-hidden">
+              <ScrollArea className="size-full">
                 <Suspense fallback={<Loading label="Opening preview…" />}>
                   <CodePreview path={entry.path} source={draft} rendered />
                 </Suspense>
-              </TabsContent>
-            ) : null}
-          </>
-        )}
-      </ScrollArea>
+              </ScrollArea>
+            </TabsContent>
+          ) : null}
+        </>
+      )}
       {saveError ? (
         <p role="alert" className="shrink-0 border-t p-2 text-xs text-destructive">
           {saveError}
