@@ -934,6 +934,24 @@ fn default_directory_path(app: &AppHandle) -> Option<PathBuf> {
     path.is_dir().then_some(path)
 }
 
+fn typed_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+    let path = match path.trim().strip_prefix('~') {
+        Some(rest) => app
+            .path()
+            .home_dir()
+            .map_err(|error| error.to_string())?
+            .join(rest.trim_start_matches(['/', '\\'])),
+        None => PathBuf::from(path.trim()),
+    };
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        std::env::current_dir()
+            .map(|current| current.join(path))
+            .map_err(|error| error.to_string())
+    }
+}
+
 #[cfg(unix)]
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
@@ -1243,15 +1261,7 @@ async fn use_directory(
     roots: State<'_, Roots>,
     path: String,
 ) -> Result<DirectoryGrant, String> {
-    let path = path.trim();
-    let path = match path.strip_prefix('~') {
-        Some(rest) => app
-            .path()
-            .home_dir()
-            .map_err(|error| error.to_string())?
-            .join(rest.trim_start_matches(['/', '\\'])),
-        None => PathBuf::from(path),
-    };
+    let path = typed_path(&app, &path)?;
     if !path.exists() {
         // Resolve the closest existing ancestor before creating through it: a symlink into a sensitive
         // configuration folder must not let the final canonical-path check happen after the mutation.
@@ -4213,15 +4223,7 @@ struct DirectoryProbe {
 // takes the bare path — the same folder the grant would name — and only reads from it.
 #[tauri::command]
 async fn directory_probe(app: AppHandle, path: String) -> Result<DirectoryProbe, String> {
-    let path = path.trim();
-    let path = match path.strip_prefix('~') {
-        Some(rest) => app
-            .path()
-            .home_dir()
-            .map_err(|error| error.to_string())?
-            .join(rest.trim_start_matches(['/', '\\'])),
-        None => PathBuf::from(path),
-    };
+    let path = typed_path(&app, &path)?;
     if !path.is_dir() {
         return Ok(DirectoryProbe {
             exists: path.exists(),
