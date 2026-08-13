@@ -1868,6 +1868,10 @@ function App() {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         runs.current.delete(payload.sessionId);
         forgetShellAgent(payload.sessionId);
+        const timer = workTimers.current.get(payload.sessionId);
+        if (timer) window.clearTimeout(timer);
+        workTimers.current.delete(payload.sessionId);
+        setWorking((current) => without(current, payload.sessionId));
         setSessions((current) =>
           current.map((session) => (session.id === payload.sessionId ? { ...session, running: false } : session)),
         );
@@ -1990,11 +1994,13 @@ function App() {
 
   const resumeSession = useCallback(
     async (session: Session) => {
-      const shouldContinue = session.agent !== "shell" && interrupted.current.has(session.id);
+      // Taking the marker before launch makes this caller the sole owner of the continuation even
+      // when another mount effect or click reaches the same in-flight process.
+      const shouldContinue = session.agent !== "shell" && interrupted.current.delete(session.id);
       const launched = await launch(session, true);
-      if (launched && shouldContinue) {
-        interrupted.current.delete(session.id);
-        runOnStart(session.id, "continue");
+      if (shouldContinue) {
+        if (launched) runOnStart(session.id, "continue");
+        else interrupted.current.add(session.id);
       }
       return launched;
     },

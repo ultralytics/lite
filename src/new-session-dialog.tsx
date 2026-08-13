@@ -310,13 +310,9 @@ export function NewSessionDialog({
   // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
   // and a second click on the agent already chosen. An agent that is not installed reads them all as a
   // request to install it, which is the only one of the two it can answer.
-  const ready =
-    !installing &&
-    !creating &&
-    Boolean(
-      missing ||
-      (path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim())),
-    );
+  const folderReady =
+    path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim());
+  const ready = !installing && !creating && Boolean(missing || folderReady);
   function start() {
     if (missing?.installable) void install();
     else if (missing)
