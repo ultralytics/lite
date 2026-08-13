@@ -892,7 +892,11 @@ function SourceEditor({
 
   return (
     <div className="relative size-full overflow-hidden" style={{ fontSize, lineHeight: 1.5 }}>
-      <div ref={highlight} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div
+        ref={highlight}
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 overflow-hidden [&>pre]:size-full [&>pre]:overflow-hidden"
+      >
         <CodePreview path={path} source={value} />
       </div>
       <textarea
