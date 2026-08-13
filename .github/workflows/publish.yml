@@ -91,6 +91,7 @@ jobs:
       - name: Cache Rust build
         uses: swatinem/rust-cache@v2
         with:
+          shared-key: release
           workspaces: src-tauri
       - name: Install Linux packages
         if: runner.os == 'Linux'
