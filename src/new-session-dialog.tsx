@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { FolderOpen } from "lucide-react";
+import { Download, FolderOpen, RefreshCw } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
@@ -403,13 +403,11 @@ export function NewSessionDialog({
                   // A registry that could not answer knows of no update, so only one it reported is
                   // offered — by the button and by the mark beside the version alike.
                   const updatable = managed && update === true;
-                  // What the button offers, if it is there at all, and the room the title keeps for it.
-                  // The status line keeps the same width it has on main instead of shrinking when the
-                  // adjacent action appears.
+                  // What the icon offers, if it is there at all.
                   const action = state?.installable
-                    ? ({ label: "Install", working: "Installing…", room: "pr-28" } as const)
+                    ? ({ label: "Install", working: "Installing" } as const)
                     : updatable
-                      ? ({ label: "Update", working: "Updating…", room: "pr-24" } as const)
+                      ? ({ label: "Update", working: "Updating" } as const)
                       : undefined;
                   const busy = installing === option.id;
                   const authProvider = "configured" in option ? option : undefined;
@@ -420,7 +418,7 @@ export function NewSessionDialog({
                         type="button"
                         size="lg"
                         variant={active ? "secondary" : "outline"}
-                        className="h-14 w-full min-w-0 justify-start overflow-hidden pr-3 pl-3"
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"}`}
                         aria-pressed={active}
                         disabled={Boolean(installing)}
                         title={"note" in option ? option.note : sessionLabel(option)}
@@ -430,7 +428,7 @@ export function NewSessionDialog({
                         <div
                           className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
-                          <span className={`block truncate ${action?.room ?? ""}`}>{sessionLabel(option)}</span>
+                          <span className="block truncate">{sessionLabel(option)}</span>
                           {state && !state.available ? (
                             <span className="block truncate text-xs font-normal text-muted-foreground">
                               {state.installable ? "Not installed" : "Setup required"}
@@ -445,17 +443,27 @@ export function NewSessionDialog({
                         </div>
                       </Button>
                       {action ? (
-                        <Button
+                        <ActionIconButton
                           type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="absolute top-1 right-1.5 hover:bg-primary hover:text-primary-foreground"
+                          size="icon-sm"
+                          tooltip={
+                            busy
+                              ? `${action.working} ${sessionLabel(option)}…`
+                              : action.label === "Install"
+                                ? `Install ${sessionLabel(option)}`
+                                : `Update ${sessionLabel(option)} to the latest version`
+                          }
+                          aria-label={
+                            action.label === "Install"
+                              ? `Install ${sessionLabel(option)}`
+                              : `Update ${sessionLabel(option)} to the latest version`
+                          }
+                          className="absolute top-1/2 right-2 -mt-3.5"
                           disabled={Boolean(installing)}
                           onClick={() => void install(option)}
                         >
-                          {busy ? <Spinner /> : null}
-                          {busy ? action.working : action.label}
-                        </Button>
+                          {busy ? <Spinner /> : action.label === "Install" ? <Download /> : <RefreshCw />}
+                        </ActionIconButton>
                       ) : null}
                     </div>
                   );
