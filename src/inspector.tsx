@@ -76,6 +76,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { without } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
+import { contentZoomStyle } from "@/theme";
 import {
   type DirectoryCursor,
   type DirectoryListing,
@@ -359,7 +360,11 @@ const FILE_FAMILIES: (FileKind & { extensions: string[] })[] = [
   { icon: FileCode, color: "text-orange-500", extensions: ["html", "htm", "xml", "vue", "svelte"] },
   { icon: FileCode, color: "text-fuchsia-500", extensions: ["css", "scss", "sass", "less"] },
   { icon: FileJson, color: "text-amber-500", extensions: ["json", "jsonc", "json5"] },
-  { icon: FileCog, color: "text-stone-500", extensions: ["yaml", "yml", "toml", "ini", "cfg", "conf", "editorconfig"] },
+  {
+    icon: FileCog,
+    color: "text-violet-500",
+    extensions: ["yaml", "yml", "toml", "ini", "cfg", "conf", "editorconfig"],
+  },
   { icon: FileCog, color: "text-stone-500", extensions: ["gitignore", "gitattributes", "dockerignore"] },
   { icon: FileKey, color: "text-amber-600", extensions: ["env", "pem", "key", "crt", "cert"] },
   { icon: FileLock, color: "text-stone-500", extensions: ["lock", "lockb"] },
@@ -877,6 +882,7 @@ function FileViewer({
   draft,
   error,
   loading,
+  fontSize,
   onBack,
   onDraftChange,
   onSave,
@@ -886,11 +892,12 @@ function FileViewer({
   draft: string;
   error: string;
   loading: boolean;
+  fontSize: number;
   onBack: () => void;
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
-  const [view, setView] = useState<"source" | "preview">("source");
+  const [view, setView] = useState<"source" | "preview" | "edit">("source");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
@@ -904,7 +911,7 @@ function FileViewer({
   });
 
   useEffect(() => {
-    if (!loading && view === "source") editor.current?.focus();
+    if (!loading && view === "edit") editor.current?.focus();
   }, [loading, view]);
 
   async function save() {
@@ -929,7 +936,7 @@ function FileViewer({
     <Tabs
       ref={viewer}
       value={view}
-      onValueChange={(value) => setView(value as "source" | "preview")}
+      onValueChange={(value) => setView(value as "source" | "preview" | "edit")}
       aria-label={entry.name}
       tabIndex={-1}
       className="flex min-h-0 flex-1 flex-col gap-0 outline-none"
@@ -973,13 +980,18 @@ function FileViewer({
         showClose
         onClose={closeFile}
       >
-        {renderable && !error ? (
+        {!error ? (
           <TabsList aria-label="File view" className="h-7 shrink-0">
             <TabsTrigger value="source" className="text-xs">
               Source
             </TabsTrigger>
-            <TabsTrigger value="preview" className="text-xs">
-              Preview
+            {renderable ? (
+              <TabsTrigger value="preview" className="text-xs">
+                Preview
+              </TabsTrigger>
+            ) : null}
+            <TabsTrigger value="edit" className="text-xs">
+              Edit
             </TabsTrigger>
           </TabsList>
         ) : null}
@@ -1002,27 +1014,39 @@ function FileViewer({
       ) : (
         <>
           <TabsContent value="source" className="min-h-0 overflow-hidden">
+            <ScrollArea className="size-full">
+              <div style={contentZoomStyle(fontSize)}>
+                <Suspense fallback={<Loading label="Highlighting source…" />}>
+                  <CodePreview path={entry.path} source={draft} />
+                </Suspense>
+              </div>
+            </ScrollArea>
+          </TabsContent>
+          {renderable ? (
+            <TabsContent value="preview" className="min-h-0 overflow-hidden">
+              <ScrollArea className="size-full">
+                <div style={contentZoomStyle(fontSize)}>
+                  <Suspense fallback={<Loading label="Opening preview…" />}>
+                    <CodePreview path={entry.path} source={draft} rendered />
+                  </Suspense>
+                </div>
+              </ScrollArea>
+            </TabsContent>
+          ) : null}
+          <TabsContent value="edit" className="min-h-0 overflow-hidden">
             <textarea
               ref={editor}
               name="file-contents"
               aria-label={`Edit ${entry.name}`}
               spellCheck={false}
               value={draft}
-              className="size-full resize-none overflow-auto bg-transparent p-3 font-mono outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              className="size-full resize-none overflow-auto bg-transparent p-3 font-mono outline-none"
+              style={{ fontSize }}
               onChange={(event) =>
                 onDraftChange(lineEnding === "\r\n" ? event.target.value.replace(/\r?\n/g, "\r\n") : event.target.value)
               }
             />
           </TabsContent>
-          {renderable ? (
-            <TabsContent value="preview" className="min-h-0 overflow-hidden">
-              <ScrollArea className="size-full">
-                <Suspense fallback={<Loading label="Opening preview…" />}>
-                  <CodePreview path={entry.path} source={draft} rendered />
-                </Suspense>
-              </ScrollArea>
-            </TabsContent>
-          ) : null}
         </>
       )}
       {saveError ? (
@@ -1043,7 +1067,17 @@ interface FileEditorState {
 
 const fileEditorsBySession = new Map<string, FileEditorState>();
 
-function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string; sessionId: string }) {
+function FilesPanel({
+  root,
+  rootId,
+  sessionId,
+  fontSize,
+}: {
+  root: string;
+  rootId: string;
+  sessionId: string;
+  fontSize: number;
+}) {
   const [cached] = useState(() => {
     const current = fileEditorsBySession.get(sessionId);
     if (current?.rootId === rootId) return current;
@@ -1129,6 +1163,7 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
           draft={draft}
           error={error}
           loading={loading}
+          fontSize={fontSize}
           onBack={closeFile}
           onDraftChange={changeDraft}
           onSave={saveFile}
@@ -1137,7 +1172,9 @@ function FilesPanel({ root, rootId, sessionId }: { root: string; rootId: string;
       <div data-context-files className={`min-h-0 flex-1 flex-col ${selected ? "hidden" : "flex"}`}>
         <SearchInput value={query} placeholder="Search files" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
-          <FileTree key={rootId} root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
+          <div style={contentZoomStyle(fontSize)}>
+            <FileTree key={rootId} root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
+          </div>
         </ScrollArea>
       </div>
     </div>
@@ -1149,12 +1186,14 @@ function DiffViewer({
   source,
   error,
   loading,
+  fontSize,
   onBack,
 }: {
   path: string;
   source: string;
   error: string;
   loading: boolean;
+  fontSize: number;
   onBack: () => void;
 }) {
   const viewer = usePreviewViewer<HTMLElement>(onBack);
@@ -1180,19 +1219,21 @@ function DiffViewer({
         onClose={onBack}
       />
       <ScrollArea className="min-h-0 flex-1">
-        {loading ? (
-          <Loading label="Reading diff…" />
-        ) : error ? (
-          <p role="alert" className="p-3 text-xs text-destructive">
-            {error}
-          </p>
-        ) : source ? (
-          <Suspense fallback={<Loading label="Opening diff…" />}>
-            <CodePreview path={`${path}.diff`} source={source} />
-          </Suspense>
-        ) : (
-          <p className="p-3 text-xs text-muted-foreground">This file has no text diff.</p>
-        )}
+        <div style={contentZoomStyle(fontSize)}>
+          {loading ? (
+            <Loading label="Reading diff…" />
+          ) : error ? (
+            <p role="alert" className="p-3 text-xs text-destructive">
+              {error}
+            </p>
+          ) : source ? (
+            <Suspense fallback={<Loading label="Opening diff…" />}>
+              <CodePreview path={`${path}.diff`} source={source} />
+            </Suspense>
+          ) : (
+            <p className="p-3 text-xs text-muted-foreground">This file has no text diff.</p>
+          )}
+        </div>
       </ScrollArea>
     </section>
   );
@@ -1303,11 +1344,13 @@ function GitPanel({
   sessionId,
   remote,
   active,
+  fontSize,
 }: {
   rootId: string;
   sessionId: string;
   remote: string;
   active: boolean;
+  fontSize: number;
 }) {
   const [urls, setUrls] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
@@ -1425,12 +1468,19 @@ function GitPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {diffPath ? (
-        <DiffViewer path={diffPath} source={diffSource} error={diffError} loading={diffLoading} onBack={closeDiff} />
+        <DiffViewer
+          path={diffPath}
+          source={diffSource}
+          error={diffError}
+          loading={diffLoading}
+          fontSize={fontSize}
+          onBack={closeDiff}
+        />
       ) : null}
       <div className={`min-h-0 flex-1 flex-col ${diffPath ? "hidden" : "flex"}`}>
         <SearchInput value={query} placeholder="Search items" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-3 p-3">
+          <div className="flex flex-col gap-3 p-3" style={contentZoomStyle(fontSize)}>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
             {!error && status === undefined ? <Loading label="Reading Git status…" /> : null}
             {shown.map((repository) => (
@@ -1469,7 +1519,7 @@ function missingUsage(session: Session): string {
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
 
-function UsagePanel({ session }: { session: Session }) {
+function UsagePanel({ session, fontSize }: { session: Session; fontSize: number }) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
 
@@ -1498,7 +1548,7 @@ function UsagePanel({ session }: { session: Session }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
-        <div className="p-3">
+        <div className="p-3" style={contentZoomStyle(fontSize)}>
           <div className="mb-3 flex items-center gap-2 text-sm font-medium">
             <ProviderIcon agent={session.agent} provider={session.provider} className="size-5" />
             {session.agent === "codex" && session.provider ? providerLabel(session.provider) : sessionLabel(session)}
@@ -1570,12 +1620,14 @@ function UsagePanel({ session }: { session: Session }) {
 export function Inspector({
   session,
   remote,
+  fontSize,
   collapsed,
   onExpand,
   onCollapse,
 }: {
   session: Session;
   remote: string;
+  fontSize: number;
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
@@ -1699,6 +1751,7 @@ export function Inspector({
                 root={session.cwd}
                 rootId={session.rootId}
                 sessionId={session.id}
+                fontSize={fontSize}
               />
             </TabsContent>
           ) : null}
@@ -1710,12 +1763,13 @@ export function Inspector({
                 sessionId={session.id}
                 remote={remote}
                 active={tab === "git" && !collapsed}
+                fontSize={fontSize}
               />
             </TabsContent>
           ) : null}
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
-              <UsagePanel key={reload.usage} session={session} />
+              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} />
             </TabsContent>
           ) : null}
         </Tabs>

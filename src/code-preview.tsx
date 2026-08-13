@@ -102,7 +102,7 @@ function LineNumbers({ count }: { count: number }) {
   return (
     <span
       aria-hidden="true"
-      className="sticky left-0 shrink-0 border-r border-border bg-background py-4 pr-3 pl-4 text-right text-muted-foreground tabular-nums select-none"
+      className="sticky left-0 shrink-0 border-r border-border/60 bg-background py-4 pr-2 pl-3 text-right text-[0.8em] text-muted-foreground/60 tabular-nums select-none"
     >
       {numbers}
     </span>

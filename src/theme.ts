@@ -1,5 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+import type { CSSProperties } from "react";
+
 const THEME_KEY = "lite.theme";
 
 export type Theme = "light" | "dark";
@@ -16,9 +18,8 @@ export function applyTheme(theme: Theme) {
   localStorage.setItem(THEME_KEY, theme);
 }
 
-// The other thing Lite remembers about how it looks. The terminal and the file preview zoom the same
-// way and hold each other to the same sizes, so the bounds are stated once; each keeps its own size
-// under its own key, because prose and code are read at different sizes than a terminal is.
+// The other thing Lite remembers about how it looks. Each pane keeps its own content size under its
+// own key, while navigation, headers, and controls remain at the application size.
 const MIN_FONT_SIZE = 9;
 const MAX_FONT_SIZE = 24;
 const DEFAULT_FONT_SIZE = 13;
@@ -35,6 +36,10 @@ export function zoomedFontSize(key: string, from: number, step: -1 | 0 | 1): num
   const size = step ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, from + step)) : DEFAULT_FONT_SIZE;
   if (size !== from) localStorage.setItem(key, String(size));
   return size;
+}
+
+export function contentZoomStyle(fontSize: number): CSSProperties {
+  return { zoom: fontSize / DEFAULT_FONT_SIZE };
 }
 
 export function zoomStep(key: string, code?: string): -1 | 0 | 1 | undefined {

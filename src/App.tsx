@@ -108,7 +108,15 @@ import {
   writeSession,
 } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
-import { applyTheme, initialTheme, storedFontSize, type Theme, zoomedFontSize, zoomStep } from "@/theme";
+import {
+  applyTheme,
+  contentZoomStyle,
+  initialTheme,
+  storedFontSize,
+  type Theme,
+  zoomedFontSize,
+  zoomStep,
+} from "@/theme";
 import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
@@ -314,16 +322,6 @@ function friendlyReleaseNotes(notes: string) {
       return `[@${author}](${profile})`;
     })
     .replace(RELEASE_PULL, "[#$2]($1)");
-}
-
-function zoomPanelStyle(fontSize: number) {
-  const scale = fontSize / 13;
-  return {
-    width: `${100 / scale}%`,
-    height: `${100 / scale}%`,
-    transform: `scale(${scale})`,
-    transformOrigin: "top left",
-  };
 }
 
 function PanelZoomControls({ zoom }: { zoom: (step: -1 | 0 | 1) => void }) {
@@ -2898,7 +2896,6 @@ function App() {
                 data-context-surface
                 data-zoom-panel="sidebar"
                 className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground"
-                style={zoomPanelStyle(sidebarFontSize)}
               >
                 <PanelZoomControls
                   zoom={(step) => setSidebarFontSize((current) => zoomedFontSize(SIDEBAR_FONT_KEY, current, step))}
@@ -3003,7 +3000,11 @@ function App() {
                       </ActionIconButton>
                     </div>
                     <ScrollArea className="min-h-0 flex-1">
-                      <div className="space-y-0.5 px-2 pb-2" data-session-list>
+                      <div
+                        className="space-y-0.5 px-2 pb-2"
+                        data-session-list
+                        style={contentZoomStyle(sidebarFontSize)}
+                      >
                         {query && !visible.length ? (
                           <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
                         ) : null}
@@ -3232,11 +3233,7 @@ function App() {
                   maxSize={SIDES.inspector.max}
                   onResize={(size) => rail("inspector", size)}
                 >
-                  <aside
-                    data-zoom-panel="inspector"
-                    className="h-full w-full border-l"
-                    style={zoomPanelStyle(inspectorFontSize)}
-                  >
+                  <aside data-zoom-panel="inspector" className="h-full w-full border-l">
                     <PanelZoomControls
                       zoom={(step) =>
                         setInspectorFontSize((current) => zoomedFontSize(INSPECTOR_FONT_KEY, current, step))
@@ -3246,6 +3243,7 @@ function App() {
                       <Inspector
                         session={selected}
                         remote={remote}
+                        fontSize={inspectorFontSize}
                         collapsed={shut.inspector}
                         onExpand={() =>
                           glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size))
