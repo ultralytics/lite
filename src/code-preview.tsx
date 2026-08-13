@@ -102,7 +102,7 @@ function LineNumbers({ count }: { count: number }) {
   return (
     <span
       aria-hidden="true"
-      className="sticky left-0 z-10 shrink-0 border-r border-border/60 bg-background py-4 pr-2 pl-3 text-right text-[0.8em] text-muted-foreground/60 tabular-nums select-none"
+      className="sticky left-0 z-10 shrink-0 border-r border-border/60 bg-background py-4 pr-2 pl-3 text-right text-muted-foreground/60 tabular-nums select-none"
     >
       {numbers}
     </span>
@@ -241,8 +241,8 @@ function SourceEditor({
         aria-label={`Edit ${path.split(/[\\/]/).pop() ?? path}`}
         spellCheck={false}
         value={source}
-        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-foreground"
-        style={{ paddingLeft: `calc(${digits * 0.8}ch + 2rem)`, lineHeight: "inherit" }}
+        className="absolute inset-0 size-full resize-none overflow-auto whitespace-pre bg-transparent py-4 pr-4 font-mono text-transparent caret-foreground outline-none selection:bg-accent selection:text-transparent"
+        style={{ paddingLeft: `calc(${digits}ch + 2rem)`, lineHeight: "inherit" }}
         onChange={(event) => onChange?.(event.target.value)}
         onScroll={(event) => {
           if (!preview.current) return;
