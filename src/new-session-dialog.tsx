@@ -448,8 +448,8 @@ export function NewSessionDialog({
                         <Button
                           type="button"
                           size="sm"
-                          variant="ghost"
-                          className="absolute top-1/2 right-1.5 -translate-y-1/2"
+                          variant="outline"
+                          className="absolute top-1/2 right-1.5 -mt-3.5"
                           disabled={Boolean(installing)}
                           onClick={() => void install(option)}
                         >

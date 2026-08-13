@@ -1413,7 +1413,7 @@ function App() {
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) === "true");
+  const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
   const [closingAll, setClosingAll] = useState(false);
   // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
@@ -1893,6 +1893,15 @@ function App() {
     notificationsRef.current = enabled;
     setNotifications(enabled);
   }, []);
+
+  useEffect(() => {
+    if (localStorage.getItem(NOTIFICATIONS_KEY) !== null) return;
+    void changeNotifications(true).catch(() => {
+      localStorage.setItem(NOTIFICATIONS_KEY, "false");
+      notificationsRef.current = false;
+      setNotifications(false);
+    });
+  }, [changeNotifications]);
 
   const changeKeepAwake = useCallback((enabled: boolean) => {
     localStorage.setItem(KEEP_AWAKE_KEY, String(enabled));
@@ -3398,7 +3407,18 @@ function App() {
             onKeepAwakeChange={changeKeepAwake}
             theme={theme}
             onThemeChange={setTheme}
-            version={version}
+            versionBadge={
+              <VersionBadge
+                version={version}
+                commit={commit}
+                built={built}
+                release={release}
+                onCheck={() => {
+                  setSettingsOpen(false);
+                  void checkForUpdates();
+                }}
+              />
+            }
             commit={commit}
             built={built}
             repo={repo}

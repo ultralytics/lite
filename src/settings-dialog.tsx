@@ -1,10 +1,22 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Bell, Eye, EyeOff, Info, KeyRound, Moon, RefreshCw, SlidersHorizontal, Sun, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  Bell,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  Info,
+  KeyRound,
+  Moon,
+  RefreshCw,
+  SlidersHorizontal,
+  Sun,
+  Trash2,
+} from "lucide-react";
+import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { ProviderIcon } from "@/brand-icons";
+import { GitHubLogomark, ProviderIcon, UltralyticsLogomark } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
@@ -48,7 +60,7 @@ export function SettingsDialog({
   onKeepAwakeChange,
   theme,
   onThemeChange,
-  version,
+  versionBadge,
   commit,
   built,
   repo,
@@ -63,7 +75,7 @@ export function SettingsDialog({
   onKeepAwakeChange: (enabled: boolean) => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
-  version: string;
+  versionBadge: ReactNode;
   commit?: string;
   built: string;
   repo: string;
@@ -319,58 +331,72 @@ export function SettingsDialog({
               </ItemGroup>
             </TabsContent>
             <TabsContent value="about" className="min-w-0">
-              <h2 className="text-base font-semibold">About</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">Version, build, and update information.</p>
-              <Item variant="outline">
-                <ItemMedia variant="icon">
-                  <Info />
-                </ItemMedia>
-                <ItemContent>
-                  <ItemTitle>{version ? `Lite ${version}` : "Lite"}</ItemTitle>
-                  <ItemDescription>A fast, local workspace for AI coding agents.</ItemDescription>
-                </ItemContent>
-                <ItemActions>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      onOpenChange(false);
-                      onCheckForUpdates();
-                    }}
-                  >
-                    <RefreshCw />
-                    Check for Updates
-                  </Button>
-                </ItemActions>
-              </Item>
-              <dl className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
-                {version ? (
-                  <>
-                    <dt className="text-muted-foreground">Version</dt>
-                    <dd className="truncate font-mono">{version}</dd>
-                  </>
-                ) : null}
-                {commit ? (
-                  <>
-                    <dt className="text-muted-foreground">Revision</dt>
-                    <dd className="truncate font-mono">{commit}</dd>
-                  </>
-                ) : null}
-                {built ? (
-                  <>
-                    <dt className="text-muted-foreground">Built</dt>
-                    <dd className="truncate">{built}</dd>
-                  </>
-                ) : null}
-                {repo ? (
-                  <>
-                    <dt className="text-muted-foreground">Source</dt>
-                    <dd className="truncate font-mono" title={repo}>
-                      {repo}
-                    </dd>
-                  </>
-                ) : null}
-              </dl>
+              <div className="flex flex-col items-center pt-3 text-center">
+                <UltralyticsLogomark className="size-14" />
+                <div className="mt-3 flex items-center gap-2">
+                  <h2 className="text-xl font-semibold">Lite</h2>
+                  {versionBadge}
+                </div>
+                <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                  A fast, local workspace for AI coding agents, with no indexing, telemetry, or cloud service.
+                </p>
+              </div>
+              <ItemGroup className="mt-6 gap-2.5">
+                <Item variant="outline">
+                  <ItemMedia variant="icon">
+                    <GitHubLogomark />
+                  </ItemMedia>
+                  <ItemContent>
+                    <ItemTitle>Open source</ItemTitle>
+                    <ItemDescription>AGPL-3.0 · github.com/ultralytics/lite</ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+                    >
+                      View repository
+                      <ExternalLink />
+                    </Button>
+                  </ItemActions>
+                </Item>
+              </ItemGroup>
+              <div className="mt-4 flex items-start justify-between gap-4">
+                <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+                  {commit ? (
+                    <>
+                      <dt className="text-muted-foreground">Revision</dt>
+                      <dd className="truncate font-mono">{commit}</dd>
+                    </>
+                  ) : null}
+                  {built ? (
+                    <>
+                      <dt className="text-muted-foreground">Built</dt>
+                      <dd className="truncate">{built}</dd>
+                    </>
+                  ) : null}
+                  {repo ? (
+                    <>
+                      <dt className="text-muted-foreground">Working tree</dt>
+                      <dd className="truncate font-mono" title={repo}>
+                        {repo}
+                      </dd>
+                    </>
+                  ) : null}
+                </dl>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    onOpenChange(false);
+                    onCheckForUpdates();
+                  }}
+                >
+                  <RefreshCw />
+                  Check for Updates
+                </Button>
+              </div>
             </TabsContent>
           </Tabs>
         </DialogBody>
