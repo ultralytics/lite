@@ -251,8 +251,8 @@ export function SettingsDialog({
                         <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
                       </ItemMedia>
                       <ItemContent>
-                        <ItemTitle>
-                          {option.label}
+                        <ItemTitle className="max-w-full">
+                          <span className="min-w-0 truncate">{option.label}</span>
                           <Badge variant="outline" className="font-mono font-normal">
                             {option.variable}
                           </Badge>
