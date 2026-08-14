@@ -173,16 +173,18 @@ export function holdSessionWrites(sessionId: string, wait: Promise<unknown>) {
   );
 }
 
-export function writeSession(sessionId: string, text: string) {
+export function writeSession(sessionId: string, text: string, delay = 0) {
   const data = Array.from(new TextEncoder().encode(text));
   writes.set(
     sessionId,
-    (writes.get(sessionId) ?? Promise.resolve()).then(() =>
-      // A write that fails must not take the writes queued behind it with it, and a session whose pty
-      // has gone is reported by the session itself; this is the only record that a keystroke was lost.
-      invoke("write_session", { sessionId, data }).catch((reason) =>
-        console.error(`Lite could not write to session ${sessionId}:`, reason),
+    (writes.get(sessionId) ?? Promise.resolve())
+      .then(() => (delay ? new Promise((resolve) => setTimeout(resolve, delay)) : undefined))
+      .then(() =>
+        // A write that fails must not take the writes queued behind it with it, and a session whose pty
+        // has gone is reported by the session itself; this is the only record that a keystroke was lost.
+        invoke("write_session", { sessionId, data }).catch((reason) =>
+          console.error(`Lite could not write to session ${sessionId}:`, reason),
+        ),
       ),
-    ),
   );
 }

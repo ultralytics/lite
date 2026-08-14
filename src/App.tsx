@@ -1395,6 +1395,7 @@ function startKimiConversation(sessionId: string) {
 // all is still sent the command rather than left holding it.
 const SETTLE_MS = 300;
 const GIVE_UP_MS = 5000;
+const ENTER_DELAY_MS = 100;
 
 function runOnStart(sessionId: string, command: string) {
   let sent = false;
@@ -1405,10 +1406,10 @@ function runOnStart(sessionId: string, command: string) {
     window.clearTimeout(settle);
     window.clearTimeout(patience);
     unsubscribe();
-    // Submit exactly as the terminal does: the text and Enter are separate input events. Interactive
-    // agents may treat one combined write as pasted text and leave it sitting in the composer.
+    // Submit exactly as a person does: let the interface process the text before Enter. The delay is
+    // part of the shared write queue, so an early keystroke cannot overtake the submission.
     writeSession(sessionId, command);
-    writeSession(sessionId, "\r");
+    writeSession(sessionId, "\r", ENTER_DELAY_MS);
   };
   // This waits rather than sends, which is also what keeps it safe: subscribing replays what the
   // session has already said, so a listener that sent from here would be sending before the two lines
@@ -2084,7 +2085,7 @@ function App() {
       const shouldContinue = session.agent !== "shell" && interrupted.current.delete(session.id);
       const launched = await launch(session, true);
       if (shouldContinue) {
-        if (launched) runOnStart(session.id, "continue");
+        if (launched) runOnStart(session.id, "Lite restarted while you were working. Continue the previous task.");
         else interrupted.current.add(session.id);
       }
       return launched;
