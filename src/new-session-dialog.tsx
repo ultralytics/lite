@@ -393,7 +393,10 @@ export function NewSessionDialog({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <Label htmlFor="custom-session-name" className={SECTION}>
-                  Custom session name
+                  Name{" "}
+                  <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
+                    Optional
+                  </span>
                 </Label>
                 <Switch
                   id="custom-session-name"
@@ -417,7 +420,10 @@ export function NewSessionDialog({
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
                   <Label htmlFor="new-worktree" className={SECTION}>
-                    Create isolated worktree
+                    Worktree{" "}
+                    <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
+                      Optional
+                    </span>
                   </Label>
                   <Switch id="new-worktree" checked={worktreeOn} onCheckedChange={setWorktreeOn} />
                 </div>
