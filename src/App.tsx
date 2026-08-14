@@ -304,6 +304,7 @@ const RELEASE_NOTE = {
 
 const NOTIFICATIONS_KEY = "lite.notifications";
 const KEEP_AWAKE_KEY = "lite.keep-awake";
+const TERMINAL_FONT_KEY = "lite.terminal.fontSize";
 const SIDEBAR_FONT_KEY = "lite.sidebar.fontSize";
 const INSPECTOR_FONT_KEY = "lite.inspector.fontSize";
 
@@ -1500,6 +1501,7 @@ function App() {
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
+  const [terminalFontSize, setTerminalFontSize] = useState(() => storedFontSize(TERMINAL_FONT_KEY));
   const [sidebarFontSize, setSidebarFontSize] = useState(() => storedFontSize(SIDEBAR_FONT_KEY));
   const [inspectorFontSize, setInspectorFontSize] = useState(() => storedFontSize(INSPECTOR_FONT_KEY));
   const layout = useRef<HTMLDivElement>(null);
@@ -1568,6 +1570,10 @@ function App() {
     attentionRef.current = next;
     setAttention(next);
   }, []);
+  const zoomTerminal = useCallback(
+    (step: -1 | 0 | 1) => setTerminalFontSize((current) => zoomedFontSize(TERMINAL_FONT_KEY, current, step)),
+    [],
+  );
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
   const selectedStarting = selected ? startingIds.has(selected.id) : false;
   const sessionShortcut = navigator.platform.includes("Mac") ? "⌘P" : "Ctrl+Shift+P";
@@ -1952,9 +1958,10 @@ function App() {
       listen<{ sessionId: string; runId: string; agent: Agent | null }>("shell-agent", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         setShellAgents((current) => {
-          if (payload.agent === current.get(payload.sessionId)) return current;
+          const agent = payload.agent ?? undefined;
+          if (agent === current.get(payload.sessionId)) return current;
           const next = new Map(current);
-          if (payload.agent) next.set(payload.sessionId, payload.agent);
+          if (agent) next.set(payload.sessionId, agent);
           else next.delete(payload.sessionId);
           return next;
         });
@@ -2333,6 +2340,7 @@ function App() {
         return restarted.then(async (successful) => {
           if (!successful) return;
           runs.current.delete(fresh.id);
+          forgetShellAgent(fresh.id);
           try {
             await invoke("stop_session", { sessionId: fresh.id });
           } catch (reason) {
@@ -2368,6 +2376,7 @@ function App() {
 
   async function restartSessionNow(session: Session, fresh: Session, select: boolean): Promise<boolean> {
     runs.current.delete(session.id);
+    forgetShellAgent(session.id);
     replaceRecentSession(session.id, fresh.id);
     setStartingIds((current) => new Set(current).add(fresh.id));
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
@@ -2592,6 +2601,7 @@ function App() {
     const wasSelected = selectedId === session.id;
     const nextSelectedId = sessions.find((item) => item.id !== session.id)?.id ?? "";
     runs.current.delete(session.id);
+    forgetShellAgent(session.id);
     if (resumed.current === session.id) resumed.current = "";
     const timer = workTimers.current.get(session.id);
     if (timer) window.clearTimeout(timer);
@@ -3116,9 +3126,11 @@ function App() {
                               sessionId={session.id}
                               agent={shellAgents.get(session.id) ?? session.agent}
                               theme={theme}
+                              fontSize={terminalFontSize}
                               active={selected.running && session.id === selectedId}
                               working={working.has(session.id)}
                               starting={startingIds.has(session.id)}
+                              onZoom={zoomTerminal}
                               onRecover={() => recoverSession(session)}
                               onPrompt={(text) => {
                                 const agent = session.agent === "shell" ? commandAgent(text) : undefined;

@@ -28,11 +28,6 @@ const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
 // pattern would be a second reading of all of it.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const METADATA = /\x1b\](0|2|7|6973);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
-// Common terminal notification protocols share the OSC owner with titles and working directories.
-// Lite needs only the signal for its in-app attention state; the terminal still owns rendering and
-// the notification payload is not retained separately from the bounded output buffer.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: a terminal notification is defined by them
-const NOTIFICATION = /\x1b\](?:9;(?!4;)[^\x07\x1b]*|99;[^\x07\x1b]*|777;notify;[^\x07\x1b]*)(?:\x07|\x1b\\)/;
 // A bare bell is the portable fallback used by agent harnesses and shells. Remove completed OSC first
 // because their bell terminator is framing, not a notification of its own.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
@@ -111,10 +106,16 @@ export function appendOutput(sessionId: string, data: number[]) {
   let title = "";
   let path = "";
   let activity: boolean | undefined;
-  let notification = NOTIFICATION.test(text);
+  let notification = false;
   OSC_OR_BELL.lastIndex = 0;
-  for (let match = OSC_OR_BELL.exec(text); !notification && match; match = OSC_OR_BELL.exec(text))
-    notification = Boolean(match[1]);
+  for (let match = OSC_OR_BELL.exec(text); !notification && match; match = OSC_OR_BELL.exec(text)) {
+    const sequence = match[0];
+    notification =
+      Boolean(match[1]) ||
+      (sequence.startsWith("\x1b]9;") && !sequence.startsWith("\x1b]9;4;")) ||
+      sequence.startsWith("\x1b]99;") ||
+      sequence.startsWith("\x1b]777;notify;");
+  }
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
     if (match[1] === "7") {

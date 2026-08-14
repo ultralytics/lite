@@ -8,7 +8,7 @@ import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 
 import { subscribeOutput, writeSession } from "@/output-store";
-import { storedFontSize, type Theme, zoomedFontSize, zoomStep } from "@/theme";
+import { type Theme, zoomStep } from "@/theme";
 import type { Agent } from "@/types";
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
@@ -77,24 +77,26 @@ const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$/;
 
-const FONT_SIZE_KEY = "lite.terminal.fontSize";
-
 export function TerminalView({
   sessionId,
   agent,
   theme,
+  fontSize,
   active,
   working,
   starting,
+  onZoom,
   onPrompt,
   onRecover,
 }: {
   sessionId: string;
   agent: Agent;
   theme: Theme;
+  fontSize: number;
   active: boolean;
   working: boolean;
   starting: boolean;
+  onZoom: (step: -1 | 0 | 1) => void;
   onPrompt: (text: string) => void;
   onRecover: () => Promise<void>;
 }) {
@@ -104,8 +106,9 @@ export function TerminalView({
   promptRef.current = onPrompt;
   const recoverRef = useRef(onRecover);
   recoverRef.current = onRecover;
+  const zoomRef = useRef(onZoom);
+  zoomRef.current = onZoom;
   const terminalRef = useRef<Terminal | null>(null);
-  const zoomRef = useRef<(step: -1 | 0 | 1) => void>(() => undefined);
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
   const workingRef = useRef(working);
@@ -115,6 +118,8 @@ export function TerminalView({
   // without rebuilding it every time the theme changes.
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
   // Followed without a rebuild, so a shell that starts an agent is picked up.
   const agentRef = useRef(agent);
   agentRef.current = agent;
@@ -123,13 +128,10 @@ export function TerminalView({
     const container = containerRef.current;
     if (!container) return;
 
-    // Held here as well as on the terminal, so a zoom step reads the size it last set rather than
-    // asking an option that is typed as though it might never have been given one.
-    let fontSize = storedFontSize(FONT_SIZE_KEY);
     const terminal = new Terminal({
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-      fontSize,
+      fontSize: fontSizeRef.current,
       lineHeight: 1.25,
       overviewRuler: { width: 6 },
       linkHandler: {
@@ -187,11 +189,6 @@ export function TerminalView({
       });
     };
     resizeRef.current = resize;
-    zoomRef.current = (step) => {
-      fontSize = zoomedFontSize(FONT_SIZE_KEY, fontSize, step);
-      terminal.options.fontSize = fontSize;
-      requestAnimationFrame(resize);
-    };
     // A width change arrives as a stream of frames: a drag, or the ease a collapsing panel runs
     // through. Fitting on each one rewraps the scrollback and hands the child a window size it is
     // never shown at, so the terminal is fitted once the size has settled.
@@ -250,7 +247,6 @@ export function TerminalView({
       unsubscribe();
       terminal.dispose();
       terminalRef.current = null;
-      zoomRef.current = () => undefined;
       resizeRef.current = () => undefined;
     };
   }, [sessionId]);
@@ -267,6 +263,13 @@ export function TerminalView({
     if (terminalRef.current) terminalRef.current.options.theme = themes[theme];
   }, [theme]);
 
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || terminal.options.fontSize === fontSize) return;
+    terminal.options.fontSize = fontSize;
+    requestAnimationFrame(() => resizeRef.current());
+  }, [fontSize]);
+
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
   // and it only subtracts padding declared on the terminal's own element. Padding here would be
@@ -274,7 +277,7 @@ export function TerminalView({
   // them past the edge, which also left the last row below the viewport where the scrollbar could
   // neither show nor reach it.
   return (
-    <div data-context-session={sessionId} data-context-zoom className="h-full w-full bg-background p-3">
+    <div data-context-session={sessionId} data-context-zoom className="h-full w-full bg-background p-3 pr-1.5">
       <button type="button" hidden data-context-zoom-in onClick={() => zoomRef.current(1)} />
       <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
