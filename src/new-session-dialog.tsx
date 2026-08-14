@@ -36,7 +36,6 @@ interface DirectoryGrant {
 interface Repository {
   branch: string;
   root: string;
-  worktree: string;
 }
 
 interface DirectoryProbe {
@@ -75,7 +74,6 @@ export function NewSessionDialog({
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
   const [repo, setRepo] = useState<string | null>();
   const [folder, setFolder] = useState<"checking" | "missing" | "directory" | "other">("checking");
-  const [worktree, setWorktree] = useState("");
   const [worktreeOn, setWorktreeOn] = useState(false);
   const [branch, setBranch] = useState("");
   const [title, setTitle] = useState("");
@@ -109,7 +107,6 @@ export function NewSessionDialog({
     if (!isOpen || !path.trim()) {
       setRepo(null);
       setFolder("checking");
-      setWorktree("");
       setWorktreeOn(false);
       return;
     }
@@ -122,7 +119,6 @@ export function NewSessionDialog({
           setFolder(isDirectory ? "directory" : exists ? "other" : "missing");
           const root = repository?.root ?? null;
           setRepo(root);
-          setWorktree(repository?.worktree ?? "");
           setWorktreeOn(false);
           setBranch(repository?.branch ?? "");
         })
@@ -130,7 +126,6 @@ export function NewSessionDialog({
           if (!disposed) {
             setRepo(null);
             setFolder("other");
-            setWorktree("");
           }
         });
     }, 250);
@@ -187,7 +182,6 @@ export function NewSessionDialog({
         setPath(selected.path);
         setFolder("directory");
         setRepo(undefined);
-        setWorktree("");
       }
     } catch (reason) {
       setError(String(reason));
@@ -350,7 +344,6 @@ export function NewSessionDialog({
                       // typed there is nothing true to show, so it hides until the probe answers.
                       setFolder("checking");
                       setRepo(undefined);
-                      setWorktree("");
                     }}
                   />
                   {folder === "directory" ? (
@@ -415,22 +408,17 @@ export function NewSessionDialog({
                   <Switch id="new-worktree" checked={worktreeOn} onCheckedChange={setWorktreeOn} />
                 </div>
                 {worktreeOn ? (
-                  <div className="min-w-0 space-y-1.5">
-                    <Label htmlFor="worktree-branch">New branch</Label>
-                    <Input
-                      id="worktree-branch"
-                      value={branch}
-                      className="font-mono"
-                      placeholder="Branch for the worktree…"
-                      name="worktree-branch"
-                      autoComplete="off"
-                      spellCheck={false}
-                      onChange={(event) => setBranch(event.target.value)}
-                    />
-                    <p className="max-w-full truncate font-mono text-xs text-muted-foreground" title={worktree}>
-                      {worktree}
-                    </p>
-                  </div>
+                  <Input
+                    id="worktree-branch"
+                    value={branch}
+                    className="font-mono"
+                    placeholder="New branch name…"
+                    name="worktree-branch"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="New branch"
+                    onChange={(event) => setBranch(event.target.value)}
+                  />
                 ) : null}
               </div>
             ) : null}

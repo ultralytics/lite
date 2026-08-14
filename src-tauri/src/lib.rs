@@ -4290,7 +4290,6 @@ fn owned_worktree(git: &Path, repo: &Path, root_id: &str, branch: &str) -> Optio
 struct Repository {
     branch: String,
     root: String,
-    worktree: String,
 }
 
 #[derive(Serialize)]
@@ -4332,7 +4331,6 @@ async fn directory_probe(app: AppHandle, path: String) -> Result<DirectoryProbe,
         exists: true,
         is_directory: true,
         repository: Some(Repository {
-            worktree: path_text(&candidate.path),
             branch: candidate.branch,
             root: path_text(&root),
         }),
