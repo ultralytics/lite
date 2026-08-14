@@ -52,6 +52,9 @@ jobs:
       - name: Lint and typecheck
         run: bun run check
 
+      - name: Test frontend
+        run: bun test
+
       - name: Check Rust formatting
         run: cargo fmt --check --manifest-path src-tauri/Cargo.toml
 

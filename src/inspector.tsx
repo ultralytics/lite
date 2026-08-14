@@ -73,6 +73,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { githubItemUrls } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
@@ -91,49 +92,8 @@ import {
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
-// A session's terminal is the only record of what it worked on, so explicit GitHub links, qualified
-// owner/repo references, and gh commands are read back out of the output Lite already bounds. Bare
-// numbers are not work items: they could be prose, images, or line numbers. Only CSI is stripped,
-// so a link inside an OSC hyperlink survives being uncoloured.
-// biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
-const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
-const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
-const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
-const ITEM_MENTION =
-  /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?![\w.])/gi;
-const GH_ITEM_COMMAND =
-  /\bgh\s+(issue|pr)\s+(?!create\b|list\b|status\b)[\w-]+((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
-const GH_REPOSITORY =
-  /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;
-const GH_API =
-  /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
-const githubItemsBySession = new Map<string, Set<string>>();
-
-function namedInSession(sessionId: string, remote: string) {
-  const text = readOutput(sessionId).slice(-MAX_OUTPUT_BYTES).replace(COLOR, "");
-  const urls = githubItemsBySession.get(sessionId) ?? new Set<string>();
-  for (const url of text.match(GITHUB_ITEM) ?? []) urls.add(url);
-  const prefix = "https://github.com/";
-  for (const match of text.matchAll(QUALIFIED_ITEM)) {
-    urls.add(`${prefix}${match[1]}/${match[2]}/issues/${match[3]}`);
-  }
-  const base = remote.toLowerCase().startsWith(prefix) ? prefix + remote.slice(prefix.length) : "";
-  for (const match of text.matchAll(ITEM_MENTION)) {
-    urls.add(`${prefix}${match[1]}/${match[2].toLowerCase().startsWith("issue") ? "issues" : "pull"}/${match[3]}`);
-  }
-  for (const match of text.matchAll(GH_ITEM_COMMAND)) {
-    const repositoryMatch = match[2].match(GH_REPOSITORY);
-    const repository = repositoryMatch?.slice(2).find(Boolean);
-    const number = match[2].replace(GH_REPOSITORY, "$1").match(/^\s+([1-9]\d{0,8})(?![\w.])/)?.[1];
-    const repositoryUrl = repository ? `${prefix}${repository}` : base;
-    if (repositoryUrl && number)
-      urls.add(`${repositoryUrl}/${match[1].toLowerCase() === "pr" ? "pull" : "issues"}/${number}`);
-  }
-  for (const match of text.matchAll(GH_API)) {
-    urls.add(`${prefix}${match[1]}/${match[2]}/${match[3].toLowerCase() === "pulls" ? "pull" : "issues"}/${match[4]}`);
-  }
-  githubItemsBySession.set(sessionId, urls);
-  return [...urls];
+function namedInSession(sessionId: string) {
+  return githubItemUrls(readOutput(sessionId).slice(-MAX_OUTPUT_BYTES));
 }
 
 interface GitHubReference {
@@ -1310,7 +1270,6 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
-  githubItemsBySession.delete(sessionId);
   fileEditorsBySession.delete(sessionId);
 }
 
@@ -1327,7 +1286,7 @@ function GitPanel({
   active: boolean;
   fontSize: number;
 }) {
-  const [urls, setUrls] = useState(() => namedInSession(sessionId, remote));
+  const [urls, setUrls] = useState(() => namedInSession(sessionId));
   const [status, setStatus] = useState<GitStatus | null>();
   const [items, setItems] = useState<GitHubItem[]>();
   const [error, setError] = useState("");
@@ -1345,7 +1304,7 @@ function GitPanel({
     let replaying = true;
     let settle = 0;
     const scan = () => {
-      const next = namedInSession(sessionId, remote);
+      const next = namedInSession(sessionId);
       setUrls((current) =>
         current.length === next.length && current.every((url, index) => url === next[index]) ? current : next,
       );
@@ -1361,7 +1320,7 @@ function GitPanel({
       window.clearTimeout(settle);
       unsubscribe();
     };
-  }, [active, remote, sessionId]);
+  }, [active, sessionId]);
 
   // A visible panel follows newly named items, while refresh rebuilds the current snapshot. Either way,
   // GitHub is asked only when the set of explicit references changes.
