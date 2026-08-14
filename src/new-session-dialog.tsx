@@ -28,14 +28,6 @@ const harnesses = [...new Set(choices.map((option) => option.agent).filter((agen
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
-// Two sessions share a project when they sit in the same repository — which a worktree's path
-// cannot say, since Lite worktrees live beside the checkout rather than under it, so the repo
-// recorded at creation answers. Sessions older than that record fall back to their path.
-function sharesRepo(session: Session, repo: string) {
-  if (session.repo) return session.repo === repo;
-  return session.cwd === repo || session.cwd.startsWith(`${repo}/`) || session.cwd.startsWith(`${repo}\\`);
-}
-
 interface DirectoryGrant {
   id: string;
   path: string;
@@ -63,12 +55,10 @@ export function NewSessionDialog({
   open: isOpen,
   onOpenChange,
   onCreate,
-  sessions,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
-  sessions: Session[];
 }) {
   const [choiceId, setChoiceId] = useState(choices[0].id);
   const [directory, setDirectory] = useState<DirectoryGrant>();
@@ -93,8 +83,6 @@ export function NewSessionDialog({
   const status = availability[choice.id];
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
-  // Sessions already working in this repository, which is the case a worktree exists for.
-  const sharing = repo ? sessions.filter((session) => sharesRepo(session, repo)).length : 0;
   // Dialog checks are independent, so one slow registry request never holds up another harness.
   useEffect(() => {
     if (!isOpen) return;
@@ -421,24 +409,14 @@ export function NewSessionDialog({
             {repo ? (
               <div className="space-y-2">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <Label htmlFor="new-worktree" className={SECTION}>
-                      Worktree{" "}
-                      <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
-                        Optional
-                      </span>
-                    </Label>
-                    <p className="text-xs text-muted-foreground">
-                      {sharing
-                        ? `${sharing} session${sharing === 1 ? "" : "s"} already work${sharing === 1 ? "s" : ""} in this project`
-                        : "Isolate this session from the main checkout"}
-                    </p>
-                  </div>
+                  <Label htmlFor="new-worktree" className={SECTION}>
+                    Create isolated worktree
+                  </Label>
                   <Switch id="new-worktree" checked={worktreeOn} onCheckedChange={setWorktreeOn} />
                 </div>
                 {worktreeOn ? (
                   <div className="min-w-0 space-y-1.5">
-                    <Label htmlFor="worktree-branch">Branch</Label>
+                    <Label htmlFor="worktree-branch">New branch</Label>
                     <Input
                       id="worktree-branch"
                       value={branch}

@@ -3536,12 +3536,7 @@ function App() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <NewSessionDialog
-            open={newSessionOpen}
-            onOpenChange={setNewSessionOpen}
-            onCreate={createSession}
-            sessions={sessions}
-          />
+          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
           <SessionSwitcher
             open={sessionSwitcherOpen}
             sessions={switcherSessions}
