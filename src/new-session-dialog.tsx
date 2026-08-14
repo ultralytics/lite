@@ -24,6 +24,9 @@ import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
 const choices = [...Object.values(AUTH_PROVIDERS), { id: "shell", agent: "shell" as const, provider: undefined }];
 const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
+const CHOICE_KEY = "lite.newSession.choice.v1";
+const NAME_KEY = "lite.newSession.name.v1";
+const WORKTREE_KEY = "lite.newSession.worktree.v1";
 
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
@@ -60,7 +63,10 @@ export function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
 }) {
-  const [choiceId, setChoiceId] = useState(choices[0].id);
+  const [choiceId, setChoiceId] = useState(() => {
+    const stored = localStorage.getItem(CHOICE_KEY);
+    return choices.find((option) => option.id === stored)?.id ?? choices[0].id;
+  });
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
@@ -76,9 +82,11 @@ export function NewSessionDialog({
   const [repo, setRepo] = useState<string | null>();
   const [folder, setFolder] = useState<"checking" | "missing" | "directory" | "other">("checking");
   const [worktree, setWorktree] = useState("");
-  const [worktreeOn, setWorktreeOn] = useState(false);
+  const [worktreeOn, setWorktreeOn] = useState(() => localStorage.getItem(WORKTREE_KEY) === "true");
   const [branch, setBranch] = useState("");
-  const [title, setTitle] = useState<string>();
+  const [title, setTitle] = useState<string | undefined>(() =>
+    localStorage.getItem(NAME_KEY) === "true" ? "" : undefined,
+  );
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
@@ -110,7 +118,6 @@ export function NewSessionDialog({
       setRepo(null);
       setFolder("checking");
       setWorktree("");
-      setWorktreeOn(false);
       return;
     }
     setRepo(undefined);
@@ -123,7 +130,6 @@ export function NewSessionDialog({
           const root = repository?.root ?? null;
           setRepo(root);
           setWorktree(repository?.worktree ?? "");
-          setWorktreeOn(false);
           setBranch(repository?.branch ?? "");
         })
         .catch(() => {
@@ -216,7 +222,7 @@ export function NewSessionDialog({
       setDirectory(undefined);
     }
     // A cancelled dialog stays mounted, so a name typed into it must not wait for the next session.
-    if (!open) setTitle(undefined);
+    if (!open) setTitle((current) => (current === undefined ? undefined : ""));
     onOpenChange(open);
   }
 
@@ -263,7 +269,7 @@ export function NewSessionDialog({
         repo: root || undefined,
       });
       setDirectory(undefined);
-      setTitle(undefined);
+      setTitle((current) => (current === undefined ? undefined : ""));
       onOpenChange(false);
     } finally {
       setCreating(false);
@@ -391,7 +397,7 @@ export function NewSessionDialog({
               ) : null}
             </div>
             <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
                 <Label htmlFor="custom-session-name" className={SECTION}>
                   Name{" "}
                   <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
@@ -401,7 +407,10 @@ export function NewSessionDialog({
                 <Switch
                   id="custom-session-name"
                   checked={title !== undefined}
-                  onCheckedChange={(checked) => setTitle(checked ? "" : undefined)}
+                  onCheckedChange={(checked) => {
+                    localStorage.setItem(NAME_KEY, String(checked));
+                    setTitle(checked ? "" : undefined);
+                  }}
                 />
               </div>
               {title !== undefined ? (
@@ -418,14 +427,21 @@ export function NewSessionDialog({
             </div>
             {repo ? (
               <div className="space-y-2">
-                <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
                   <Label htmlFor="new-worktree" className={SECTION}>
                     Worktree{" "}
                     <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
                       Optional
                     </span>
                   </Label>
-                  <Switch id="new-worktree" checked={worktreeOn} onCheckedChange={setWorktreeOn} />
+                  <Switch
+                    id="new-worktree"
+                    checked={worktreeOn}
+                    onCheckedChange={(checked) => {
+                      localStorage.setItem(WORKTREE_KEY, String(checked));
+                      setWorktreeOn(checked);
+                    }}
+                  />
                 </div>
                 {worktreeOn ? (
                   <div className="min-w-0 space-y-1.5">
@@ -477,7 +493,13 @@ export function NewSessionDialog({
                         aria-pressed={active}
                         disabled={Boolean(installing)}
                         title={"note" in option ? option.note : sessionLabel(option)}
-                        onClick={() => (active && ready ? start() : setChoiceId(option.id))}
+                        onClick={() => {
+                          if (active && ready) start();
+                          else {
+                            localStorage.setItem(CHOICE_KEY, option.id);
+                            setChoiceId(option.id);
+                          }
+                        }}
                       >
                         <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
                         <div
