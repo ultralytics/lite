@@ -96,7 +96,7 @@ export function githubItemReferences(output: string, remote: string): GitHubRefe
   return references;
 }
 
-const RECENT_ACTIVITY_MS = 24 * 60 * 60 * 1000;
+const RECENT_ACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function likelyGitHubItems<T extends { updatedAt: string | null; url: string }>(
   items: T[],

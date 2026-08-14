@@ -124,15 +124,15 @@ ultralytics/lite PR #102
     });
   });
 
-  test("keeps inferred items only when GitHub confirms activity in the last day", () => {
+  test("keeps inferred items only when GitHub confirms activity in the last 30 days", () => {
     const inferred = [
       "https://github.com/ultralytics/portal/pull/102",
       "https://github.com/ultralytics/portal/issues/3052",
     ];
     const now = Date.parse("2026-08-14T18:00:00Z");
     const items = [
-      { url: inferred[0], updatedAt: "2025-12-14T18:00:00Z" },
-      { url: inferred[1], updatedAt: "2026-08-14T17:59:00Z" },
+      { url: inferred[0], updatedAt: "2026-07-14T18:00:00Z" },
+      { url: inferred[1], updatedAt: "2026-07-16T18:00:00Z" },
       { url: "https://github.com/ultralytics/lite/pull/102", updatedAt: null },
     ];
 

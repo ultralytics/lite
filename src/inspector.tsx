@@ -1326,7 +1326,7 @@ function GitPanel({
   }, [active, remote, sessionId]);
 
   // Explicit references always survive the lookup. A bare reference inferred from the session folder
-  // survives only when GitHub confirms activity in the last day.
+  // survives only when GitHub confirms activity in the last 30 days.
   useEffect(() => {
     const { explicit, inferred } = references;
     const urls = [...explicit, ...inferred];
