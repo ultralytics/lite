@@ -88,6 +88,7 @@ export function NewSessionDialog({
   const [worktree, setWorktree] = useState("");
   const [worktreeOn, setWorktreeOn] = useState(false);
   const [branch, setBranch] = useState("");
+  const [title, setTitle] = useState("");
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
@@ -258,7 +259,9 @@ export function NewSessionDialog({
           return;
         }
       }
-      const project = defaultSessionName(folder.path);
+      // A name the user gave at creation is theirs, so it is marked renamed and no window title
+      // or first prompt replaces it, the same as a rename from the sidebar would.
+      const project = title.trim() || defaultSessionName(folder.path);
       onCreate({
         id: crypto.randomUUID(),
         agent: choice.agent,
@@ -267,10 +270,12 @@ export function NewSessionDialog({
         rootId: folder.id,
         name: project,
         running: false,
+        renamed: Boolean(title.trim()),
         worktree,
         repo: root || undefined,
       });
       setDirectory(undefined);
+      setTitle("");
       onOpenChange(false);
     } finally {
       setCreating(false);
@@ -396,6 +401,19 @@ export function NewSessionDialog({
                   This path is not a folder.
                 </p>
               ) : null}
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="session-title" className={SECTION}>
+                Session name
+              </Label>
+              <Input
+                id="session-title"
+                value={title}
+                placeholder="Name the session, or leave it to name itself…"
+                name="session-title"
+                autoComplete="off"
+                onChange={(event) => setTitle(event.target.value)}
+              />
             </div>
             {repo ? (
               <div className="space-y-2">
