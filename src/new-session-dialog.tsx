@@ -227,6 +227,8 @@ export function NewSessionDialog({
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
     }
+    // A cancelled dialog stays mounted, so a name typed into it must not wait for the next session.
+    if (!open) setTitle("");
     onOpenChange(open);
   }
 
