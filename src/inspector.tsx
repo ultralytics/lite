@@ -74,7 +74,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
-import { without } from "@/lib/utils";
+import { including, without } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
 import { contentZoomStyle } from "@/theme";
 import {
@@ -480,7 +480,7 @@ function FileTree({
     async (path: string, after: DirectoryCursor | null = null) => {
       if (loading.current.has(path)) return;
       loading.current.add(path);
-      setLoadingPaths((current) => new Set(current).add(path));
+      setLoadingPaths((current) => including(current, path));
       try {
         const listing = await invoke<DirectoryListing>("list_directory", { rootId, path, after });
         setChildren((current) => ({ ...current, [path]: { ...listing, after } }));
@@ -1614,12 +1614,7 @@ export function Inspector({
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
 
   function visitTab(value: string) {
-    setVisited((current) => {
-      if (current.has(value)) return current;
-      const next = new Set(current);
-      next.add(value);
-      return next;
-    });
+    setVisited((current) => including(current, value));
   }
 
   function refreshTab(value: keyof typeof reload) {

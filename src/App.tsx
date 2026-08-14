@@ -97,7 +97,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clearInspectorCache, Inspector } from "@/inspector";
-import { swapped, without } from "@/lib/utils";
+import { including, swapped, without } from "@/lib/utils";
 import { NewSessionDialog } from "@/new-session-dialog";
 import {
   appendOutput,
@@ -1859,7 +1859,7 @@ function App() {
     const timers = workTimers.current;
     const pending = timers.get(sessionId);
     if (pending) window.clearTimeout(pending);
-    else setWorking((current) => new Set(current).add(sessionId));
+    else setWorking((current) => including(current, sessionId));
     timers.set(
       sessionId,
       window.setTimeout(() => {
@@ -2026,7 +2026,7 @@ function App() {
     recoveryFailures.current.delete(session.id);
     const runId = crypto.randomUUID();
     runs.current.set(session.id, runId);
-    setStartingIds((current) => new Set(current).add(session.id));
+    setStartingIds((current) => including(current, session.id));
     setError("");
     try {
       if (session.worktree) {
@@ -2125,7 +2125,7 @@ function App() {
         });
         const live = sessionsRef.current.find((item) => item.id === session.id);
         if (!folder || !live?.running || closingIds.current.has(session.id) || closingAllRef.current) return;
-        setStartingIds((current) => new Set(current).add(session.id));
+        setStartingIds((current) => including(current, session.id));
         await invoke("stop_session", { sessionId: session.id });
         stopped = true;
         runs.current.delete(session.id);
@@ -2378,7 +2378,7 @@ function App() {
     runs.current.delete(session.id);
     forgetShellAgent(session.id);
     replaceRecentSession(session.id, fresh.id);
-    setStartingIds((current) => new Set(current).add(fresh.id));
+    setStartingIds((current) => including(current, fresh.id));
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
     if (select) {
       setSelectedId(fresh.id);
@@ -2630,7 +2630,7 @@ function App() {
       () => true,
       async (reason) => {
         const restored = { ...session, running: false };
-        setStartingIds((current) => new Set(current).add(session.id));
+        setStartingIds((current) => including(current, session.id));
         resumed.current = session.id;
         restore(false);
         if (await launch(restored, true)) {
@@ -2656,7 +2656,7 @@ function App() {
       stopped,
       () => {
         const restored = { ...session, running: false };
-        setStartingIds((current) => new Set(current).add(session.id));
+        setStartingIds((current) => including(current, session.id));
         resumed.current = session.id;
         restore(false);
         return stopped.then(async (successful) => {

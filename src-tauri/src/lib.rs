@@ -1150,6 +1150,9 @@ fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<Pa
             "preferredNotifChannel": "iterm2",
             "statusLine": { "type": "command", "command": status, "refreshInterval": 1 },
             "hooks": {
+                "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }],
+                "PostToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }],
+                "PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }]
             }
@@ -1160,9 +1163,9 @@ fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<Pa
     Ok(settings_path)
 }
 
-fn activity_key(input: &serde_json::Value) -> Option<&str> {
+fn activity_key<'a>(input: &'a serde_json::Value, field: &str) -> Option<&'a str> {
     input
-        .get("agent_id")
+        .get(field)
         .and_then(serde_json::Value::as_str)
         .filter(|value| {
             value.chars().all(|character| {
@@ -1183,13 +1186,23 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     match event {
-        "SubagentStart" => {
-            if let Some(key) = activity_key(&input) {
+        "PreToolUse" | "SubagentStart" => {
+            let field = if event == "PreToolUse" {
+                "tool_use_id"
+            } else {
+                "agent_id"
+            };
+            if let Some(key) = activity_key(&input, field) {
                 fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
             }
         }
-        "SubagentStop" => {
-            if let Some(key) = activity_key(&input)
+        "PostToolUse" | "PostToolUseFailure" | "SubagentStop" => {
+            let field = if event == "SubagentStop" {
+                "agent_id"
+            } else {
+                "tool_use_id"
+            };
+            if let Some(key) = activity_key(&input, field)
                 && let Err(error) = fs::remove_file(directory.join(key))
                 && error.kind() != std::io::ErrorKind::NotFound
             {
@@ -1199,51 +1212,6 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
         _ => {}
     }
     Ok(())
-}
-
-fn claude_shell_running() -> bool {
-    let mut system = System::new();
-    system.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::nothing().without_tasks(),
-    );
-    let Ok(current) = sysinfo::get_current_pid() else {
-        return false;
-    };
-    let mut ancestors = HashSet::from([current]);
-    let mut parent = system.process(current).and_then(|process| process.parent());
-    let claude = loop {
-        let Some(pid) = parent else { return false };
-        ancestors.insert(pid);
-        let Some(process) = system.process(pid) else {
-            return false;
-        };
-        let name = process.name().to_string_lossy().to_ascii_lowercase();
-        if name.strip_suffix(".exe").unwrap_or(&name) == "claude" {
-            break pid;
-        }
-        parent = process.parent();
-    };
-    system.processes().iter().any(|(pid, process)| {
-        let name = process.name().to_string_lossy().to_ascii_lowercase();
-        if ancestors.contains(pid)
-            || !matches!(
-                name.strip_suffix(".exe").unwrap_or(&name),
-                "bash" | "cmd" | "dash" | "fish" | "nu" | "powershell" | "pwsh" | "sh" | "zsh"
-            )
-        {
-            return false;
-        }
-        let mut parent = process.parent();
-        while let Some(pid) = parent {
-            if pid == claude {
-                return true;
-            }
-            parent = system.process(pid).and_then(|process| process.parent());
-        }
-        false
-    })
 }
 
 pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), String> {
@@ -1297,8 +1265,7 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
     if !fs::read(path).is_ok_and(|current| current == usage) {
         write_atomic(Path::new(path), &usage)?;
     }
-    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some())
-        || claude_shell_running();
+    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some());
     let activity = if working { "working" } else { "idle" };
     if let Some(percent) = snapshot.context_used_percent {
         println!("\x1b]6973;lite-{activity}\x07Lite · {percent:.0}% context");
@@ -3064,27 +3031,22 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
         let Some(executable) = resolve_executable(executable) else {
             return Ok(false);
         };
-        let package = match agent.as_str() {
-            "claude" => "@anthropic-ai/claude-code",
-            "codex" => "@openai/codex",
-            "gemini" => "@google/gemini-cli",
-            "kimi" => "@moonshot-ai/kimi-code",
-            "qwen" => "@qwen-code/qwen-code",
+        let (latest_url, version_field) = match agent.as_str() {
+            "claude" => (
+                "https://downloads.claude.ai/claude-code-releases/latest",
+                false,
+            ),
+            "codex" => ("https://registry.npmjs.org/@openai%2Fcodex/latest", true),
+            "gemini" => (
+                "https://registry.npmjs.org/@google%2Fgemini-cli/latest",
+                true,
+            ),
+            "kimi" => ("https://code.kimi.com/kimi-code/latest", false),
+            "qwen" => (
+                "https://registry.npmjs.org/@qwen-code%2Fqwen-code/latest",
+                true,
+            ),
             _ => return Err("Unknown session type".into()),
-        };
-        let npm = resolve_executable("npm").ok_or("Could not check for updates without npm")?;
-        let run = |program: &Path, args: &[&str]| -> Result<String, String> {
-            let mut command = Command::new(program);
-            command.args(args);
-            if let Some(path) = user_path() {
-                command.env("PATH", path);
-            }
-            let output = command.output().map_err(|error| error.to_string())?;
-            if output.status.success() {
-                Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-            } else {
-                Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
-            }
         };
         let version = |output: &str| {
             output.split_whitespace().find_map(|word| {
@@ -3096,18 +3058,34 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
                 .then(|| word.to_owned())
             })
         };
-        let current = version(&run(&executable, &["--version"])?)
+        let mut command = Command::new(executable);
+        command.arg("--version");
+        if let Some(path) = user_path() {
+            command.env("PATH", path);
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+        let current = version(&String::from_utf8_lossy(&output.stdout))
             .ok_or("Could not read the installed version")?;
-        let latest = version(&run(
-            &npm,
-            &[
-                "view",
-                package,
-                "version",
-                "--fetch-timeout=5000",
-                "--fetch-retries=0",
-            ],
-        )?)
+        let response = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .map_err(|error| error.to_string())?
+            .get(latest_url)
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .map_err(|error| error.to_string())?
+            .text()
+            .map_err(|error| error.to_string())?;
+        let latest = if version_field {
+            serde_json::from_str::<serde_json::Value>(&response)
+                .ok()
+                .and_then(|value| value.get("version")?.as_str().map(str::to_owned))
+        } else {
+            version(&response)
+        }
         .ok_or("Could not read the latest version")?;
         Ok(current != latest)
     })

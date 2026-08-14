@@ -28,6 +28,21 @@ const CHOICE_KEY = "lite.newSession.choice.v1";
 const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 
+let updateChecks: Promise<Record<string, boolean | null>> | undefined;
+
+function checkAgentUpdates() {
+  updateChecks ??= Promise.all(
+    harnesses.map(async (agent) => {
+      try {
+        return [agent, await invoke<boolean>("agent_update_available", { agent })] as const;
+      } catch {
+        return [agent, null] as const;
+      }
+    }),
+  ).then(Object.fromEntries);
+  return updateChecks;
+}
+
 // The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
@@ -91,20 +106,14 @@ export function NewSessionDialog({
   const status = availability[choice.id];
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
-  // Dialog checks are independent, so one slow registry request never holds up another harness.
+  // The first explicit open asks every harness in parallel. The answer is kept for this app run, so
+  // reopening the dialog does not repeat five version processes and five network requests.
   useEffect(() => {
     if (!isOpen) return;
     let disposed = false;
-    setUpdates({});
-    for (const agent of harnesses) {
-      void invoke<boolean>("agent_update_available", { agent })
-        .then((available) => {
-          if (!disposed) setUpdates((current) => ({ ...current, [agent]: available }));
-        })
-        .catch(() => {
-          if (!disposed) setUpdates((current) => ({ ...current, [agent]: null }));
-        });
-    }
+    void checkAgentUpdates().then((result) => {
+      if (!disposed) setUpdates(result);
+    });
     return () => {
       disposed = true;
     };
@@ -298,7 +307,12 @@ export function NewSessionDialog({
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === option.id)?.[1];
       if (result && !result.available && result.installable) setError(result.detail);
-      else setUpdates((current) => ({ ...current, [option.agent]: false }));
+      else
+        setUpdates((current) => {
+          const next = { ...current, [option.agent]: false };
+          updateChecks = Promise.resolve(next);
+          return next;
+        });
     } catch (reason) {
       setError(String(reason));
     } finally {

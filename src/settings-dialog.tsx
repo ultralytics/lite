@@ -41,7 +41,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { without } from "@/lib/utils";
+import { including, without } from "@/lib/utils";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import type { Theme } from "@/theme";
 import { type Agent, sessionLabel } from "@/types";
@@ -103,7 +103,7 @@ export function SettingsDialog({
   }, [isOpen, read]);
 
   function edit(id: string, open: boolean) {
-    setEditing((current) => (open ? new Set(current).add(id) : without(current, id)));
+    setEditing((current) => (open ? including(current, id) : without(current, id)));
     if (!open) setDrafts((current) => ({ ...current, [id]: "" }));
   }
 
