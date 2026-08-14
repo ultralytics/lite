@@ -106,6 +106,10 @@ static NOTIFICATION_DELEGATE: std::sync::OnceLock<objc2::rc::Retained<Notificati
 fn install_notification_delegate(app: &AppHandle) {
     use objc2::runtime::ProtocolObject;
 
+    if !notifications_supported() {
+        return;
+    }
+
     let delegate = NOTIFICATION_DELEGATE.get_or_init(|| NotificationDelegate::new(app.clone()));
     UNUserNotificationCenter::currentNotificationCenter()
         .setDelegate(Some(ProtocolObject::from_ref(&**delegate)));
