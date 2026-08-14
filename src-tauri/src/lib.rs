@@ -39,7 +39,6 @@ const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
-const DEEPSEEK_MODELS: [&str; 2] = [DEEPSEEK_MODEL, "deepseek-v4-pro"];
 const SUPPORTED_KEYS: [&str; 6] = [
     "claude",
     "codex",
@@ -2104,7 +2103,7 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
             "DeepSeek V4 Flash, served by the DeepSeek API.",
         ),
         (
-            DEEPSEEK_MODELS[1],
+            "deepseek-v4-pro",
             "DeepSeek-V4-Pro",
             "DeepSeek V4 Pro, served by the DeepSeek API.",
         ),
@@ -2709,7 +2708,6 @@ fn agent_command(
     app: &AppHandle,
     agent: &str,
     provider: Option<&str>,
-    model: Option<&str>,
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
@@ -2735,9 +2733,6 @@ fn agent_command(
             command.args(["-c", r#"tui.notification_condition="always""#]);
             // Providers are selected per launch so the user's default Codex provider stays untouched.
             if let Some(provider) = codex_provider(provider) {
-                let model = model
-                    .filter(|model| provider.id == "deepseek" && DEEPSEEK_MODELS.contains(model))
-                    .unwrap_or(provider.model);
                 let key = saved_api_key(app, agent, Some(provider.id)).is_some();
                 if !key && codex_profile_exists(app, provider.id) {
                     // A profile the user wrote owns the whole model configuration, catalog included.
@@ -2762,6 +2757,7 @@ fn agent_command(
                         }
                     }
                     command.args(["-c", &format!("model_provider=\"{}\"", provider.id)]);
+                    command.args(["-c", &format!("model=\"{}\"", provider.model)]);
                     if let Some(catalog) = (provider.id == "deepseek"
                         && !codex_declares_catalog(app))
                     .then(|| deepseek_catalog(app))
@@ -2774,7 +2770,6 @@ fn agent_command(
                         command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
                     }
                 }
-                command.args(["-c", &format!("model=\"{model}\"")]);
             }
             if let Some(provider_session_id) = provider_session_id {
                 command.args(["resume", provider_session_id]);
@@ -3191,7 +3186,6 @@ async fn spawn_session(
     mut provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
-    model: Option<String>,
     mode: Option<String>,
     theme: Option<String>,
     resume: bool,
@@ -3316,7 +3310,6 @@ async fn spawn_session(
             &app,
             &agent,
             provider.as_deref(),
-            model.as_deref(),
             resume,
             &session_id,
             provider_session_id.as_deref(),

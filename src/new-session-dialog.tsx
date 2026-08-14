@@ -22,17 +22,7 @@ import { Switch } from "@/components/ui/switch";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
-const choices = [
-  AUTH_PROVIDERS.codex,
-  AUTH_PROVIDERS.claude,
-  { ...AUTH_PROVIDERS.deepseek, auth: "deepseek", model: "deepseek-v4-flash" },
-  { ...AUTH_PROVIDERS.deepseek, id: "deepseek-pro", auth: "deepseek", model: "deepseek-v4-pro" },
-  AUTH_PROVIDERS.openrouter,
-  AUTH_PROVIDERS.gemini,
-  AUTH_PROVIDERS.kimi,
-  AUTH_PROVIDERS.qwen,
-  { id: "shell", agent: "shell" as const, provider: undefined },
-] as const;
+const choices = [...Object.values(AUTH_PROVIDERS), { id: "shell", agent: "shell" as const, provider: undefined }];
 const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 const CHOICE_KEY = "lite.newSession.choice.v1";
 const NAME_KEY = "lite.newSession.name.v1";
@@ -279,7 +269,6 @@ export function NewSessionDialog({
         id: crypto.randomUUID(),
         agent: choice.agent,
         provider: choice.provider,
-        model: "model" in choice ? choice.model : undefined,
         cwd: folder.path,
         rootId: folder.id,
         name: name || defaultSessionName(folder.path),
@@ -507,9 +496,7 @@ export function NewSessionDialog({
                       ? ({ label: "Update", working: "Updating" } as const)
                       : undefined;
                   const busy = installing === option.id;
-                  const authId = "auth" in option ? option.auth : option.id;
-                  const authProvider =
-                    "configured" in option ? AUTH_PROVIDERS[authId as keyof typeof AUTH_PROVIDERS] : undefined;
+                  const authProvider = "configured" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   return (
                     <div key={option.id} className="relative min-w-0">
