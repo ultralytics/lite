@@ -2123,7 +2123,7 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
             ("context_window", serde_json::json!(1_048_576)),
             ("max_context_window", serde_json::json!(1_048_576)),
             ("default_reasoning_level", serde_json::json!("high")),
-            ("visibility", serde_json::json!("hide")),
+            ("visibility", serde_json::json!("list")),
             ("input_modalities", serde_json::json!(["text"])),
             // Capabilities and cache keys that belong to the model this entry was cloned from.
             ("comp_hash", serde_json::Value::Null),
