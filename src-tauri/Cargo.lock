@@ -1955,6 +1955,7 @@ dependencies = [
  "objc2-user-notifications",
  "portable-pty",
  "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "sysinfo",

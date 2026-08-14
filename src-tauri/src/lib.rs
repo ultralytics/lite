@@ -1150,9 +1150,6 @@ fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<Pa
             "preferredNotifChannel": "iterm2",
             "statusLine": { "type": "command", "command": status, "refreshInterval": 1 },
             "hooks": {
-                "PreToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }],
-                "PostToolUse": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }],
-                "PostToolUseFailure": [{ "matcher": "Bash", "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStart": [{ "hooks": [{ "type": "command", "command": activity }] }],
                 "SubagentStop": [{ "hooks": [{ "type": "command", "command": activity }] }]
             }
@@ -1163,9 +1160,9 @@ fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<Pa
     Ok(settings_path)
 }
 
-fn activity_key<'a>(input: &'a serde_json::Value, field: &str) -> Option<&'a str> {
+fn activity_key(input: &serde_json::Value) -> Option<&str> {
     input
-        .get(field)
+        .get("agent_id")
         .and_then(serde_json::Value::as_str)
         .filter(|value| {
             value.chars().all(|character| {
@@ -1186,23 +1183,13 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
     match event {
-        "PreToolUse" | "SubagentStart" => {
-            let field = if event == "PreToolUse" {
-                "tool_use_id"
-            } else {
-                "agent_id"
-            };
-            if let Some(key) = activity_key(&input, field) {
+        "SubagentStart" => {
+            if let Some(key) = activity_key(&input) {
                 fs::write(directory.join(key), []).map_err(|error| error.to_string())?;
             }
         }
-        "PostToolUse" | "PostToolUseFailure" | "SubagentStop" => {
-            let field = if event == "SubagentStop" {
-                "agent_id"
-            } else {
-                "tool_use_id"
-            };
-            if let Some(key) = activity_key(&input, field)
+        "SubagentStop" => {
+            if let Some(key) = activity_key(&input)
                 && let Err(error) = fs::remove_file(directory.join(key))
                 && error.kind() != std::io::ErrorKind::NotFound
             {
@@ -3069,6 +3056,7 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
         }
         let current = version(&String::from_utf8_lossy(&output.stdout))
             .ok_or("Could not read the installed version")?;
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let response = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()

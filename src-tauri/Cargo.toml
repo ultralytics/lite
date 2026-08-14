@@ -31,6 +31,7 @@ toml_edit = "0.25"
 atomicwrites = "0.4.4"
 portable-pty = "0.9.0"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls-no-provider"] }
+rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }
 tauri-plugin-dialog = "2.7.2"
 tungstenite = "0.30"

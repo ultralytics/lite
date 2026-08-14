@@ -307,12 +307,13 @@ export function NewSessionDialog({
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === option.id)?.[1];
       if (result && !result.available && result.installable) setError(result.detail);
-      else
-        setUpdates((current) => {
-          const next = { ...current, [option.agent]: false };
-          updateChecks = Promise.resolve(next);
-          return next;
-        });
+      else {
+        updateChecks = (updateChecks ?? Promise.resolve(updates)).then((current) => ({
+          ...current,
+          [option.agent]: false,
+        }));
+        setUpdates((current) => ({ ...current, [option.agent]: false }));
+      }
     } catch (reason) {
       setError(String(reason));
     } finally {

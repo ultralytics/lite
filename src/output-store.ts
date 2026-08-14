@@ -22,10 +22,9 @@ const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
 
 // Titles and working directories arrive whether or not the session is visible, so their shared OSC
 // owner lives here where every session's output arrives rather than in the mounted terminal. Lite's
-// Claude status line reports work that produces no terminal output — a parent waiting for subagents,
-// a quiet shell command — through a private OSC of its own, which stays invisible and reaches the
-// same owner. One pass reads both: every byte a session prints comes through here, so a second
-// pattern would be a second reading of all of it.
+// Claude status line reports a parent waiting for subagents through a private OSC of its own, which
+// stays invisible and reaches the same owner. One pass reads both: every byte a session prints comes
+// through here, so a second pattern would be a second reading of all of it.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const METADATA = /\x1b\](0|2|7|6973);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // A bare bell is the portable fallback used by agent harnesses and shells. Remove completed OSC first
