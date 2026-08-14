@@ -100,7 +100,7 @@ const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/\d+/g;
 const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
 const ITEM_MENTION =
-  /(?:^|[^\w./-])(?:(\w[\w.-]*\/\w[\w.-]*)\s+)?(pull requests?|PRs?|issues?)\s+#?([1-9]\d{0,8})(?![\w.])/gi;
+  /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?![\w.])/gi;
 const GH_ITEM_COMMAND =
   /\bgh\s+(issue|pr)\s+(?!create\b|list\b|status\b)[\w-]+((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
@@ -119,9 +119,7 @@ function namedInSession(sessionId: string, remote: string) {
   }
   const base = remote.toLowerCase().startsWith(prefix) ? prefix + remote.slice(prefix.length) : "";
   for (const match of text.matchAll(ITEM_MENTION)) {
-    const repositoryUrl = match[1] ? `${prefix}${match[1]}` : base;
-    if (repositoryUrl)
-      urls.add(`${repositoryUrl}/${match[2].toLowerCase().startsWith("issue") ? "issues" : "pull"}/${match[3]}`);
+    urls.add(`${prefix}${match[1]}/${match[2].toLowerCase().startsWith("issue") ? "issues" : "pull"}/${match[3]}`);
   }
   for (const match of text.matchAll(GH_ITEM_COMMAND)) {
     const repositoryMatch = match[2].match(GH_REPOSITORY);
