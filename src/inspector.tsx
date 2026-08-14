@@ -73,7 +73,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { githubItemUrls } from "@/github-items";
+import { githubItemReferences, likelyGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
 import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
@@ -92,8 +92,8 @@ import {
 
 const CodePreview = lazy(() => import("@/code-preview"));
 
-function namedInSession(sessionId: string) {
-  return githubItemUrls(readOutput(sessionId).slice(-MAX_OUTPUT_BYTES));
+function namedInSession(sessionId: string, remote: string) {
+  return githubItemReferences(readOutput(sessionId).slice(-MAX_OUTPUT_BYTES), remote);
 }
 
 interface GitHubReference {
@@ -121,6 +121,7 @@ interface GitHubItem {
   title: string | null;
   state: keyof typeof GITHUB_STATE | null;
   occurredAt: string | null;
+  updatedAt: string | null;
   additions: number | null;
   deletions: number | null;
 }
@@ -1286,7 +1287,7 @@ function GitPanel({
   active: boolean;
   fontSize: number;
 }) {
-  const [urls, setUrls] = useState(() => namedInSession(sessionId));
+  const [references, setReferences] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
   const [items, setItems] = useState<GitHubItem[]>();
   const [error, setError] = useState("");
@@ -1304,10 +1305,12 @@ function GitPanel({
     let replaying = true;
     let settle = 0;
     const scan = () => {
-      const next = namedInSession(sessionId);
-      setUrls((current) =>
-        current.length === next.length && current.every((url, index) => url === next[index]) ? current : next,
-      );
+      const next = namedInSession(sessionId, remote);
+      setReferences((current) => {
+        const same = (key: keyof typeof next) =>
+          current[key].length === next[key].length && current[key].every((url, index) => url === next[key][index]);
+        return same("explicit") && same("inferred") ? current : next;
+      });
     };
     const unsubscribe = subscribeOutput(sessionId, () => {
       if (replaying) return;
@@ -1320,11 +1323,13 @@ function GitPanel({
       window.clearTimeout(settle);
       unsubscribe();
     };
-  }, [active, sessionId]);
+  }, [active, remote, sessionId]);
 
-  // A visible panel follows newly named items, while refresh rebuilds the current snapshot. Either way,
-  // GitHub is asked only when the set of explicit references changes.
+  // Explicit references always survive the lookup. A bare reference inferred from the session folder
+  // survives only when GitHub confirms activity in the last day.
   useEffect(() => {
+    const { explicit, inferred } = references;
+    const urls = [...explicit, ...inferred];
     if (!urls.length) return setItems([]);
     let disposed = false;
     // A remote that arrives after an empty first pass starts a real check, so the panel goes back to
@@ -1332,19 +1337,27 @@ function GitPanel({
     setItems(undefined);
     void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
-        if (!disposed) setItems(checked);
+        if (!disposed) setItems(likelyGitHubItems(checked, inferred));
       })
-      // A link that could not be checked is still explicit, so it is shown the way it was printed.
+      // An explicit link survives an unavailable GitHub; an inference cannot be verified and does not.
       .catch(() => {
         if (!disposed)
           setItems(
-            urls.map((url) => ({ url, title: null, state: null, occurredAt: null, additions: null, deletions: null })),
+            explicit.map((url) => ({
+              url,
+              title: null,
+              state: null,
+              occurredAt: null,
+              updatedAt: null,
+              additions: null,
+              deletions: null,
+            })),
           );
       });
     return () => {
       disposed = true;
     };
-  }, [urls]);
+  }, [references]);
 
   const refresh = useCallback(async () => {
     setError("");
@@ -1427,7 +1440,9 @@ function GitPanel({
             {lowered && status !== undefined && items && repositories.length && !shown.length ? (
               <p className="text-sm text-muted-foreground">No matches</p>
             ) : null}
-            {items === undefined && urls.length ? <Loading label="Checking GitHub links…" /> : null}
+            {items === undefined && (references.explicit.length || references.inferred.length) ? (
+              <Loading label="Checking GitHub links…" />
+            ) : null}
             {status === null && items && !repositories.length ? (
               <Empty>
                 <EmptyHeader>

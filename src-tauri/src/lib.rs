@@ -1342,6 +1342,7 @@ struct GitHubItem {
     title: Option<String>,
     state: Option<String>,
     occurred_at: Option<String>,
+    updated_at: Option<String>,
     additions: Option<u64>,
     deletions: Option<u64>,
 }
@@ -1429,7 +1430,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             ));
         }
         query.push_str(
-            "}\nfragment f on IssueOrPullRequest {\n... on Issue { title url state createdAt closedAt }\n... on PullRequest { title url state isDraft createdAt closedAt mergedAt additions deletions }\n}",
+            "}\nfragment f on IssueOrPullRequest {\n... on Issue { title url state createdAt updatedAt closedAt }\n... on PullRequest { title url state isDraft createdAt updatedAt closedAt mergedAt additions deletions }\n}",
         );
         let output = Command::new(gh)
             .args(["api", "graphql", "-f", &format!("query={query}")])
@@ -1485,6 +1486,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                     title: item["title"].as_str().map(str::to_owned),
                     state: Some(state.to_owned()),
                     occurred_at,
+                    updated_at: item["updatedAt"].as_str().map(str::to_owned),
                     additions: item["additions"].as_u64(),
                     deletions: item["deletions"].as_u64(),
                 });
@@ -1496,6 +1498,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                 title: None,
                 state: None,
                 occurred_at: None,
+                updated_at: None,
                 additions: None,
                 deletions: None,
             }),
@@ -1518,6 +1521,7 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             title: None,
             state: None,
             occurred_at: None,
+            updated_at: None,
             additions: None,
             deletions: None,
         })
