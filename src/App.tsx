@@ -1465,6 +1465,7 @@ function App() {
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
   const [closeWarningCount, setCloseWarningCount] = useState(0);
+  const [closingApp, setClosingApp] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
   // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
   // cleanup has settled, so nothing can be reopened under its own cleanup.
@@ -3389,8 +3390,8 @@ function App() {
               ) : null}
             </DialogContent>
           </Dialog>
-          <Dialog open={closeWarningCount > 0} onOpenChange={(open) => !open && setCloseWarningCount(0)}>
-            <DialogContent>
+          <Dialog open={closeWarningCount > 0} onOpenChange={(open) => !open && !closingApp && setCloseWarningCount(0)}>
+            <DialogContent showCloseButton={!closingApp}>
               <DialogHeader>
                 <DialogTitle>Close Lite?</DialogTitle>
                 <DialogDescription>
@@ -3399,17 +3400,25 @@ function App() {
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setCloseWarningCount(0)}>
+                <Button variant="outline" disabled={closingApp} onClick={() => setCloseWarningCount(0)}>
                   Keep Lite open
                 </Button>
                 <Button
                   variant="destructive"
+                  disabled={closingApp}
                   onClick={async () => {
-                    await Promise.all([...pendingCleanups.current].map((cleanup) => cleanup()));
-                    await getCurrentWindow().destroy();
+                    setClosingApp(true);
+                    try {
+                      await Promise.all([...pendingCleanups.current].map((cleanup) => cleanup()));
+                      await getCurrentWindow().destroy();
+                    } catch (reason) {
+                      setClosingApp(false);
+                      setError(String(reason));
+                    }
                   }}
                 >
-                  Close Lite
+                  {closingApp ? <Spinner /> : null}
+                  {closingApp ? "Closing…" : "Close Lite"}
                 </Button>
               </DialogFooter>
             </DialogContent>
