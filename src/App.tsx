@@ -1464,6 +1464,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
+  const [closeWarningCount, setCloseWarningCount] = useState(0);
   const [closingAll, setClosingAll] = useState(false);
   // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
   // cleanup has settled, so nothing can be reopened under its own cleanup.
@@ -1688,6 +1689,12 @@ function App() {
   useEffect(() => {
     const window = getCurrentWindow();
     const closing = window.onCloseRequested(async (event) => {
+      const running = sessionsRef.current.filter((session) => session.running).length;
+      if (running) {
+        event.preventDefault();
+        setCloseWarningCount(running);
+        return;
+      }
       const cleanups = [...pendingCleanups.current];
       if (!cleanups.length) return;
       event.preventDefault();
@@ -3380,6 +3387,31 @@ function App() {
                   <Button onClick={() => void checkForUpdates()}>Try again</Button>
                 </DialogFooter>
               ) : null}
+            </DialogContent>
+          </Dialog>
+          <Dialog open={closeWarningCount > 0} onOpenChange={(open) => !open && setCloseWarningCount(0)}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Close Lite?</DialogTitle>
+                <DialogDescription>
+                  {closeWarningCount} running {closeWarningCount === 1 ? "session will" : "sessions will"} stop. You can
+                  resume {closeWarningCount === 1 ? "it" : "them"} next time.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setCloseWarningCount(0)}>
+                  Keep Lite open
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={async () => {
+                    await Promise.all([...pendingCleanups.current].map((cleanup) => cleanup()));
+                    await getCurrentWindow().destroy();
+                  }}
+                >
+                  Close Lite
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
           <Dialog
