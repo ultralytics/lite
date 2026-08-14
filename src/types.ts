@@ -3,6 +3,7 @@
 // A harness runs the session; a model provider bills it. Codex can run against multiple providers.
 export type Agent = "claude" | "codex" | "gemini" | "kimi" | "qwen" | "shell";
 export type ModelProvider = "openai" | "deepseek" | "openrouter";
+type Model = "deepseek-v4-flash" | "deepseek-v4-pro";
 
 export interface Session {
   id: string;
@@ -11,6 +12,7 @@ export interface Session {
   createdAt?: number;
   agent: Agent;
   provider?: ModelProvider;
+  model?: Model;
   // A sign-in session runs the provider's own login command; it is never stored or resumed.
   mode?: "login";
   name: string;
@@ -47,7 +49,9 @@ export function providerLabel(provider: ModelProvider): string {
   return providerLabels[provider];
 }
 
-export function sessionLabel({ agent, provider }: Pick<Session, "agent" | "provider">): string {
+export function sessionLabel({ agent, model, provider }: Pick<Session, "agent" | "model" | "provider">): string {
+  if (model === "deepseek-v4-flash") return "Codex · DeepSeek Flash";
+  if (model === "deepseek-v4-pro") return "Codex · DeepSeek Pro";
   if (agent === "codex" && provider && provider !== "openai") return `Codex · ${providerLabels[provider]}`;
   return agentLabels[agent];
 }

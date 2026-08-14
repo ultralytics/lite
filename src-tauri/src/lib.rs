@@ -39,6 +39,7 @@ const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
+const DEEPSEEK_MODELS: [&str; 2] = [DEEPSEEK_MODEL, "deepseek-v4-pro"];
 const SUPPORTED_KEYS: [&str; 6] = [
     "claude",
     "codex",
@@ -2090,73 +2091,85 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
         .filter(|output| output.status.success())?;
     let mut catalog: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
     let models = catalog.get_mut("models")?.as_array_mut()?;
-    if models
-        .iter()
-        .any(|model| model.get("slug").and_then(serde_json::Value::as_str) == Some(DEEPSEEK_MODEL))
-    {
-        return None;
-    }
-    let mut model = models.first()?.clone();
-    let entry = model.as_object_mut()?;
-    for (key, value) in [
-        ("slug", serde_json::json!(DEEPSEEK_MODEL)),
-        ("display_name", serde_json::json!("DeepSeek-V4-Flash")),
+    let template = models.first()?.clone();
+    let mut changed = false;
+    for (slug, display_name, description) in [
         (
-            "description",
-            serde_json::json!("DeepSeek V4 Flash, served by the DeepSeek API."),
-        ),
-        ("context_window", serde_json::json!(1_048_576)),
-        ("max_context_window", serde_json::json!(1_048_576)),
-        ("default_reasoning_level", serde_json::json!("high")),
-        ("visibility", serde_json::json!("hide")),
-        ("input_modalities", serde_json::json!(["text"])),
-        // Capabilities and cache keys that belong to the model this entry was cloned from.
-        ("comp_hash", serde_json::Value::Null),
-        ("availability_nux", serde_json::Value::Null),
-        ("upgrade", serde_json::Value::Null),
-        ("tool_mode", serde_json::Value::Null),
-        ("multi_agent_version", serde_json::Value::Null),
-        ("use_responses_lite", serde_json::json!(false)),
-        ("supports_search_tool", serde_json::json!(false)),
-        ("support_verbosity", serde_json::json!(false)),
-        ("default_verbosity", serde_json::Value::Null),
-        ("supports_image_detail_original", serde_json::json!(false)),
-        (
-            "supports_reasoning_summary_parameter",
-            serde_json::json!(false),
-        ),
-        ("default_reasoning_summary", serde_json::json!("none")),
-        ("web_search_tool_type", serde_json::json!("text")),
-        (
-            "include_skills_usage_instructions",
-            serde_json::json!(false),
+            DEEPSEEK_MODEL,
+            "DeepSeek-V4-Flash",
+            "DeepSeek V4 Flash, served by the DeepSeek API.",
         ),
         (
-            "include_plugin_usage_instructions",
-            serde_json::json!(false),
+            DEEPSEEK_MODELS[1],
+            "DeepSeek-V4-Pro",
+            "DeepSeek V4 Pro, served by the DeepSeek API.",
         ),
-        ("include_apps_usage_instructions", serde_json::json!(false)),
-        // DeepSeek documents parallel tool calls, and the entry states that rather than inheriting it.
-        ("supports_parallel_tool_calls", serde_json::json!(true)),
-        ("additional_speed_tiers", serde_json::json!([])),
-        ("service_tiers", serde_json::json!([])),
     ] {
-        if entry.contains_key(key) {
-            entry.insert(key.to_owned(), value);
+        if models
+            .iter()
+            .any(|model| model.get("slug").and_then(serde_json::Value::as_str) == Some(slug))
+        {
+            continue;
         }
+        let mut model = template.clone();
+        let entry = model.as_object_mut()?;
+        for (key, value) in [
+            ("slug", serde_json::json!(slug)),
+            ("display_name", serde_json::json!(display_name)),
+            ("description", serde_json::json!(description)),
+            ("context_window", serde_json::json!(1_048_576)),
+            ("max_context_window", serde_json::json!(1_048_576)),
+            ("default_reasoning_level", serde_json::json!("high")),
+            ("visibility", serde_json::json!("hide")),
+            ("input_modalities", serde_json::json!(["text"])),
+            // Capabilities and cache keys that belong to the model this entry was cloned from.
+            ("comp_hash", serde_json::Value::Null),
+            ("availability_nux", serde_json::Value::Null),
+            ("upgrade", serde_json::Value::Null),
+            ("tool_mode", serde_json::Value::Null),
+            ("multi_agent_version", serde_json::Value::Null),
+            ("use_responses_lite", serde_json::json!(false)),
+            ("supports_search_tool", serde_json::json!(false)),
+            ("support_verbosity", serde_json::json!(false)),
+            ("default_verbosity", serde_json::Value::Null),
+            ("supports_image_detail_original", serde_json::json!(false)),
+            (
+                "supports_reasoning_summary_parameter",
+                serde_json::json!(false),
+            ),
+            ("default_reasoning_summary", serde_json::json!("none")),
+            ("web_search_tool_type", serde_json::json!("text")),
+            (
+                "include_skills_usage_instructions",
+                serde_json::json!(false),
+            ),
+            (
+                "include_plugin_usage_instructions",
+                serde_json::json!(false),
+            ),
+            ("include_apps_usage_instructions", serde_json::json!(false)),
+            // DeepSeek documents parallel tool calls, and the entry states that rather than inheriting it.
+            ("supports_parallel_tool_calls", serde_json::json!(true)),
+            ("additional_speed_tiers", serde_json::json!([])),
+            ("service_tiers", serde_json::json!([])),
+        ] {
+            if entry.contains_key(key) {
+                entry.insert(key.to_owned(), value);
+            }
+        }
+        // Reasoning levels describe DeepSeek, not the model this entry was cloned from.
+        entry.insert(
+            "supported_reasoning_levels".to_owned(),
+            serde_json::json!([
+                {"effort": "low", "description": "Fast responses with lighter reasoning"},
+                {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+                {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"},
+            ]),
+        );
+        models.push(model);
+        changed = true;
     }
-    // Reasoning levels describe the provider, not the model this entry was cloned from, so they are
-    // stated rather than inherited: DeepSeek documents these three and a template missing one of them
-    // would otherwise leave it unreachable.
-    entry.insert(
-        "supported_reasoning_levels".to_owned(),
-        serde_json::json!([
-            {"effort": "low", "description": "Fast responses with lighter reasoning"},
-            {"effort": "high", "description": "Greater reasoning depth for complex problems"},
-            {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"},
-        ]),
-    );
-    models.push(model);
+    changed.then_some(())?;
     let path = app.path().app_data_dir().ok()?.join("codex-models.json");
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).ok()?;
@@ -2692,6 +2705,7 @@ fn agent_command(
     app: &AppHandle,
     agent: &str,
     provider: Option<&str>,
+    model: Option<&str>,
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
@@ -2717,6 +2731,9 @@ fn agent_command(
             command.args(["-c", r#"tui.notification_condition="always""#]);
             // Providers are selected per launch so the user's default Codex provider stays untouched.
             if let Some(provider) = codex_provider(provider) {
+                let model = model
+                    .filter(|model| provider.id == "deepseek" && DEEPSEEK_MODELS.contains(model))
+                    .unwrap_or(provider.model);
                 let key = saved_api_key(app, agent, Some(provider.id)).is_some();
                 if !key && codex_profile_exists(app, provider.id) {
                     // A profile the user wrote owns the whole model configuration, catalog included.
@@ -2741,7 +2758,6 @@ fn agent_command(
                         }
                     }
                     command.args(["-c", &format!("model_provider=\"{}\"", provider.id)]);
-                    command.args(["-c", &format!("model=\"{}\"", provider.model)]);
                     if let Some(catalog) = (provider.id == "deepseek"
                         && !codex_declares_catalog(app))
                     .then(|| deepseek_catalog(app))
@@ -2754,6 +2770,7 @@ fn agent_command(
                         command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
                     }
                 }
+                command.args(["-c", &format!("model=\"{model}\"")]);
             }
             if let Some(provider_session_id) = provider_session_id {
                 command.args(["resume", provider_session_id]);
@@ -3170,6 +3187,7 @@ async fn spawn_session(
     mut provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
+    model: Option<String>,
     mode: Option<String>,
     theme: Option<String>,
     resume: bool,
@@ -3294,6 +3312,7 @@ async fn spawn_session(
             &app,
             &agent,
             provider.as_deref(),
+            model.as_deref(),
             resume,
             &session_id,
             provider_session_id.as_deref(),
