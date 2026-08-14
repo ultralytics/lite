@@ -22,7 +22,7 @@ Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claud
 ## ✨ 功能
 
 - 并排运行 Claude Code、Codex、Kimi Code 和 shell 会话
-- 当 Codex 配置提供该模型时，通过 Codex 使用 DeepSeek
+- 通过 Codex 使用 DeepSeek V4 Flash 或 Pro
 - 关闭 Lite 或重启电脑后，会话标签自动恢复
 - 每个 provider 只需登录一次，之后复用其已有的本地凭据
 - 也可以在 Lite 中为每个 provider 保存 API key，完全跳过登录流程
@@ -83,10 +83,10 @@ chmod +x Lite_*_linux_amd64.AppImage
   <img src="https://github.com/user-attachments/assets/2955ffef-6003-43d1-a5c0-51c58e2612c9" width="100%" alt="在 Lite 中保存 provider API key">
 </div>
 
-**Codex · DeepSeek** 使用 Codex 作为 harness，但把请求发往 DeepSeek 而不是 OpenAI。在 Lite 中保存 DeepSeek key 即可——Lite 只会为该次启动定义这个 provider。如果你想自己配置，请使用你自己的 [Codex 配置](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)；在 `$CODEX_HOME` 中放一个 `deepseek.config.toml` profile 最为干净：
+**Codex · DeepSeek** 使用 Codex 作为 harness，通过 OpenAI Responses API 运行 DeepSeek V4 Flash 或 Pro。在 Lite 中保存 DeepSeek key 即可——Lite 只会为该次启动定义这个 provider。如果你想自己配置，请使用你自己的 [Codex 配置](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)；在 `$CODEX_HOME` 中放一个 `deepseek.config.toml` profile 最为干净：
 
 ```toml
-model = "deepseek-v4-flash"
+model = "deepseek-v4-flash" # 或使用能力最强的 "deepseek-v4-pro"
 model_provider = "deepseek"
 
 [model_providers.deepseek]
