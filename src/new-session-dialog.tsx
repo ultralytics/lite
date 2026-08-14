@@ -261,18 +261,16 @@ export function NewSessionDialog({
           return;
         }
       }
-      // A name the user gave at creation is theirs, so it is marked renamed and no window title
-      // or first prompt replaces it, the same as a rename from the sidebar would.
-      const project = title.trim() || defaultSessionName(folder.path);
+      const name = title.trim();
       onCreate({
         id: crypto.randomUUID(),
         agent: choice.agent,
         provider: choice.provider,
         cwd: folder.path,
         rootId: folder.id,
-        name: project,
+        name: name || defaultSessionName(folder.path),
         running: false,
-        renamed: Boolean(title.trim()),
+        renamed: Boolean(name),
         worktree,
         repo: root || undefined,
       });
@@ -406,12 +404,12 @@ export function NewSessionDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="session-title" className={SECTION}>
-                Session name
+                Session name (optional)
               </Label>
               <Input
                 id="session-title"
                 value={title}
-                placeholder="Name the session, or leave it to name itself…"
+                placeholder="Name this session…"
                 name="session-title"
                 autoComplete="off"
                 onChange={(event) => setTitle(event.target.value)}
@@ -422,7 +420,7 @@ export function NewSessionDialog({
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <Label htmlFor="new-worktree" className={SECTION}>
-                      Worktree
+                      Worktree (optional)
                     </Label>
                     <p className="text-xs text-muted-foreground">
                       {sharing
