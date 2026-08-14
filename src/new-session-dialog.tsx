@@ -404,7 +404,10 @@ export function NewSessionDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="session-title" className={SECTION}>
-                Session name (optional)
+                Session name{" "}
+                <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
+                  Optional
+                </span>
               </Label>
               <Input
                 id="session-title"
@@ -420,7 +423,10 @@ export function NewSessionDialog({
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0">
                     <Label htmlFor="new-worktree" className={SECTION}>
-                      Worktree (optional)
+                      Worktree{" "}
+                      <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
+                        Optional
+                      </span>
                     </Label>
                     <p className="text-xs text-muted-foreground">
                       {sharing
