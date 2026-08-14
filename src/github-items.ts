@@ -41,7 +41,11 @@ export function githubItemUrls(output: string): string[] {
   for (const match of text.matchAll(GH_ITEM_COMMAND)) {
     const repositoryMatch = match[2].match(GH_REPOSITORY);
     const repository = repositoryMatch?.slice(2).find(Boolean);
-    const number = match[2].replace(GH_REPOSITORY, "$1").match(/^\s+([1-9]\d{0,8})(?![\w.])/)?.[1];
+    const numbers = match[2]
+      .replace(GH_REPOSITORY, "$1")
+      .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "")
+      .match(/(?:^|\s)([1-9]\d{0,8})(?=\s|$)/g);
+    const number = numbers?.length === 1 ? numbers[0].trim() : "";
     if (repository && number) add(match, repository, match[1].toLowerCase() === "pr" ? "pull" : "issues", number, 2);
   }
   for (const match of text.matchAll(GH_API)) {

@@ -30,6 +30,7 @@ ultralytics/portal#3608
 ultralytics/assistant issue #3052
 gh pr checks 97 --repo ultralytics/lite
 gh issue close -R=ultralytics/portal 3497
+gh pr view --json number -R ultralytics/lite 94
 gh api repos/ultralytics/assistant/pulls/3048
 `;
 
@@ -39,6 +40,7 @@ gh api repos/ultralytics/assistant/pulls/3048
       "https://github.com/ultralytics/assistant/issues/3052",
       "https://github.com/ultralytics/lite/pull/97",
       "https://github.com/ultralytics/portal/issues/3497",
+      "https://github.com/ultralytics/lite/pull/94",
       "https://github.com/ultralytics/assistant/pull/3048",
     ]);
   });
@@ -50,6 +52,7 @@ gh pr view 102
 gh issue close 3052
 gh pr list --repo ultralytics/lite
 gh pr create --repo ultralytics/lite
+gh pr checks --interval 10 102 --repo ultralytics/lite
 Image #1
 src/components/ui/button.tsx:102
 https://github.com/ultralytics/lite/pull/0
