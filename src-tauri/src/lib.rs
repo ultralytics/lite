@@ -592,7 +592,9 @@ fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
 // entry itself: following a symlink here would delete its target instead of the link the user chose.
 fn scoped_entry(root: &Path, path: &str) -> Result<PathBuf, String> {
     let path = Path::new(path);
-    let name = path.file_name().ok_or("Path is not a file")?;
+    let Some(std::path::Component::Normal(name)) = path.components().next_back() else {
+        return Err("Path is outside the selected folder".into());
+    };
     let parent = path.parent().ok_or("Path is outside the selected folder")?;
     let parent = fs::canonicalize(parent).map_err(|error| error.to_string())?;
     if !parent.starts_with(root) {
@@ -601,11 +603,35 @@ fn scoped_entry(root: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(parent.join(name))
 }
 
-fn remove_entry(path: &Path) -> Result<(), String> {
+fn contains_sensitive_entry(path: &Path) -> Result<bool, String> {
+    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if is_sensitive_component(&entry.file_name()) {
+            return Ok(true);
+        }
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+            && contains_sensitive_entry(&entry.path())?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn remove_entry(root: &Path, path: &Path) -> Result<(), String> {
+    if is_sensitive_path(root, path) {
+        return Err("Sensitive files and folders cannot be deleted from Lite".into());
+    }
     let file_type = fs::symlink_metadata(path)
         .map_err(|error| error.to_string())?
         .file_type();
     if file_type.is_dir() {
+        if contains_sensitive_entry(path)? {
+            return Err("Folders containing sensitive files cannot be deleted from Lite".into());
+        }
         fs::remove_dir_all(path).map_err(|error| error.to_string())
     } else if file_type.is_file() || file_type.is_symlink() {
         fs::remove_file(path).map_err(|error| error.to_string())
@@ -3813,10 +3839,7 @@ async fn delete_entry(
 ) -> Result<(), String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_entry(&root, &path)?;
-    if is_sensitive_path(&root, &path) {
-        return Err("Sensitive files and folders cannot be deleted from Lite".into());
-    }
-    remove_entry(&path)
+    remove_entry(&root, &path)
 }
 
 fn bounded_git_changes(
@@ -5296,9 +5319,33 @@ mod tests {
         fs::create_dir_all(directory.join("nested")).unwrap();
         fs::write(directory.join("nested/file.txt"), "delete").unwrap();
 
-        remove_entry(&directory).unwrap();
+        remove_entry(directory.parent().unwrap(), &directory).unwrap();
 
         assert!(!directory.exists());
+    }
+
+    #[test]
+    fn remove_entry_preserves_sensitive_descendants() {
+        let directory =
+            std::env::temp_dir().join(format!("lite-delete-directory-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("nested")).unwrap();
+        fs::write(directory.join("nested/.env"), "keep").unwrap();
+
+        assert!(remove_entry(directory.parent().unwrap(), &directory).is_err());
+        assert!(directory.join("nested/.env").exists());
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn scoped_entry_rejects_parent_segments() {
+        let root = std::env::temp_dir().join(format!("lite-scoped-entry-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("child")).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+
+        assert!(scoped_entry(&root, &path_text(&root.join("child/.."))).is_err());
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(not(windows))]
