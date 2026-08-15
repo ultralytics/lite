@@ -1080,12 +1080,14 @@ function UsagePanel({ session }: { session: Session }) {
 export function Inspector({
   session,
   remote,
+  fileBrowserVersion,
   collapsed,
   onExpand,
   onCollapse,
 }: {
   session: Session;
   remote: string;
+  fileBrowserVersion: number;
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
@@ -1199,7 +1201,7 @@ export function Inspector({
           </div>
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
-              <FilesPanel key={reload.files} root={session.cwd} rootId={session.rootId} />
+              <FilesPanel key={`${reload.files}-${fileBrowserVersion}`} root={session.cwd} rootId={session.rootId} />
             </TabsContent>
           ) : null}
           {visited.has("git") ? (

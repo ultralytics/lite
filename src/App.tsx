@@ -14,7 +14,6 @@ import {
   Copy,
   ExternalLink,
   GitBranch,
-  KeyRound,
   Link,
   Moon,
   MoreHorizontal,
@@ -25,6 +24,7 @@ import {
   RotateCcw,
   Scissors,
   Search,
+  Settings2,
   SquareTerminal,
   Sun,
   TextSelect,
@@ -927,6 +927,7 @@ function App() {
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
   const [closingAll, setClosingAll] = useState(false);
   // Bulk close is running: the dialog stays up and sessions stay untouched until every stop and
   // cleanup has settled, so nothing can be reopened under its own cleanup.
@@ -2136,8 +2137,8 @@ function App() {
                     </DropdownMenuGroup>
                   ) : null}
                   <DropdownMenuItem onClick={() => setSettingsOpen(true)}>
-                    <KeyRound />
-                    API keys
+                    <Settings2 />
+                    Settings
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => void checkForUpdates()}>
                     <RefreshCw />
@@ -2416,6 +2417,7 @@ function App() {
                       <Inspector
                         session={selected}
                         remote={remote}
+                        fileBrowserVersion={fileBrowserVersion}
                         collapsed={shut.inspector}
                         onExpand={() =>
                           glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size))
@@ -2705,7 +2707,12 @@ function App() {
             onCreate={createSession}
             sessions={sessions}
           />
-          <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} onSignIn={signIn} />
+          <SettingsDialog
+            open={settingsOpen}
+            onOpenChange={setSettingsOpen}
+            onSignIn={signIn}
+            onFileBrowserChange={() => setFileBrowserVersion((version) => version + 1)}
+          />
           <Toaster />
         </div>
       </AppContextMenu>

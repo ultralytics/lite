@@ -17,8 +17,19 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import { Item, ItemActions, ItemContent, ItemFooter, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import {
+  Item,
+  ItemActions,
+  ItemContent,
+  ItemDescription,
+  ItemFooter,
+  ItemGroup,
+  ItemMedia,
+  ItemTitle,
+} from "@/components/ui/item";
+import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import type { Agent } from "@/types";
 
@@ -29,12 +40,15 @@ export function SettingsDialog({
   open: isOpen,
   onOpenChange,
   onSignIn,
+  onFileBrowserChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSignIn: (agent: Agent) => void;
+  onFileBrowserChange: () => void;
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
+  const [showClaude, setShowClaude] = useState<boolean>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
@@ -42,7 +56,12 @@ export function SettingsDialog({
   const [error, setError] = useState("");
 
   const read = useCallback(async () => {
-    setAuth(await invoke<ProviderAuth[]>("provider_auth"));
+    const [nextAuth, nextShowClaude] = await Promise.all([
+      invoke<ProviderAuth[]>("provider_auth"),
+      invoke<boolean>("show_claude_folder"),
+    ]);
+    setAuth(nextAuth);
+    setShowClaude(nextShowClaude);
   }, []);
 
   useEffect(() => {
@@ -101,15 +120,26 @@ export function SettingsDialog({
     }
   }
 
+  async function changeShowClaude(show: boolean) {
+    setError("");
+    setBusy(".claude");
+    try {
+      await invoke("set_show_claude_folder", { show });
+      setShowClaude(show);
+      onFileBrowserChange();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>API keys</DialogTitle>
-          <DialogDescription>
-            Each row shows how new sessions sign in. API keys saved here stay on this computer and take priority over
-            provider sign-in.
-          </DialogDescription>
+          <DialogTitle>Settings</DialogTitle>
+          <DialogDescription>Manage local API keys and file browser access.</DialogDescription>
         </DialogHeader>
         <DialogBody>
           <ItemGroup>
@@ -202,6 +232,24 @@ export function SettingsDialog({
               );
             })}
           </ItemGroup>
+          <Item variant="outline" className="mt-4">
+            <ItemContent>
+              <ItemTitle>
+                <Label htmlFor="show-claude-folder">Show .claude folders</Label>
+              </ItemTitle>
+              <ItemDescription>
+                Allow the file browser to show and preview the project’s .claude folder.
+              </ItemDescription>
+            </ItemContent>
+            <ItemActions>
+              <Switch
+                id="show-claude-folder"
+                checked={showClaude ?? false}
+                disabled={showClaude === undefined || busy === ".claude"}
+                onCheckedChange={(show) => void changeShowClaude(show)}
+              />
+            </ItemActions>
+          </Item>
           {error ? (
             <p role="alert" className="mt-4 text-sm text-destructive">
               {error}

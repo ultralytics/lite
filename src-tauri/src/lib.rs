@@ -98,6 +98,18 @@ fn stop_pty(session: &mut PtySession) -> Result<(), String> {
 #[derive(Default)]
 struct Sessions(Mutex<HashMap<String, PtySession>>);
 
+struct FileBrowserSettings {
+    home: Option<PathBuf>,
+    show_claude: AtomicBool,
+}
+
+impl FileBrowserSettings {
+    fn project_claude_visible(&self, root: &Path) -> bool {
+        self.show_claude.load(Ordering::Relaxed)
+            && self.home.as_deref().is_some_and(|home| home != root)
+    }
+}
+
 #[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
 
@@ -250,6 +262,7 @@ fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
     name == ".env"
         || name.starts_with(".env.")
         || [
+            ".credentials.json",
             ".aws",
             ".azure",
             ".claude",
@@ -276,11 +289,14 @@ fn is_sensitive_root(path: &Path) -> bool {
         .any(|component| is_sensitive_component(component.as_os_str()))
 }
 
-fn is_sensitive_path(root: &Path, path: &Path) -> bool {
+fn is_sensitive_path_with_claude(root: &Path, path: &Path, show_claude: bool) -> bool {
     path.strip_prefix(root).is_ok_and(|relative| {
-        relative
-            .components()
-            .any(|component| is_sensitive_component(component.as_os_str()))
+        relative.components().enumerate().any(|(index, component)| {
+            is_sensitive_component(component.as_os_str())
+                && !(show_claude
+                    && index == 0
+                    && component.as_os_str().eq_ignore_ascii_case(".claude"))
+        })
     })
 }
 
@@ -320,6 +336,26 @@ fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| error.to_string())?
         .join("last-directory"))
+}
+
+fn show_claude_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("show-claude-folder"))
+}
+
+fn load_file_browser_settings(app: &AppHandle) -> FileBrowserSettings {
+    let home = app
+        .path()
+        .home_dir()
+        .ok()
+        .and_then(|home| fs::canonicalize(home).ok());
+    FileBrowserSettings {
+        home,
+        show_claude: AtomicBool::new(show_claude_path(app).is_ok_and(|path| path.is_file())),
+    }
 }
 
 fn read_roots(path: &Path) -> HashMap<String, PathBuf> {
@@ -3324,6 +3360,7 @@ fn delete_session_data(
 
 #[tauri::command]
 async fn list_directory(
+    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
@@ -3331,6 +3368,7 @@ async fn list_directory(
 ) -> Result<DirectoryListing, String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
+    let show_claude = settings.project_claude_visible(&root);
     let after = after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
     let mut page = BTreeMap::new();
     let mut has_more = false;
@@ -3344,7 +3382,7 @@ async fn list_directory(
             || name == "node_modules"
             || name == "target"
             || name == ".venv"
-            || is_sensitive_path(&root, &entry.path())
+            || is_sensitive_path_with_claude(&root, &entry.path(), show_claude)
         {
             continue;
         }
@@ -3381,13 +3419,14 @@ async fn list_directory(
 
 #[tauri::command]
 async fn read_text_file(
+    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
 ) -> Result<String, String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
-    if is_sensitive_path(&root, &path) {
+    if is_sensitive_path_with_claude(&root, &path, settings.project_claude_visible(&root)) {
         return Err("Sensitive files are hidden from preview".into());
     }
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
@@ -3399,6 +3438,27 @@ async fn read_text_file(
         return Err("Binary files cannot be previewed".into());
     }
     String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text".into())
+}
+
+#[tauri::command]
+fn show_claude_folder(settings: State<'_, FileBrowserSettings>) -> bool {
+    settings.show_claude.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_show_claude_folder(
+    app: AppHandle,
+    settings: State<'_, FileBrowserSettings>,
+    show: bool,
+) -> Result<(), String> {
+    let path = show_claude_path(&app)?;
+    if show {
+        write_atomic(&path, b"")?;
+    } else {
+        forget_record(&path)?;
+    }
+    settings.show_claude.store(show, Ordering::Relaxed);
+    Ok(())
 }
 
 fn bounded_git_lines(
@@ -4530,6 +4590,7 @@ pub fn run() {
             app.manage(load_roots(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
             app.manage(load_codex_server(app.handle())?);
+            app.manage(load_file_browser_settings(app.handle()));
             #[cfg(target_os = "macos")]
             describe_app(app.handle())?;
             Ok(())
@@ -4549,6 +4610,8 @@ pub fn run() {
             delete_session_data,
             list_directory,
             read_text_file,
+            show_claude_folder,
+            set_show_claude_folder,
             git_status,
             git_remote,
             git_repo,
@@ -4601,5 +4664,44 @@ mod tests {
             command.get_env("LC_CTYPE"),
             cfg!(target_os = "macos").then_some(OsStr::new("UTF-8"))
         );
+    }
+
+    #[test]
+    fn claude_folder_opt_in_keeps_credentials_hidden() {
+        let root = Path::new("/project");
+        let settings = FileBrowserSettings {
+            home: Some(PathBuf::from("/home/user")),
+            show_claude: AtomicBool::new(true),
+        };
+
+        assert!(settings.project_claude_visible(root));
+        assert!(
+            !FileBrowserSettings {
+                home: Some(root.to_owned()),
+                show_claude: AtomicBool::new(true),
+            }
+            .project_claude_visible(root)
+        );
+        assert!(is_sensitive_path_with_claude(
+            root,
+            Path::new("/project/.claude/settings.json"),
+            false
+        ));
+        assert!(!is_sensitive_path_with_claude(
+            root,
+            Path::new("/project/.claude/settings.json"),
+            true
+        ));
+        assert!(is_sensitive_path_with_claude(
+            root,
+            Path::new("/project/.claude/.credentials.json"),
+            true
+        ));
+        assert!(is_sensitive_path_with_claude(
+            root,
+            Path::new("/project/package/.claude/settings.json"),
+            true
+        ));
+        assert!(is_sensitive_root(Path::new("/project/.claude")));
     }
 }
