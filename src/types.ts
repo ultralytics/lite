@@ -11,6 +11,8 @@ export interface Session {
   createdAt?: number;
   agent: Agent;
   provider?: ModelProvider;
+  // Provider model chosen when the session was created; absent for providers that own model choice.
+  model?: string;
   // A sign-in session runs the provider's own login command; it is never stored or resumed.
   mode?: "login";
   name: string;

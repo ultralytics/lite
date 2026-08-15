@@ -2751,6 +2751,7 @@ fn agent_command(
     app: &AppHandle,
     agent: &str,
     provider: Option<&str>,
+    model: Option<&str>,
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
@@ -2777,9 +2778,22 @@ fn agent_command(
             // Providers are selected per launch so the user's default Codex provider stays untouched.
             if let Some(provider) = codex_provider(provider) {
                 let key = saved_api_key(app, agent, Some(provider.id)).is_some();
+                let model_selected = model.is_some();
+                let model = if provider.id == "deepseek" {
+                    match model {
+                        Some("deepseek-v4-pro") => "deepseek-v4-pro",
+                        _ => DEEPSEEK_MODEL,
+                    }
+                } else {
+                    provider.model
+                };
                 if !key && codex_profile_exists(app, provider.id) {
-                    // A profile the user wrote owns the whole model configuration, catalog included.
+                    // A profile the user wrote owns the provider and catalog; a model chosen for this
+                    // DeepSeek session still overrides its default without changing the profile.
                     command.args(["--profile", provider.id]);
+                    if provider.id == "deepseek" && model_selected {
+                        command.args(["-c", &format!("model=\"{model}\"")]);
+                    }
                 } else {
                     if key {
                         // A key held by Lite defines the provider inline and is read from the
@@ -2800,7 +2814,7 @@ fn agent_command(
                         }
                     }
                     command.args(["-c", &format!("model_provider=\"{}\"", provider.id)]);
-                    command.args(["-c", &format!("model=\"{}\"", provider.model)]);
+                    command.args(["-c", &format!("model=\"{model}\"")]);
                     if let Some(catalog) = (provider.id == "deepseek"
                         && !codex_declares_catalog(app))
                     .then(|| deepseek_catalog(app))
@@ -3229,6 +3243,7 @@ async fn spawn_session(
     mut provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
+    model: Option<String>,
     mode: Option<String>,
     theme: Option<String>,
     resume: bool,
@@ -3353,6 +3368,7 @@ async fn spawn_session(
             &app,
             &agent,
             provider.as_deref(),
+            model.as_deref(),
             resume,
             &session_id,
             provider_session_id.as_deref(),

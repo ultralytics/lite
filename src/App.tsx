@@ -2050,6 +2050,7 @@ function App() {
         providerSessionId: session.providerSessionId,
         agent: session.agent,
         provider: session.provider,
+        model: session.model,
         mode: session.mode,
         theme: themeRef.current,
         resume,
