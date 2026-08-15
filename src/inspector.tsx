@@ -516,21 +516,33 @@ function FileTree({
 
   const lowered = query.trim().toLowerCase();
 
-  async function deleteFile() {
+  async function deleteEntry() {
     if (!deleting) return;
     setDeleteBusy(true);
     setDeleteError("");
     try {
-      await invoke("delete_file", { rootId, path: deleting.path });
+      await invoke("delete_entry", { rootId, path: deleting.path });
       setChildren((current) => {
         const next = { ...current };
         for (const [path, listing] of Object.entries(next)) {
-          if (listing.entries.some((entry) => entry.path === deleting.path)) {
+          if (path === deleting.path || path.startsWith(`${deleting.path}/`) || path.startsWith(`${deleting.path}\\`))
+            delete next[path];
+          else if (listing.entries.some((entry) => entry.path === deleting.path))
             next[path] = { ...listing, entries: listing.entries.filter((entry) => entry.path !== deleting.path) };
-          }
         }
         return next;
       });
+      setExpanded(
+        (current) =>
+          new Set(
+            [...current].filter(
+              (path) =>
+                path !== deleting.path &&
+                !path.startsWith(`${deleting.path}/`) &&
+                !path.startsWith(`${deleting.path}\\`),
+            ),
+          ),
+      );
       setDeleting(undefined);
       setError("");
     } catch (reason) {
@@ -601,9 +613,8 @@ function FileTree({
                   onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
                   onKeyDown={(event) => {
                     if (
-                      entry.isDirectory ||
-                      (event.key !== "Delete" &&
-                        !(navigator.platform.includes("Mac") && event.metaKey && event.key === "Backspace"))
+                      event.key !== "Delete" &&
+                      !(navigator.platform.includes("Mac") && event.metaKey && event.key === "Backspace")
                     )
                       return;
                     event.preventDefault();
@@ -626,17 +637,15 @@ function FileTree({
                   )}
                   <span className="truncate">{entry.name}</span>
                 </button>
-                {!entry.isDirectory ? (
-                  <button
-                    type="button"
-                    hidden
-                    data-context-delete-file
-                    onClick={() => {
-                      setDeleteError("");
-                      setDeleting(entry);
-                    }}
-                  />
-                ) : null}
+                <button
+                  type="button"
+                  hidden
+                  data-context-delete-entry
+                  onClick={() => {
+                    setDeleteError("");
+                    setDeleting(entry);
+                  }}
+                />
               </div>
               {open ? rows(entry.path, depth + 1) : null}
             </div>
@@ -677,7 +686,10 @@ function FileTree({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Delete “{deleting?.name}”?</DialogTitle>
-            <DialogDescription>This permanently deletes the file from your computer.</DialogDescription>
+            <DialogDescription>
+              This permanently deletes the {deleting?.isDirectory ? "folder and its contents" : "file"} from your
+              computer.
+            </DialogDescription>
             {deleteError ? (
               <p role="alert" className="text-sm text-destructive">
                 {deleteError}
@@ -688,9 +700,9 @@ function FileTree({
             <Button variant="outline" disabled={deleteBusy} onClick={() => setDeleting(undefined)}>
               Cancel
             </Button>
-            <Button variant="destructive" disabled={deleteBusy} onClick={() => void deleteFile()}>
+            <Button variant="destructive" disabled={deleteBusy} onClick={() => void deleteEntry()}>
               {deleteBusy ? <Spinner /> : <Trash2 />}
-              {deleteBusy ? "Deleting…" : "Delete File"}
+              {deleteBusy ? "Deleting…" : `Delete ${deleting?.isDirectory ? "Folder" : "File"}`}
             </Button>
           </DialogFooter>
         </DialogContent>

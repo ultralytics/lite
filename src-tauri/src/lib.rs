@@ -601,6 +601,19 @@ fn scoped_entry(root: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(parent.join(name))
 }
 
+fn remove_entry(path: &Path) -> Result<(), String> {
+    let file_type = fs::symlink_metadata(path)
+        .map_err(|error| error.to_string())?
+        .file_type();
+    if file_type.is_dir() {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())
+    } else if file_type.is_file() || file_type.is_symlink() {
+        fs::remove_file(path).map_err(|error| error.to_string())
+    } else {
+        Err("Only files and folders can be deleted".into())
+    }
+}
+
 fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
     let name = component.to_string_lossy().to_lowercase();
     name == ".env"
@@ -3793,19 +3806,17 @@ async fn write_text_file(
 }
 
 #[tauri::command]
-async fn delete_file(roots: State<'_, Roots>, root_id: String, path: String) -> Result<(), String> {
+async fn delete_entry(
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+) -> Result<(), String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_entry(&root, &path)?;
     if is_sensitive_path(&root, &path) {
-        return Err("Sensitive files cannot be deleted from Lite".into());
+        return Err("Sensitive files and folders cannot be deleted from Lite".into());
     }
-    let file_type = fs::symlink_metadata(&path)
-        .map_err(|error| error.to_string())?
-        .file_type();
-    if !file_type.is_file() && !file_type.is_symlink() {
-        return Err("Only files can be deleted".into());
-    }
-    fs::remove_file(path).map_err(|error| error.to_string())
+    remove_entry(&path)
 }
 
 fn bounded_git_changes(
@@ -5199,7 +5210,7 @@ pub fn run() {
             list_directory,
             read_text_file,
             write_text_file,
-            delete_file,
+            delete_entry,
             git_status,
             git_diff,
             git_remote,
@@ -5276,6 +5287,18 @@ mod tests {
         let entry = scoped_entry(&root, link.to_str().unwrap()).unwrap();
         fs::remove_dir_all(base).unwrap();
         assert_eq!(entry, root.join("link.txt"));
+    }
+
+    #[test]
+    fn remove_entry_deletes_nonempty_directories() {
+        let directory =
+            std::env::temp_dir().join(format!("lite-delete-directory-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("nested")).unwrap();
+        fs::write(directory.join("nested/file.txt"), "delete").unwrap();
+
+        remove_entry(&directory).unwrap();
+
+        assert!(!directory.exists());
     }
 
     #[cfg(not(windows))]
