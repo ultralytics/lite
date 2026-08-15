@@ -20,6 +20,9 @@ import {
 import { type Theme, zoomStep } from "@/theme";
 import type { Agent } from "@/types";
 
+const SEARCH_HIGHLIGHT_LIMIT = 5000;
+const countFormat = new Intl.NumberFormat();
+
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
 const themes: Record<Theme, ITheme> = {
   light: {
@@ -148,6 +151,7 @@ export function TerminalView({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState({ resultIndex: -1, resultCount: 0 });
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
   const workingRef = useRef(working);
@@ -168,6 +172,8 @@ export function TerminalView({
     if (!container) return;
 
     const terminal = new Terminal({
+      // The official search addon uses xterm decorations to count and mark every match.
+      allowProposedApi: true,
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: fontSizeRef.current,
@@ -185,9 +191,10 @@ export function TerminalView({
     terminalRef.current = terminal;
     const fit = new FitAddon();
     terminal.loadAddon(fit);
-    const searchAddon = new SearchAddon();
+    const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
     searchAddonRef.current = searchAddon;
     terminal.loadAddon(searchAddon);
+    const searchResults = searchAddon.onDidChangeResults(setSearchResult);
     // Links go to the system browser, the way every other terminal handles them.
     terminal.loadAddon(
       new WebLinksAddon((event, url) => {
@@ -287,6 +294,7 @@ export function TerminalView({
     return () => {
       window.clearTimeout(settle);
       observer.disconnect();
+      searchResults.dispose();
       input.dispose();
       unsubscribe();
       parsed.dispose();
@@ -328,15 +336,28 @@ export function TerminalView({
     if (!searchAddon) return;
     if (!term) {
       searchAddon.clearDecorations();
+      setSearchResult({ resultIndex: -1, resultCount: 0 });
       return;
     }
-    searchAddon[previous ? "findPrevious" : "findNext"](term, { incremental });
+    const dark = themeRef.current === "dark";
+    searchAddon[previous ? "findPrevious" : "findNext"](term, {
+      incremental,
+      decorations: {
+        matchBackground: dark ? "#78350f" : "#fde68a",
+        matchBorder: dark ? "#fbbf24" : "#f59e0b",
+        matchOverviewRuler: "#f59e0b",
+        activeMatchBackground: dark ? "#c2410c" : "#fdba74",
+        activeMatchBorder: "#fb923c",
+        activeMatchColorOverviewRuler: "#f97316",
+      },
+    });
   }
 
   function closeSearch() {
     searchAddonRef.current?.clearDecorations();
     setSearchOpen(false);
     setSearchQuery("");
+    setSearchResult({ resultIndex: -1, resultCount: 0 });
     terminalRef.current?.focus();
   }
 
@@ -352,6 +373,12 @@ export function TerminalView({
       data-context-zoom
       className="relative h-full w-full bg-background p-3 pr-1.5"
       onKeyDownCapture={(event) => {
+        if (searchOpen && event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeSearch();
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
           event.preventDefault();
           event.stopPropagation();
@@ -382,16 +409,22 @@ export function TerminalView({
                 find(event.target.value, false, true);
               }}
               onKeyDown={(event) => {
-                if (event.key === "Escape") {
-                  event.stopPropagation();
-                  closeSearch();
-                } else if (event.key === "Enter") {
+                if (event.key === "Enter") {
                   event.preventDefault();
                   find(searchQuery, event.shiftKey);
                 }
               }}
             />
             <InputGroupAddon align="inline-end" className="gap-0 pr-1">
+              <span className="min-w-14 px-1 text-center text-xs tabular-nums" aria-live="polite" aria-atomic="true">
+                {searchResult.resultCount
+                  ? searchResult.resultIndex >= 0
+                    ? countFormat.format(searchResult.resultIndex + 1)
+                    : "–"
+                  : "0"}{" "}
+                / {countFormat.format(searchResult.resultCount)}
+                {searchResult.resultCount >= SEARCH_HIGHLIGHT_LIMIT ? "+" : ""}
+              </span>
               <InputGroupButton
                 size="icon-xs"
                 aria-label="Previous match"
