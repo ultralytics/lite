@@ -141,7 +141,7 @@ export function mergeGitHubItems<T extends { url: string }>(current: T[], update
   return [...items.values()];
 }
 
-function itemKey(url: string) {
+export function itemKey(url: string) {
   const [, , , owner, repository, , number] = url.split("/");
   return `${owner}/${repository}#${number}`.toLowerCase();
 }

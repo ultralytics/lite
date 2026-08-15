@@ -74,7 +74,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
+import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
 import { readTerminalInput, readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
@@ -1395,17 +1395,7 @@ function GitPanel({
   // User prose or an unqualified command first has to be confirmed as recent activity.
   useEffect(() => {
     const { explicit, inferred } = references;
-    const retained = sessionGitHubItems(sessionId);
-    const placeholders = explicit.map((url) => ({
-      url,
-      title: null,
-      state: null,
-      occurredAt: null,
-      updatedAt: null,
-      additions: null,
-      deletions: null,
-    }));
-    const visible = retainGitHubItems(sessionId, mergeGitHubItems(placeholders, retained));
+    const visible = sessionGitHubItems(sessionId);
     const urls = mergeGitHubItems(
       visible,
       [...explicit, ...inferred].map((url) => ({ url })),
@@ -1416,16 +1406,11 @@ function GitPanel({
     void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
         if (!disposed) {
-          const known = new Set(
-            visible.map((item) =>
-              `${githubReference(item.url).repository}#${githubReference(item.url).number}`.toLowerCase(),
-            ),
+          const known = new Set(visible.map((item) => itemKey(item.url)));
+          const unconfirmed = inferred.filter((url) => !known.has(itemKey(url)));
+          const updates = likelyGitHubItems(checked, unconfirmed).filter(
+            (item) => item.title !== null || !known.has(itemKey(item.url)),
           );
-          const unconfirmed = inferred.filter((url) => {
-            const reference = githubReference(url);
-            return !known.has(`${reference.repository}#${reference.number}`.toLowerCase());
-          });
-          const updates = likelyGitHubItems(checked, unconfirmed).filter((item) => item.title !== null);
           setItems(retainGitHubItems(sessionId, updates));
         }
       })
@@ -1470,10 +1455,10 @@ function GitPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if ((status !== undefined || error) && items !== undefined) onLoad("git");
-  }, [error, items, onLoad, status]);
+    if (status !== undefined || error) onLoad("git");
+  }, [error, onLoad, status]);
 
-  const repositories = repositoryGroups(remote, status ?? null, items ?? []);
+  const repositories = repositoryGroups(remote, status ?? null, items);
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
   // repository's own name — and drops the cards left holding nothing.
   const lowered = query.trim().toLowerCase();
@@ -1517,13 +1502,10 @@ function GitPanel({
                 onOpenDiff={(path) => void openDiff(path)}
               />
             ))}
-            {lowered && status !== undefined && items && repositories.length && !shown.length ? (
+            {lowered && status !== undefined && repositories.length && !shown.length ? (
               <p className="text-sm text-muted-foreground">No matches</p>
             ) : null}
-            {items === undefined && (references.explicit.length || references.inferred.length) ? (
-              <Loading label="Checking GitHub links…" />
-            ) : null}
-            {status === null && items && !repositories.length ? (
+            {status === null && !repositories.length ? (
               <Empty>
                 <EmptyHeader>
                   <EmptyDescription>

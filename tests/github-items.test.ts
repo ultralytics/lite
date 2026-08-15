@@ -212,7 +212,7 @@ The agent also discussed ultralytics/portal PR #3612.`,
 
   test("keeps session items while refreshing mutable GitHub fields", () => {
     const current = [
-      { url: "https://github.com/ultralytics/lite/pull/107", title: "Old", state: "open" },
+      { url: "https://github.com/ultralytics/lite/issues/107", title: "Old", state: "open" },
       { url: "https://github.com/ultralytics/lite/issues/99", title: "Kept", state: "open" },
     ];
     const updates = [
