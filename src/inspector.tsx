@@ -46,6 +46,7 @@ import {
   lazy,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type Ref,
   Suspense,
   useCallback,
   useEffect,
@@ -377,10 +378,12 @@ function SearchInput({
   value,
   placeholder,
   onChange,
+  inputRef,
 }: {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   return (
     <div className="shrink-0 p-2">
@@ -389,6 +392,7 @@ function SearchInput({
           <Search />
         </InputGroupAddon>
         <InputGroupInput
+          ref={inputRef}
           value={value}
           placeholder={placeholder}
           aria-label={placeholder}
@@ -1020,11 +1024,13 @@ function FilesPanel({
   rootId,
   sessionId,
   fontSize,
+  searchRef,
 }: {
   root: string;
   rootId: string;
   sessionId: string;
   fontSize: number;
+  searchRef: Ref<HTMLInputElement>;
 }) {
   const [cached] = useState(() => {
     const current = fileEditorsBySession.get(sessionId);
@@ -1118,7 +1124,7 @@ function FilesPanel({
         />
       ) : null}
       <div data-context-files className={`min-h-0 flex-1 flex-col ${selected ? "hidden" : "flex"}`}>
-        <SearchInput value={query} placeholder="Search files" onChange={setQuery} />
+        <SearchInput inputRef={searchRef} value={query} placeholder="Search files" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
           <div style={contentZoomStyle(fontSize)}>
             <FileTree key={rootId} root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
@@ -1292,12 +1298,14 @@ function GitPanel({
   remote,
   active,
   fontSize,
+  searchRef,
 }: {
   rootId: string;
   sessionId: string;
   remote: string;
   active: boolean;
   fontSize: number;
+  searchRef: Ref<HTMLInputElement>;
 }) {
   const [references, setReferences] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
@@ -1438,7 +1446,7 @@ function GitPanel({
         />
       ) : null}
       <div className={`min-h-0 flex-1 flex-col ${diffPath ? "hidden" : "flex"}`}>
-        <SearchInput value={query} placeholder="Search items" onChange={setQuery} />
+        <SearchInput inputRef={searchRef} value={query} placeholder="Search items" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-3 p-3" style={contentZoomStyle(fontSize)}>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -1595,6 +1603,8 @@ export function Inspector({
   onCollapse: () => void;
 }) {
   const [tab, setTab] = useState<string>(TABS[0].value);
+  const fileSearch = useRef<HTMLInputElement>(null);
+  const gitSearch = useRef<HTMLInputElement>(null);
   const [visited, setVisited] = useState(() => new Set<string>([TABS[0].value]));
   // A tab already names the panel it shows, so the panel does not name itself again. The refresh button
   // rebuilds whichever is open, and every explicit Files visit rebuilds that disk snapshot as well.
@@ -1656,7 +1666,19 @@ export function Inspector({
   return (
     <>
       {collapsed ? rail : null}
-      <div data-context-surface className={collapsed ? "hidden" : "h-full"}>
+      <div
+        data-context-surface
+        className={collapsed ? "hidden" : "h-full"}
+        onKeyDownCapture={(event) => {
+          if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+            const input = tab === "files" ? fileSearch.current : tab === "git" ? gitSearch.current : null;
+            if (!input?.offsetParent) return;
+            event.preventDefault();
+            input.focus();
+            input.select();
+          }
+        }}
+      >
         <Tabs value={tab} onValueChange={selectTab} className="h-full min-h-0 gap-0">
           <div className="flex h-11 shrink-0 items-center gap-0.5 border-b pr-3 pl-1.5">
             <ActionIconButton
@@ -1709,6 +1731,7 @@ export function Inspector({
                 rootId={session.rootId}
                 sessionId={session.id}
                 fontSize={fontSize}
+                searchRef={fileSearch}
               />
             </TabsContent>
           ) : null}
@@ -1721,6 +1744,7 @@ export function Inspector({
                 remote={remote}
                 active={tab === "git" && !collapsed}
                 fontSize={fontSize}
+                searchRef={gitSearch}
               />
             </TabsContent>
           ) : null}

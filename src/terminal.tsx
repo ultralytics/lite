@@ -2,11 +2,14 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
+import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
-import { useEffect, useRef } from "react";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import {
   connectTerminalOutput,
   MAX_OUTPUT_BYTES,
@@ -141,6 +144,11 @@ export function TerminalView({
   const zoomRef = useRef(onZoom);
   zoomRef.current = onZoom;
   const terminalRef = useRef<Terminal | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState({ resultIndex: 0, resultCount: 0 });
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
   const workingRef = useRef(working);
@@ -178,6 +186,10 @@ export function TerminalView({
     terminalRef.current = terminal;
     const fit = new FitAddon();
     terminal.loadAddon(fit);
+    const searchAddon = new SearchAddon();
+    searchAddonRef.current = searchAddon;
+    terminal.loadAddon(searchAddon);
+    const searchResults = searchAddon.onDidChangeResults(setSearchResult);
     // Links go to the system browser, the way every other terminal handles them.
     terminal.loadAddon(
       new WebLinksAddon((event, url) => {
@@ -277,12 +289,14 @@ export function TerminalView({
     return () => {
       window.clearTimeout(settle);
       observer.disconnect();
+      searchResults.dispose();
       input.dispose();
       unsubscribe();
       parsed.dispose();
       disconnectTerminalOutput();
       terminal.dispose();
       terminalRef.current = null;
+      searchAddonRef.current = null;
       resizeRef.current = () => undefined;
     };
   }, [sessionId]);
@@ -306,6 +320,39 @@ export function TerminalView({
     requestAnimationFrame(() => resizeRef.current());
   }, [fontSize]);
 
+  useEffect(() => {
+    if (!searchOpen) return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [searchOpen]);
+
+  function find(term: string, previous = false, incremental = false) {
+    const searchAddon = searchAddonRef.current;
+    if (!searchAddon) return;
+    if (!term) {
+      searchAddon.clearDecorations();
+      setSearchResult({ resultIndex: 0, resultCount: 0 });
+      return;
+    }
+    const dark = themeRef.current === "dark";
+    searchAddon[previous ? "findPrevious" : "findNext"](term, {
+      incremental,
+      decorations: {
+        matchBackground: dark ? "#1e3a5f" : "#dbeafe",
+        matchOverviewRuler: dark ? "#60a5fa" : "#2563eb",
+        activeMatchBackground: dark ? "#1d4ed8" : "#93c5fd",
+        activeMatchColorOverviewRuler: dark ? "#bfdbfe" : "#1d4ed8",
+      },
+    });
+  }
+
+  function closeSearch() {
+    searchAddonRef.current?.clearDecorations();
+    setSearchOpen(false);
+    setSearchResult({ resultIndex: 0, resultCount: 0 });
+    terminalRef.current?.focus();
+  }
+
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
   // and it only subtracts padding declared on the terminal's own element. Padding here would be
@@ -313,11 +360,76 @@ export function TerminalView({
   // them past the edge, which also left the last row below the viewport where the scrollbar could
   // neither show nor reach it.
   return (
-    <div data-context-session={sessionId} data-context-zoom className="h-full w-full bg-background p-3 pr-1.5">
+    <div
+      data-context-session={sessionId}
+      data-context-zoom
+      className="relative h-full w-full bg-background p-3 pr-1.5"
+      onKeyDownCapture={(event) => {
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+          event.preventDefault();
+          if (searchOpen) {
+            searchInputRef.current?.focus();
+            searchInputRef.current?.select();
+          } else setSearchOpen(true);
+        }
+      }}
+    >
       <button type="button" hidden data-context-zoom-in onClick={() => zoomRef.current(1)} />
       <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={() => terminalRef.current?.scrollToBottom()} />
+      {searchOpen ? (
+        <div className="absolute top-2 right-2 z-10 w-80 max-w-[calc(100%-1rem)] rounded-lg bg-background shadow-lg">
+          <InputGroup>
+            <InputGroupAddon>
+              <Search />
+            </InputGroupAddon>
+            <InputGroupInput
+              ref={searchInputRef}
+              value={searchQuery}
+              placeholder="Find in terminal"
+              aria-label="Find in terminal"
+              onChange={(event) => {
+                setSearchQuery(event.target.value);
+                find(event.target.value, false, true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.stopPropagation();
+                  closeSearch();
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  find(searchQuery, event.shiftKey);
+                }
+              }}
+            />
+            <InputGroupAddon align="inline-end" className="gap-0 pr-1 text-xs tabular-nums">
+              <span className="px-1">
+                {searchResult.resultCount ? `${searchResult.resultIndex + 1}/${searchResult.resultCount}` : "0/0"}
+              </span>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Previous match"
+                disabled={!searchQuery}
+                onClick={() => find(searchQuery, true)}
+              >
+                <ChevronUp />
+              </InputGroupButton>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Next match"
+                disabled={!searchQuery}
+                onClick={() => find(searchQuery)}
+              >
+                <ChevronDown />
+              </InputGroupButton>
+              <InputGroupButton size="icon-xs" aria-label="Close search" onClick={closeSearch}>
+                <X />
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+        </div>
+      ) : null}
       <div ref={containerRef} className="h-full w-full" />
     </div>
   );

@@ -1496,6 +1496,7 @@ function App() {
   const interrupted = useRef(new Set(working));
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
   const [query, setQuery] = useState("");
+  const sessionSearch = useRef<HTMLInputElement>(null);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState("");
@@ -2915,6 +2916,19 @@ function App() {
                 data-context-surface
                 data-zoom-panel="sidebar"
                 className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground"
+                onKeyDownCapture={(event) => {
+                  if (
+                    !shut.sidebar &&
+                    (event.metaKey || event.ctrlKey) &&
+                    !event.altKey &&
+                    !event.shiftKey &&
+                    event.key.toLowerCase() === "f"
+                  ) {
+                    event.preventDefault();
+                    sessionSearch.current?.focus();
+                    sessionSearch.current?.select();
+                  }
+                }}
               >
                 <PanelZoomControls
                   zoom={(step) => setSidebarFontSize((current) => zoomedFontSize(SIDEBAR_FONT_KEY, current, step))}
@@ -2982,6 +2996,7 @@ function App() {
                           <Search />
                         </InputGroupAddon>
                         <InputGroupInput
+                          ref={sessionSearch}
                           value={query}
                           placeholder="Search sessions"
                           aria-label="Search sessions"
