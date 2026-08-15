@@ -144,6 +144,13 @@ Reviewed PR 3612, pull request #3611, and issue 3497.`,
     });
   });
 
+  test("excludes sentence punctuation from a repository link", () => {
+    expect(githubItemReferences("See https://github.com/ultralytics/portal. Then review PR 3612.", "")).toEqual({
+      explicit: [],
+      inferred: ["https://github.com/ultralytics/portal/pull/3612"],
+    });
+  });
+
   test("keeps inferred items only when GitHub confirms activity in the last 30 days", () => {
     const inferred = [
       "https://github.com/ultralytics/portal/pull/102",

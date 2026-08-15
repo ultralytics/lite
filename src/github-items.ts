@@ -50,7 +50,10 @@ export function githubItemReferences(output: string, remote: string, terminalStr
   };
   const base = remote.match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i);
   const repositories = new Set<string>();
-  for (const match of text.matchAll(GITHUB_REPOSITORY)) repositories.add(`${match[1]}/${match[2]}`);
+  for (const match of text.matchAll(GITHUB_REPOSITORY)) {
+    const name = match[2].replace(/\.+$/, "").replace(/\.git$/i, "");
+    if (name) repositories.add(`${match[1]}/${name}`);
+  }
   const repository = base ? `${base[1]}/${base[2]}` : repositories.size === 1 ? [...repositories][0] : "";
 
   for (const match of text.matchAll(GITHUB_ITEM))

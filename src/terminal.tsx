@@ -92,7 +92,7 @@ function renderedOutput(terminal: Terminal) {
       const line = buffer.getLine(index);
       if (!line) continue;
       if (index && !line.isWrapped) text += "\n";
-      text += line.translateToString(true);
+      text += line.translateToString(true, 0, Math.min(line.length, terminal.cols));
     }
   }
   return text.slice(-MAX_OUTPUT_BYTES);
