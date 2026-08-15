@@ -21,6 +21,7 @@ const buffers = new Map<string, Buffer>();
 const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
 const terminalReaders = new Map<string, () => string>();
 const terminalSnapshots = new Map<string, string>();
+const terminalInputs = new Map<string, string>();
 const terminalListeners = new Map<string, Set<() => void>>();
 
 // Titles and working directories arrive whether or not the session is visible, so their shared OSC
@@ -168,6 +169,18 @@ export function readTerminalOutput(sessionId: string) {
   return terminalReaders.get(sessionId)?.() ?? terminalSnapshots.get(sessionId) ?? readTerminalStream(sessionId);
 }
 
+// User input is the provenance boundary for ambiguous prose. Agent text, command output, and restored
+// history may contain any number of unrelated PRs; only text the user submitted can resolve a bare
+// reference against this session's repository. Keep the same bound as terminal output.
+export function recordTerminalInput(sessionId: string, input: string) {
+  const current = terminalInputs.get(sessionId);
+  terminalInputs.set(sessionId, `${current ? `${current}\n` : ""}${input}`.slice(-MAX_OUTPUT_BYTES));
+}
+
+export function readTerminalInput(sessionId: string) {
+  return terminalInputs.get(sessionId) ?? "";
+}
+
 export function notifyTerminalOutput(sessionId: string) {
   for (const listener of terminalListeners.get(sessionId) ?? []) listener();
 }
@@ -183,6 +196,7 @@ export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
   terminalReaders.delete(sessionId);
   terminalSnapshots.delete(sessionId);
+  terminalInputs.delete(sessionId);
   terminalListeners.delete(sessionId);
   writes.delete(sessionId);
 }
