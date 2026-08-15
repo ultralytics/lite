@@ -471,7 +471,13 @@ function FileTree({
   );
 
   useEffect(() => {
-    void load(root).finally(() => onLoad("files"));
+    let mounted = true;
+    void load(root).finally(() => {
+      if (mounted) onLoad("files");
+    });
+    return () => {
+      mounted = false;
+    };
   }, [load, onLoad, root]);
 
   async function toggle(path: string) {

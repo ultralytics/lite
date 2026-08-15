@@ -408,8 +408,14 @@ export function TerminalView({
         ...themes[themeRef.current],
         selectionBackground: searchHighlights[themeRef.current].active,
       };
+    const current = desiredSearchResultRef.current;
     searchAddon[previous ? "findPrevious" : "findNext"](term, { ...searchOptions(themeRef.current), incremental });
-    if (searchResultRef.current.resultIndex >= 0) desiredSearchResultRef.current = searchResultRef.current.resultIndex;
+    const result = searchResultRef.current;
+    if (result.resultIndex >= 0) desiredSearchResultRef.current = result.resultIndex;
+    else if (result.resultCount)
+      desiredSearchResultRef.current = incremental
+        ? 0
+        : (current + (previous ? -1 : 1) + result.resultCount) % result.resultCount;
   }
 
   function closeSearch() {
