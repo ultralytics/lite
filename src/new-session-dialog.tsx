@@ -513,7 +513,7 @@ export function NewSessionDialog({
                   return (
                     <div
                       key={option.id}
-                      className={`relative min-w-0 ${active && deepseek ? "col-span-2 rounded-lg bg-secondary" : ""}`}
+                      className={`relative min-w-0 ${active && deepseek ? "rounded-lg bg-secondary" : ""}`}
                     >
                       <Button
                         type="button"
