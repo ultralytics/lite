@@ -30,7 +30,7 @@ const GH_REPOSITORY =
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
 
-export function githubItemReferences(output: string, remote: string): GitHubReferences {
+export function githubItemReferences(output: string, remote: string, terminalStream = ""): GitHubReferences {
   const text = output.replace(COLOR, "");
   const candidates: Candidate[] = [];
   const add = (
@@ -55,7 +55,9 @@ export function githubItemReferences(output: string, remote: string): GitHubRefe
 
   for (const match of text.matchAll(GITHUB_ITEM))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
-  for (const match of text.matchAll(QUALIFIED_ITEM)) add(match, `${match[1]}/${match[2]}`, "issues", match[3], 1, true);
+  for (const match of terminalStream.replace(COLOR, "").matchAll(GITHUB_ITEM))
+    add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
+  for (const match of text.matchAll(QUALIFIED_ITEM)) add(match, `${match[1]}/${match[2]}`, "issues", match[3], 1);
   const qualifiedMentions: [number, number][] = [];
   for (const match of text.matchAll(ITEM_MENTION)) {
     add(match, match[1], match[2].toLowerCase().startsWith("issue") ? "issues" : "pull", match[3], 2);

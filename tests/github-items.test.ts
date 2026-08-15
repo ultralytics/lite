@@ -39,13 +39,14 @@ gh api repos/ultralytics/assistant/pulls/3048
     expect(githubItemReferences(transcript, "")).toEqual({
       explicit: [
         "https://github.com/ultralytics/lite/pull/102",
+        "https://github.com/ultralytics/portal/issues/3608",
         "https://github.com/ultralytics/assistant/issues/3052",
         "https://github.com/ultralytics/lite/pull/97",
         "https://github.com/ultralytics/portal/issues/3497",
         "https://github.com/ultralytics/lite/pull/94",
         "https://github.com/ultralytics/assistant/pull/3048",
       ],
-      inferred: ["https://github.com/ultralytics/portal/issues/3608"],
+      inferred: [],
     });
   });
 
@@ -98,7 +99,7 @@ gh issue view 102 --repo ULTRALYTICS/LITE
       "\u001b[32mhttps://github.com/ultralytics/lite/issues/88\u001b[0m " +
       "\u001b]8;;https://github.com/ultralytics/lite/pull/90\u0007PR\u001b]8;;\u0007";
 
-    expect(explicit(transcript)).toEqual([
+    expect(githubItemReferences("PR", "", transcript).explicit).toEqual([
       "https://github.com/ultralytics/lite/issues/88",
       "https://github.com/ultralytics/lite/pull/90",
     ]);

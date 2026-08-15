@@ -76,7 +76,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { githubItemReferences, likelyGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
-import { readTerminalOutput, subscribeTerminalOutput } from "@/output-store";
+import { readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
 import { contentZoomStyle } from "@/theme";
 import {
   type DirectoryCursor,
@@ -93,7 +93,7 @@ import {
 const CodePreview = lazy(() => import("@/code-preview"));
 
 function namedInSession(sessionId: string, remote: string) {
-  return githubItemReferences(readTerminalOutput(sessionId), remote);
+  return githubItemReferences(readTerminalOutput(sessionId), remote, readTerminalStream(sessionId));
 }
 
 interface GitHubReference {
@@ -1305,9 +1305,14 @@ function GitPanel({
     const scan = () => {
       const next = namedInSession(sessionId, remote);
       setReferences((current) => {
-        const same = (key: keyof typeof next) =>
-          current[key].length === next[key].length && current[key].every((url, index) => url === next[key][index]);
-        return same("explicit") && same("inferred") ? current : next;
+        // Alternate-screen redraws can hide earlier conversation text, so an observed reference stays
+        // with this session until the user explicitly refreshes the panel.
+        const explicit = [...new Set([...current.explicit, ...next.explicit])];
+        const certain = new Set(explicit);
+        const inferred = [...new Set([...current.inferred, ...next.inferred])].filter((url) => !certain.has(url));
+        return explicit.length === current.explicit.length && inferred.length === current.inferred.length
+          ? current
+          : { explicit, inferred };
       });
     };
     const unsubscribe = subscribeTerminalOutput(sessionId, () => {
