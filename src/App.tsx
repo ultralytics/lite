@@ -341,7 +341,7 @@ type AppMenuContext = {
   collapsePanel: HTMLButtonElement | null;
   collapseSessions: HTMLButtonElement | null;
   directory: HTMLButtonElement | null;
-  deleteFile: HTMLButtonElement | null;
+  deleteEntry: HTMLButtonElement | null;
   editable: Editable | null;
   expandFiles: HTMLButtonElement | null;
   expandPanel: HTMLButtonElement | null;
@@ -363,7 +363,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   collapsePanel: null,
   collapseSessions: null,
   directory: null,
-  deleteFile: null,
+  deleteEntry: null,
   editable: null,
   expandFiles: null,
   expandPanel: null,
@@ -407,7 +407,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     collapsePanel: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-panel]") ?? null,
     collapseSessions: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-sessions]") ?? null,
     directory,
-    deleteFile: fileRow?.querySelector<HTMLButtonElement>("[data-context-delete-file]") ?? null,
+    deleteEntry: fileRow?.querySelector<HTMLButtonElement>("[data-context-delete-entry]") ?? null,
     editable,
     expandFiles: files?.querySelector<HTMLButtonElement>("[data-context-expand-files]") ?? null,
     expandPanel: surface?.querySelector<HTMLButtonElement>("[data-context-expand-panel]") ?? null,
@@ -587,12 +587,12 @@ function AppContextMenu({
             {context.valueLabel}
           </ContextMenuItem>
         ) : null}
-        {context.deleteFile ? (
+        {context.deleteEntry ? (
           <>
             <ContextMenuSeparator />
-            <ContextMenuItem variant="destructive" onClick={() => context.deleteFile?.click()}>
+            <ContextMenuItem variant="destructive" onClick={() => context.deleteEntry?.click()}>
               <Trash2 />
-              Delete File
+              Delete {context.directory ? "folder" : "file"}
             </ContextMenuItem>
           </>
         ) : null}
