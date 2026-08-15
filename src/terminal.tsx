@@ -148,7 +148,6 @@ export function TerminalView({
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [searchResult, setSearchResult] = useState({ resultIndex: 0, resultCount: 0 });
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
   const workingRef = useRef(working);
@@ -189,7 +188,6 @@ export function TerminalView({
     const searchAddon = new SearchAddon();
     searchAddonRef.current = searchAddon;
     terminal.loadAddon(searchAddon);
-    const searchResults = searchAddon.onDidChangeResults(setSearchResult);
     // Links go to the system browser, the way every other terminal handles them.
     terminal.loadAddon(
       new WebLinksAddon((event, url) => {
@@ -289,7 +287,6 @@ export function TerminalView({
     return () => {
       window.clearTimeout(settle);
       observer.disconnect();
-      searchResults.dispose();
       input.dispose();
       unsubscribe();
       parsed.dispose();
@@ -331,25 +328,15 @@ export function TerminalView({
     if (!searchAddon) return;
     if (!term) {
       searchAddon.clearDecorations();
-      setSearchResult({ resultIndex: 0, resultCount: 0 });
       return;
     }
-    const dark = themeRef.current === "dark";
-    searchAddon[previous ? "findPrevious" : "findNext"](term, {
-      incremental,
-      decorations: {
-        matchBackground: dark ? "#1e3a5f" : "#dbeafe",
-        matchOverviewRuler: dark ? "#60a5fa" : "#2563eb",
-        activeMatchBackground: dark ? "#1d4ed8" : "#93c5fd",
-        activeMatchColorOverviewRuler: dark ? "#bfdbfe" : "#1d4ed8",
-      },
-    });
+    searchAddon[previous ? "findPrevious" : "findNext"](term, { incremental });
   }
 
   function closeSearch() {
     searchAddonRef.current?.clearDecorations();
     setSearchOpen(false);
-    setSearchResult({ resultIndex: 0, resultCount: 0 });
+    setSearchQuery("");
     terminalRef.current?.focus();
   }
 
@@ -367,6 +354,7 @@ export function TerminalView({
       onKeyDownCapture={(event) => {
         if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
           event.preventDefault();
+          event.stopPropagation();
           if (searchOpen) {
             searchInputRef.current?.focus();
             searchInputRef.current?.select();
@@ -379,7 +367,7 @@ export function TerminalView({
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={() => terminalRef.current?.scrollToBottom()} />
       {searchOpen ? (
-        <div className="absolute top-2 right-2 z-10 w-80 max-w-[calc(100%-1rem)] rounded-lg bg-background shadow-lg">
+        <div className="absolute top-2 right-[6.5rem] z-10 w-72 max-w-[calc(100%-7rem)] rounded-lg bg-background shadow-lg">
           <InputGroup>
             <InputGroupAddon>
               <Search />
@@ -403,10 +391,7 @@ export function TerminalView({
                 }
               }}
             />
-            <InputGroupAddon align="inline-end" className="gap-0 pr-1 text-xs tabular-nums">
-              <span className="px-1">
-                {searchResult.resultCount ? `${searchResult.resultIndex + 1}/${searchResult.resultCount}` : "0/0"}
-              </span>
+            <InputGroupAddon align="inline-end" className="gap-0 pr-1">
               <InputGroupButton
                 size="icon-xs"
                 aria-label="Previous match"
