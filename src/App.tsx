@@ -3172,10 +3172,24 @@ function App() {
                     {selected.running ? (
                       <fieldset
                         aria-label="Session actions"
-                        className="absolute top-2 right-2 z-20 hidden items-center gap-0.5 rounded-lg bg-background/90 p-0.5 shadow-sm"
+                        className="absolute top-2 right-2 z-20 hidden items-center gap-0.5 rounded-lg bg-background/90 p-0.5 text-muted-foreground shadow-sm"
                         data-terminal-action
                         onMouseDown={(event) => event.preventDefault()}
                       >
+                        <ActionIconButton
+                          size="icon-sm"
+                          tooltip="Find in terminal"
+                          aria-label="Find in terminal"
+                          onClick={() =>
+                            document
+                              .querySelector<HTMLElement>(
+                                `[data-context-session="${CSS.escape(selected.id)}"] [data-terminal-search]`,
+                              )
+                              ?.click()
+                          }
+                        >
+                          <Search />
+                        </ActionIconButton>
                         <ActionIconButton
                           size="icon-sm"
                           tooltip="Scroll to bottom"

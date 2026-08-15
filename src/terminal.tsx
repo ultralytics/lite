@@ -421,6 +421,13 @@ export function TerminalView({
     terminalRef.current?.focus();
   }
 
+  function openSearch() {
+    if (searchOpen) {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    } else setSearchOpen(true);
+  }
+
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
   // and it only subtracts padding declared on the terminal's own element. Padding here would be
@@ -451,19 +458,17 @@ export function TerminalView({
         if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
           event.preventDefault();
           event.stopPropagation();
-          if (searchOpen) {
-            searchInputRef.current?.focus();
-            searchInputRef.current?.select();
-          } else setSearchOpen(true);
+          openSearch();
         }
       }}
     >
       <button type="button" hidden data-context-zoom-in onClick={() => zoomRef.current(1)} />
       <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
+      <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={() => terminalRef.current?.scrollToBottom()} />
       {searchOpen ? (
-        <div className="absolute top-2 right-[6.5rem] z-10 w-72 max-w-[calc(100%-7rem)] rounded-lg bg-background shadow-lg">
+        <div className="absolute top-2 right-[8.5rem] z-10 w-72 max-w-[calc(100%-9rem)] rounded-lg bg-background shadow-lg">
           <InputGroup>
             <InputGroupAddon>
               <Search />
