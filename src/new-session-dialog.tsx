@@ -25,8 +25,17 @@ import { defaultSessionName, type Session, sessionLabel } from "@/types";
 const choices = [...Object.values(AUTH_PROVIDERS), { id: "shell", agent: "shell" as const, provider: undefined }];
 const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 const CHOICE_KEY = "lite.newSession.choice.v1";
+const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
+const DEEPSEEK_REASONING_KEY = "lite.newSession.deepseekReasoning.v1";
 const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
+const DEEPSEEK_MODELS = [
+  { value: "deepseek-v4-flash", label: "Flash" },
+  { value: "deepseek-v4-pro", label: "Pro" },
+] as const;
+type DeepSeekModel = (typeof DEEPSEEK_MODELS)[number]["value"];
+const DEEPSEEK_REASONING = ["low", "high", "max"] as const;
+type DeepSeekReasoning = (typeof DEEPSEEK_REASONING)[number];
 
 let updateChecks: Promise<Record<string, boolean | null>> | undefined;
 
@@ -81,6 +90,14 @@ export function NewSessionDialog({
   const [choiceId, setChoiceId] = useState(() => {
     const stored = localStorage.getItem(CHOICE_KEY);
     return choices.find((option) => option.id === stored)?.id ?? choices[0].id;
+  });
+  const [deepseekModel, setDeepseekModel] = useState<DeepSeekModel>(() => {
+    const stored = localStorage.getItem(DEEPSEEK_MODEL_KEY);
+    return DEEPSEEK_MODELS.find(({ value }) => value === stored)?.value ?? DEEPSEEK_MODELS[0].value;
+  });
+  const [deepseekReasoning, setDeepseekReasoning] = useState<DeepSeekReasoning>(() => {
+    const stored = localStorage.getItem(DEEPSEEK_REASONING_KEY);
+    return DEEPSEEK_REASONING.find((effort) => effort === stored) ?? "high";
   });
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
@@ -269,6 +286,8 @@ export function NewSessionDialog({
         id: crypto.randomUUID(),
         agent: choice.agent,
         provider: choice.provider,
+        model: choice.provider === "deepseek" ? deepseekModel : undefined,
+        reasoningEffort: choice.provider === "deepseek" ? deepseekReasoning : undefined,
         cwd: folder.path,
         rootId: folder.id,
         name: name || defaultSessionName(folder.path),
@@ -483,6 +502,7 @@ export function NewSessionDialog({
               <div className="grid min-w-0 grid-cols-2 gap-2">
                 {choices.map((option) => {
                   const active = choiceId === option.id;
+                  const deepseek = option.id === "deepseek";
                   const state = availability[option.id];
                   const update = updates[option.agent];
                   const managed = option.agent !== "shell" && state && !state.installable;
@@ -499,12 +519,15 @@ export function NewSessionDialog({
                   const authProvider = "configured" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   return (
-                    <div key={option.id} className="relative min-w-0">
+                    <div
+                      key={option.id}
+                      className={`relative min-w-0 ${active && deepseek ? "rounded-lg bg-secondary" : ""}`}
+                    >
                       <Button
                         type="button"
                         size="lg"
-                        variant={active ? "secondary" : "outline"}
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"}`}
+                        variant={active && !deepseek ? "secondary" : active ? "ghost" : "outline"}
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && deepseek ? "rounded-b-none" : ""}`}
                         aria-pressed={active}
                         disabled={Boolean(installing)}
                         title={"note" in option ? option.note : sessionLabel(option)}
@@ -534,12 +557,67 @@ export function NewSessionDialog({
                           )}
                         </div>
                       </Button>
+                      {active && deepseek ? (
+                        <div className="space-y-1 border-t px-3 py-2">
+                          <div className="flex items-center">
+                            <span id="deepseek-model-label" className="text-xs font-medium text-muted-foreground">
+                              Model
+                            </span>
+                            <fieldset
+                              className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
+                              aria-labelledby="deepseek-model-label"
+                            >
+                              {DEEPSEEK_MODELS.map((model) => (
+                                <Button
+                                  key={model.value}
+                                  type="button"
+                                  size="xs"
+                                  variant={deepseekModel === model.value ? "secondary" : "ghost"}
+                                  aria-pressed={deepseekModel === model.value}
+                                  onClick={() => {
+                                    localStorage.setItem(DEEPSEEK_MODEL_KEY, model.value);
+                                    setDeepseekModel(model.value);
+                                  }}
+                                >
+                                  {model.label}
+                                </Button>
+                              ))}
+                            </fieldset>
+                          </div>
+                          <div className="flex items-center">
+                            <span id="deepseek-reasoning-label" className="text-xs font-medium text-muted-foreground">
+                              Thinking
+                            </span>
+                            <fieldset
+                              className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
+                              aria-labelledby="deepseek-reasoning-label"
+                            >
+                              {DEEPSEEK_REASONING.map((effort) => (
+                                <Button
+                                  key={effort}
+                                  type="button"
+                                  size="xs"
+                                  variant={deepseekReasoning === effort ? "secondary" : "ghost"}
+                                  className="capitalize"
+                                  aria-pressed={deepseekReasoning === effort}
+                                  onClick={() => {
+                                    localStorage.setItem(DEEPSEEK_REASONING_KEY, effort);
+                                    setDeepseekReasoning(effort);
+                                  }}
+                                >
+                                  {effort}
+                                </Button>
+                              ))}
+                            </fieldset>
+                          </div>
+                        </div>
+                      ) : null}
                       {action ? (
                         <ActionIconButton
                           type="button"
                           size="icon"
                           variant="outline"
-                          className="absolute top-1/2 right-2 -mt-4"
+                          className={`absolute right-2 ${active && deepseek ? "top-3" : "top-1/2 -mt-4"}`}
                           tooltip={
                             busy
                               ? `${action.working} ${sessionLabel(option)}…`

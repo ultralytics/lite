@@ -2,11 +2,14 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
+import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
-import { useEffect, useRef } from "react";
+import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import {
   connectTerminalOutput,
   MAX_OUTPUT_BYTES,
@@ -17,6 +20,25 @@ import {
 } from "@/output-store";
 import { type Theme, zoomStep } from "@/theme";
 import type { Agent } from "@/types";
+
+const SEARCH_HIGHLIGHT_LIMIT = 5000;
+const countFormat = new Intl.NumberFormat();
+const searchHighlights: Record<Theme, { match: string; active: string }> = {
+  light: { match: "#fff8c5", active: "#d4a72c" },
+  dark: { match: "#5a4314", active: "#9e6a03" },
+};
+
+function searchOptions(theme: Theme): ISearchOptions {
+  const highlights = searchHighlights[theme];
+  return {
+    decorations: {
+      matchBackground: highlights.match,
+      matchOverviewRuler: "#d4a72c",
+      activeMatchBackground: highlights.active,
+      activeMatchColorOverviewRuler: "#9a6700",
+    },
+  };
+}
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
 const themes: Record<Theme, ITheme> = {
@@ -142,6 +164,12 @@ export function TerminalView({
   const zoomRef = useRef(onZoom);
   zoomRef.current = onZoom;
   const terminalRef = useRef<Terminal | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState({ resultIndex: -1, resultCount: 0 });
+  const searchQueryRef = useRef("");
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
   const workingRef = useRef(working);
@@ -162,6 +190,8 @@ export function TerminalView({
     if (!container) return;
 
     const terminal = new Terminal({
+      // The official search addon uses xterm decorations to count and mark every match.
+      allowProposedApi: true,
       cursorBlink: true,
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: fontSizeRef.current,
@@ -179,6 +209,12 @@ export function TerminalView({
     terminalRef.current = terminal;
     const fit = new FitAddon();
     terminal.loadAddon(fit);
+    const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
+    searchAddonRef.current = searchAddon;
+    terminal.loadAddon(searchAddon);
+    const searchResults = searchAddon.onDidChangeResults((result) => {
+      setSearchResult(result);
+    });
     // Links go to the system browser, the way every other terminal handles them.
     terminal.loadAddon(
       new WebLinksAddon((event, url) => {
@@ -188,7 +224,26 @@ export function TerminalView({
     );
     terminal.open(container);
     const disconnectTerminalOutput = connectTerminalOutput(sessionId, () => renderedOutput(terminal));
-    const parsed = terminal.onWriteParsed(() => notifyTerminalOutput(sessionId));
+    // The addon waits for output to go quiet before rebuilding its result map, which a live TUI may
+    // never do. Refresh at a bounded rate while it writes; the addon's own timer handles the final pass.
+    let searchRefresh = 0;
+    const refreshSearch = () => {
+      const query = searchQueryRef.current;
+      if (!query) return;
+      // Clearing decorations leaves xterm's selection in place, so the addon rebuilds highlights and
+      // reselects that same match directly instead of replaying every earlier match.
+      searchAddon.clearDecorations();
+      searchAddon.findNext(query, { ...searchOptions(themeRef.current), incremental: true });
+    };
+    const parsed = terminal.onWriteParsed(() => {
+      notifyTerminalOutput(sessionId);
+      if (!searchQueryRef.current) return;
+      if (!searchRefresh)
+        searchRefresh = window.setTimeout(() => {
+          searchRefresh = 0;
+          refreshSearch();
+        }, 200);
+    });
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
     // Typing, pasting, and the terminal's own answers to the program's cursor, focus, and color
@@ -280,13 +335,16 @@ export function TerminalView({
 
     return () => {
       window.clearTimeout(settle);
+      window.clearTimeout(searchRefresh);
       observer.disconnect();
+      searchResults.dispose();
       input.dispose();
       unsubscribe();
       parsed.dispose();
       disconnectTerminalOutput();
       terminal.dispose();
       terminalRef.current = null;
+      searchAddonRef.current = null;
       resizeRef.current = () => undefined;
     };
   }, [sessionId]);
@@ -300,7 +358,17 @@ export function TerminalView({
   }, [starting]);
 
   useEffect(() => {
-    if (terminalRef.current) terminalRef.current.options.theme = themes[theme];
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const query = searchQueryRef.current;
+    terminal.options.theme = query
+      ? { ...themes[theme], selectionBackground: searchHighlights[theme].active }
+      : themes[theme];
+    const searchAddon = searchAddonRef.current;
+    if (query && searchAddon) {
+      searchAddon.clearDecorations();
+      searchAddon.findNext(query, { ...searchOptions(theme), incremental: true });
+    }
   }, [theme]);
 
   useEffect(() => {
@@ -310,6 +378,49 @@ export function TerminalView({
     requestAnimationFrame(() => resizeRef.current());
   }, [fontSize]);
 
+  useEffect(() => {
+    if (!searchOpen) return;
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }, [searchOpen]);
+
+  function find(term: string, previous = false, incremental = false) {
+    const searchAddon = searchAddonRef.current;
+    if (!searchAddon) return;
+    const terminal = terminalRef.current;
+    if (!term) {
+      searchAddon.clearDecorations();
+      if (terminal) terminal.options.theme = themes[themeRef.current];
+      const result = { resultIndex: -1, resultCount: 0 };
+      setSearchResult(result);
+      return;
+    }
+    if (terminal && terminal.options.theme?.selectionBackground === themes[themeRef.current].selectionBackground)
+      terminal.options.theme = {
+        ...themes[themeRef.current],
+        selectionBackground: searchHighlights[themeRef.current].active,
+      };
+    searchAddon[previous ? "findPrevious" : "findNext"](term, { ...searchOptions(themeRef.current), incremental });
+  }
+
+  function closeSearch() {
+    searchAddonRef.current?.clearDecorations();
+    if (terminalRef.current) terminalRef.current.options.theme = themes[themeRef.current];
+    setSearchOpen(false);
+    setSearchQuery("");
+    searchQueryRef.current = "";
+    const result = { resultIndex: -1, resultCount: 0 };
+    setSearchResult(result);
+    terminalRef.current?.focus();
+  }
+
+  function openSearch() {
+    if (searchOpen) {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    } else setSearchOpen(true);
+  }
+
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
   // and it only subtracts padding declared on the terminal's own element. Padding here would be
@@ -317,11 +428,97 @@ export function TerminalView({
   // them past the edge, which also left the last row below the viewport where the scrollbar could
   // neither show nor reach it.
   return (
-    <div data-context-session={sessionId} data-context-zoom className="h-full w-full bg-background p-3 pr-1.5">
+    <div
+      data-context-session={sessionId}
+      data-context-zoom
+      className="relative h-full w-full bg-background p-3 pr-1.5"
+      onKeyDownCapture={(event) => {
+        if (searchOpen && event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          closeSearch();
+          return;
+        }
+        if (
+          searchOpen &&
+          (event.key === "F3" || ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "g"))
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          find(searchQuery, event.shiftKey);
+          return;
+        }
+        if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+          event.preventDefault();
+          event.stopPropagation();
+          openSearch();
+        }
+      }}
+    >
       <button type="button" hidden data-context-zoom-in onClick={() => zoomRef.current(1)} />
       <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
+      <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={() => terminalRef.current?.scrollToBottom()} />
+      {searchOpen ? (
+        <div className="absolute top-2 right-[8.5rem] z-10 w-72 max-w-[calc(100%-9rem)] rounded-lg bg-background shadow-lg">
+          <InputGroup>
+            <InputGroupAddon>
+              <Search />
+            </InputGroupAddon>
+            <InputGroupInput
+              ref={searchInputRef}
+              value={searchQuery}
+              placeholder="Find in terminal"
+              aria-label="Find in terminal"
+              onChange={(event) => {
+                searchQueryRef.current = event.target.value;
+                setSearchQuery(event.target.value);
+                find(event.target.value, false, true);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                  event.preventDefault();
+                  find(searchQuery, event.key === "ArrowUp");
+                } else if (event.key === "Enter") {
+                  event.preventDefault();
+                  find(searchQuery, event.shiftKey);
+                }
+              }}
+            />
+            <InputGroupAddon align="inline-end" className="gap-0 pr-1">
+              <span className="min-w-14 px-1 text-center text-xs tabular-nums" aria-live="polite" aria-atomic="true">
+                {searchResult.resultCount
+                  ? searchResult.resultIndex >= 0
+                    ? countFormat.format(searchResult.resultIndex + 1)
+                    : "–"
+                  : "0"}{" "}
+                / {countFormat.format(searchResult.resultCount)}
+                {searchResult.resultCount >= SEARCH_HIGHLIGHT_LIMIT ? "+" : ""}
+              </span>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Previous match"
+                disabled={!searchQuery}
+                onClick={() => find(searchQuery, true)}
+              >
+                <ChevronUp />
+              </InputGroupButton>
+              <InputGroupButton
+                size="icon-xs"
+                aria-label="Next match"
+                disabled={!searchQuery}
+                onClick={() => find(searchQuery)}
+              >
+                <ChevronDown />
+              </InputGroupButton>
+              <InputGroupButton size="icon-xs" aria-label="Close search" onClick={closeSearch}>
+                <X />
+              </InputGroupButton>
+            </InputGroupAddon>
+          </InputGroup>
+        </div>
+      ) : null}
       <div ref={containerRef} className="h-full w-full" />
     </div>
   );

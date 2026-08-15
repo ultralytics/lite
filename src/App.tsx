@@ -1077,12 +1077,12 @@ function SessionMark({ session }: { session: Session }) {
 
 function SessionActionButtons({
   name,
-  disabled = false,
+  starting = false,
   onRestart,
   onClose,
 }: {
   name: string;
-  disabled?: boolean;
+  starting?: boolean;
   onRestart: () => void;
   onClose: () => void;
 }) {
@@ -1090,19 +1090,19 @@ function SessionActionButtons({
     <>
       <ActionIconButton
         size="icon-sm"
-        tooltip="Restart"
-        aria-label={`Restart ${name}`}
-        disabled={disabled}
+        tooltip={starting ? "Restarting…" : "Restart"}
+        aria-label={starting ? `Restarting ${name}` : `Restart ${name}`}
+        disabled={starting}
         onClick={onRestart}
       >
-        <RotateCcw />
+        {starting ? <Spinner /> : <RotateCcw />}
       </ActionIconButton>
       <ActionIconButton
         size="icon-sm"
         className="hover:text-destructive"
         tooltip="Close session"
         aria-label={`Close ${name}`}
-        disabled={disabled}
+        disabled={starting}
         onClick={onClose}
       >
         <Trash2 />
@@ -1352,7 +1352,7 @@ function SessionRow({
         className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex"
         onClick={(event) => event.stopPropagation()}
       >
-        <SessionActionButtons name={session.name} disabled={starting} onRestart={onRestart} onClose={onClose} />
+        <SessionActionButtons name={session.name} starting={starting} onRestart={onRestart} onClose={onClose} />
       </ItemActions>
     </Item>
   );
@@ -1497,6 +1497,7 @@ function App() {
   const interrupted = useRef(new Set(working));
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
   const [query, setQuery] = useState("");
+  const sessionSearch = useRef<HTMLInputElement>(null);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState("");
@@ -1855,13 +1856,17 @@ function App() {
   }, [commit, askRelease]);
 
   // Output arrives as a stream of chunks, so this touches React state only on the two edges of a
-  // burst: the first chunk marks the session working, and a quiet spell marks it idle again. Between
-  // those the timer is just reset, which keeps a busy session from re-rendering the sidebar per chunk.
-  const markWorking = useCallback((sessionId: string) => {
+  // burst. Claude's explicit background activity holds the working edge until its last descendant
+  // stops; ordinary output still becomes idle after one quiet spell.
+  const markWorking = useCallback((sessionId: string, sustained = false) => {
     const timers = workTimers.current;
     const pending = timers.get(sessionId);
     if (pending) window.clearTimeout(pending);
     else setWorking((current) => including(current, sessionId));
+    if (sustained) {
+      timers.delete(sessionId);
+      return;
+    }
     timers.set(
       sessionId,
       window.setTimeout(() => {
@@ -1931,11 +1936,16 @@ function App() {
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const { title, path, activity, notification } = appendOutput(payload.sessionId, payload.data);
+        const { title, path, activity, activityChanged, backgroundActivity, notification } = appendOutput(
+          payload.sessionId,
+          payload.data,
+        );
         if (title) markTitle(payload.sessionId, title);
         if (path) markDirectory(payload.sessionId, path);
+        if (activity === true) clearAttention(payload.sessionId);
         if (
           notification &&
+          !backgroundActivity &&
           (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()) &&
           markAttention(payload.sessionId)
         ) {
@@ -1943,7 +1953,8 @@ function App() {
           if (notificationsRef.current && session)
             void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
         }
-        if (activity !== false) markWorking(payload.sessionId);
+        if (activity !== false) markWorking(payload.sessionId, backgroundActivity);
+        else if (activityChanged) markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
@@ -1993,7 +2004,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
+  }, [clearAttention, forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
 
   const changeNotifications = useCallback(async (enabled: boolean) => {
     const stored = localStorage.getItem(NOTIFICATIONS_KEY);
@@ -2050,6 +2061,8 @@ function App() {
         providerSessionId: session.providerSessionId,
         agent: session.agent,
         provider: session.provider,
+        model: session.model,
+        reasoningEffort: session.reasoningEffort,
         mode: session.mode,
         theme: themeRef.current,
         resume,
@@ -2917,6 +2930,19 @@ function App() {
                 data-context-surface
                 data-zoom-panel="sidebar"
                 className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground"
+                onKeyDownCapture={(event) => {
+                  if (
+                    !shut.sidebar &&
+                    (event.metaKey || event.ctrlKey) &&
+                    !event.altKey &&
+                    !event.shiftKey &&
+                    event.key.toLowerCase() === "f"
+                  ) {
+                    event.preventDefault();
+                    sessionSearch.current?.focus();
+                    sessionSearch.current?.select();
+                  }
+                }}
               >
                 <PanelZoomControls
                   zoom={(step) => setSidebarFontSize((current) => zoomedFontSize(SIDEBAR_FONT_KEY, current, step))}
@@ -2984,6 +3010,7 @@ function App() {
                           <Search />
                         </InputGroupAddon>
                         <InputGroupInput
+                          ref={sessionSearch}
                           value={query}
                           placeholder="Search sessions"
                           aria-label="Search sessions"
@@ -3156,17 +3183,33 @@ function App() {
                         ) : null,
                       )}
                     </Suspense>
-                    {selected.running ? (
+                    {selected.running || selectedStarting ? (
                       <fieldset
                         aria-label="Session actions"
-                        className="absolute top-2 right-2 z-20 hidden items-center gap-0.5 rounded-lg bg-background/90 p-0.5 shadow-sm"
+                        className="absolute top-2 right-2 z-20 hidden items-center gap-0.5 rounded-lg bg-background/90 p-0.5 text-muted-foreground shadow-sm"
                         data-terminal-action
                         onMouseDown={(event) => event.preventDefault()}
                       >
                         <ActionIconButton
                           size="icon-sm"
+                          tooltip="Find in terminal"
+                          aria-label="Find in terminal"
+                          disabled={selectedStarting}
+                          onClick={() =>
+                            document
+                              .querySelector<HTMLElement>(
+                                `[data-context-session="${CSS.escape(selected.id)}"] [data-terminal-search]`,
+                              )
+                              ?.click()
+                          }
+                        >
+                          <Search />
+                        </ActionIconButton>
+                        <ActionIconButton
+                          size="icon-sm"
                           tooltip="Scroll to bottom"
                           aria-label="Scroll to bottom"
+                          disabled={selectedStarting}
                           onClick={() =>
                             document
                               .querySelector<HTMLElement>(
@@ -3179,6 +3222,7 @@ function App() {
                         </ActionIconButton>
                         <SessionActionButtons
                           name={selected.name}
+                          starting={selectedStarting}
                           onRestart={() => void restartSession(selected)}
                           onClose={() => closeSession(selected)}
                         />

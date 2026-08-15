@@ -46,6 +46,7 @@ import {
   lazy,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
+  type Ref,
   Suspense,
   useCallback,
   useEffect,
@@ -275,6 +276,7 @@ const TABS = [
   { value: "git", label: "Git", icon: GitBranch },
   { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
 ] as const;
+type InspectorTab = (typeof TABS)[number]["value"];
 
 // Every optional field arrives from Serde as null, never as a missing key.
 interface UsageWindow {
@@ -382,10 +384,12 @@ function SearchInput({
   value,
   placeholder,
   onChange,
+  inputRef,
 }: {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
+  inputRef?: Ref<HTMLInputElement>;
 }) {
   return (
     <div className="shrink-0 p-2">
@@ -394,6 +398,7 @@ function SearchInput({
           <Search />
         </InputGroupAddon>
         <InputGroupInput
+          ref={inputRef}
           value={value}
           placeholder={placeholder}
           aria-label={placeholder}
@@ -424,11 +429,13 @@ function FileTree({
   rootId,
   query,
   onOpen,
+  onLoad,
 }: {
   root: string;
   rootId: string;
   query: string;
   onOpen: (entry: FileEntry) => void;
+  onLoad: (tab: InspectorTab) => void;
 }) {
   const [children, setChildren] = useState<Record<string, DirectoryListing & { after: DirectoryCursor | null }>>({});
   // The root is the folder the session works in; showing it shut asks for a click to say what the
@@ -464,8 +471,14 @@ function FileTree({
   );
 
   useEffect(() => {
-    void load(root);
-  }, [load, root]);
+    let mounted = true;
+    void load(root).finally(() => {
+      if (mounted) onLoad("files");
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [load, onLoad, root]);
 
   async function toggle(path: string) {
     const next = new Set(expanded);
@@ -1025,11 +1038,15 @@ function FilesPanel({
   rootId,
   sessionId,
   fontSize,
+  searchRef,
+  onLoad,
 }: {
   root: string;
   rootId: string;
   sessionId: string;
   fontSize: number;
+  searchRef: Ref<HTMLInputElement>;
+  onLoad: (tab: InspectorTab) => void;
 }) {
   const [cached] = useState(() => {
     const current = fileEditorsBySession.get(sessionId);
@@ -1123,10 +1140,17 @@ function FilesPanel({
         />
       ) : null}
       <div data-context-files className={`min-h-0 flex-1 flex-col ${selected ? "hidden" : "flex"}`}>
-        <SearchInput value={query} placeholder="Search files" onChange={setQuery} />
+        <SearchInput inputRef={searchRef} value={query} placeholder="Search files" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
           <div style={contentZoomStyle(fontSize)}>
-            <FileTree key={rootId} root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
+            <FileTree
+              key={rootId}
+              root={root}
+              rootId={rootId}
+              query={query}
+              onOpen={(entry) => void openFile(entry)}
+              onLoad={onLoad}
+            />
           </div>
         </ScrollArea>
       </div>
@@ -1297,12 +1321,16 @@ function GitPanel({
   remote,
   active,
   fontSize,
+  searchRef,
+  onLoad,
 }: {
   rootId: string;
   sessionId: string;
   remote: string;
   active: boolean;
   fontSize: number;
+  searchRef: Ref<HTMLInputElement>;
+  onLoad: (tab: InspectorTab) => void;
 }) {
   const [references, setReferences] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
@@ -1411,6 +1439,10 @@ function GitPanel({
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if ((status !== undefined || error) && items !== undefined) onLoad("git");
+  }, [error, items, onLoad, status]);
+
   const repositories = repositoryGroups(remote, status ?? null, items ?? []);
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
   // repository's own name — and drops the cards left holding nothing.
@@ -1443,7 +1475,7 @@ function GitPanel({
         />
       ) : null}
       <div className={`min-h-0 flex-1 flex-col ${diffPath ? "hidden" : "flex"}`}>
-        <SearchInput value={query} placeholder="Search items" onChange={setQuery} />
+        <SearchInput inputRef={searchRef} value={query} placeholder="Search items" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-3 p-3" style={contentZoomStyle(fontSize)}>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -1486,7 +1518,15 @@ function missingUsage(session: Session): string {
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
 
-function UsagePanel({ session, fontSize }: { session: Session; fontSize: number }) {
+function UsagePanel({
+  session,
+  fontSize,
+  onLoad,
+}: {
+  session: Session;
+  fontSize: number;
+  onLoad: (tab: InspectorTab) => void;
+}) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
 
@@ -1506,11 +1546,14 @@ function UsagePanel({ session, fontSize }: { session: Session; fontSize: number 
       })
       .catch((reason) => {
         if (!disposed) setError(String(reason));
+      })
+      .finally(() => {
+        if (!disposed) onLoad("usage");
       });
     return () => {
       disposed = true;
     };
-  }, [session.agent, session.provider, session.id]);
+  }, [onLoad, session.agent, session.provider, session.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1602,16 +1645,24 @@ export function Inspector({
   onCollapse: () => void;
 }) {
   const [tab, setTab] = useState<string>(TABS[0].value);
+  const fileSearch = useRef<HTMLInputElement>(null);
+  const gitSearch = useRef<HTMLInputElement>(null);
   const [visited, setVisited] = useState(() => new Set<string>([TABS[0].value]));
   // A tab already names the panel it shows, so the panel does not name itself again. The refresh button
   // rebuilds whichever is open, and every explicit Files visit rebuilds that disk snapshot as well.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
+  const [refreshing, setRefreshing] = useState<InspectorTab>();
+
+  const finishRefresh = useCallback((value: InspectorTab) => {
+    setRefreshing((current) => (current === value ? undefined : current));
+  }, []);
 
   function visitTab(value: string) {
     setVisited((current) => including(current, value));
   }
 
-  function refreshTab(value: keyof typeof reload) {
+  function refreshTab(value: InspectorTab) {
+    setRefreshing(value);
     setReload((counts) => ({ ...counts, [value]: counts[value] + 1 }));
   }
 
@@ -1663,7 +1714,19 @@ export function Inspector({
   return (
     <>
       {collapsed ? rail : null}
-      <div data-context-surface className={collapsed ? "hidden" : "h-full"}>
+      <div
+        data-context-surface
+        className={collapsed ? "hidden" : "h-full"}
+        onKeyDownCapture={(event) => {
+          if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+            const input = tab === "files" ? fileSearch.current : tab === "git" ? gitSearch.current : null;
+            if (!input?.offsetParent) return;
+            event.preventDefault();
+            input.focus();
+            input.select();
+          }
+        }}
+      >
         <Tabs value={tab} onValueChange={selectTab} className="h-full min-h-0 gap-0">
           <div className="flex h-11 shrink-0 items-center gap-0.5 border-b pr-3 pl-1.5">
             <ActionIconButton
@@ -1699,12 +1762,13 @@ export function Inspector({
               <ActionIconButton
                 size="icon-sm"
                 className="ml-auto"
-                tooltip="Refresh"
-                aria-label="Refresh"
+                tooltip={refreshing === tab ? "Refreshing…" : "Refresh"}
+                aria-label={refreshing === tab ? "Refreshing" : "Refresh"}
                 data-context-refresh
+                disabled={refreshing === tab}
                 onClick={() => refreshTab(tab as keyof typeof reload)}
               >
-                <RefreshCw />
+                {refreshing === tab ? <Spinner /> : <RefreshCw />}
               </ActionIconButton>
             )}
           </div>
@@ -1716,6 +1780,8 @@ export function Inspector({
                 rootId={session.rootId}
                 sessionId={session.id}
                 fontSize={fontSize}
+                searchRef={fileSearch}
+                onLoad={finishRefresh}
               />
             </TabsContent>
           ) : null}
@@ -1728,12 +1794,14 @@ export function Inspector({
                 remote={remote}
                 active={tab === "git" && !collapsed}
                 fontSize={fontSize}
+                searchRef={gitSearch}
+                onLoad={finishRefresh}
               />
             </TabsContent>
           ) : null}
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
-              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} />
+              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} onLoad={finishRefresh} />
             </TabsContent>
           ) : null}
         </Tabs>

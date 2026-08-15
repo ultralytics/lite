@@ -15,6 +15,7 @@ interface Buffer {
   tail: string;
   controlTail: string;
   themeReporting: boolean;
+  backgroundActivity?: boolean;
 }
 
 const buffers = new Map<string, Buffer>();
@@ -85,6 +86,7 @@ export function appendOutput(sessionId: string, data: number[]) {
     tail: "",
     controlTail: "",
     themeReporting: false,
+    backgroundActivity: undefined,
   };
   buffer.chunks.push(bytes);
   buffer.size += bytes.byteLength;
@@ -128,10 +130,20 @@ export function appendOutput(sessionId: string, data: number[]) {
       if (working || match[2] === "lite-idle") activity = working;
     } else title = match[2];
   }
+  const previousActivity = buffer.backgroundActivity;
+  const activityChanged = activity !== undefined && activity !== previousActivity;
+  if (activity !== undefined) buffer.backgroundActivity = activity;
   const tail = text.match(UNTERMINATED)?.[0] ?? "";
   if (activity === undefined && tail.startsWith("\x1b]6973;lite-")) activity = false;
   buffer.tail = tail.length > MAX_TAIL ? "" : tail;
-  return { title, path, activity, notification };
+  return {
+    title,
+    path,
+    activity,
+    activityChanged,
+    backgroundActivity: buffer.backgroundActivity,
+    notification,
+  };
 }
 
 export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) => void) {
