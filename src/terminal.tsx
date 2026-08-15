@@ -435,6 +435,15 @@ export function TerminalView({
           closeSearch();
           return;
         }
+        if (
+          searchOpen &&
+          (event.key === "F3" || ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "g"))
+        ) {
+          event.preventDefault();
+          event.stopPropagation();
+          find(searchQuery, event.shiftKey);
+          return;
+        }
         if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
           event.preventDefault();
           event.stopPropagation();
@@ -467,7 +476,10 @@ export function TerminalView({
                 find(event.target.value, false, true);
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter") {
+                if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+                  event.preventDefault();
+                  find(searchQuery, event.key === "ArrowUp");
+                } else if (event.key === "Enter") {
                   event.preventDefault();
                   find(searchQuery, event.shiftKey);
                 }
