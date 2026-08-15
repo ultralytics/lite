@@ -1570,6 +1570,7 @@ export function Inspector({
   session,
   remote,
   fontSize,
+  fileBrowserVersion,
   collapsed,
   onExpand,
   onCollapse,
@@ -1577,6 +1578,7 @@ export function Inspector({
   session: Session;
   remote: string;
   fontSize: number;
+  fileBrowserVersion: number;
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
@@ -1691,7 +1693,7 @@ export function Inspector({
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
               <FilesPanel
-                key={`${session.rootId}:${reload.files}`}
+                key={`${session.rootId}:${reload.files}:${fileBrowserVersion}`}
                 root={session.cwd}
                 rootId={session.rootId}
                 sessionId={session.id}

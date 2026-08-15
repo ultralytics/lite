@@ -430,6 +430,30 @@ fn set_keep_awake(wake_lock: State<WakeLock>, enabled: bool) -> Result<(), Strin
 #[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
 
+struct FileBrowserSettings {
+    home: Option<PathBuf>,
+    show_claude: AtomicBool,
+}
+
+impl FileBrowserSettings {
+    fn project_claude_visible(&self, root: &Path) -> bool {
+        self.show_claude.load(Ordering::Relaxed)
+            && self.home.as_deref().is_some_and(|home| home != root)
+    }
+
+    fn is_sensitive_path(&self, root: &Path, path: &Path) -> bool {
+        let show_claude = self.project_claude_visible(root);
+        path.strip_prefix(root).is_ok_and(|relative| {
+            relative.components().enumerate().any(|(index, component)| {
+                is_sensitive_component(component.as_os_str())
+                    && !(show_claude
+                        && index == 0
+                        && component.as_os_str().eq_ignore_ascii_case(".claude"))
+            })
+        })
+    }
+}
+
 #[derive(Default)]
 struct ProviderSessions(Mutex<HashMap<String, String>>);
 
@@ -606,6 +630,7 @@ fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
     name == ".env"
         || name.starts_with(".env.")
         || [
+            ".credentials.json",
             ".aws",
             ".azure",
             ".claude",
@@ -630,14 +655,6 @@ fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
 fn is_sensitive_root(path: &Path) -> bool {
     path.components()
         .any(|component| is_sensitive_component(component.as_os_str()))
-}
-
-fn is_sensitive_path(root: &Path, path: &Path) -> bool {
-    path.strip_prefix(root).is_ok_and(|relative| {
-        relative
-            .components()
-            .any(|component| is_sensitive_component(component.as_os_str()))
-    })
 }
 
 fn command_output(git: &Path, directory: &Path, args: &[&str]) -> Result<String, String> {
@@ -676,6 +693,25 @@ fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| error.to_string())?
         .join("last-directory"))
+}
+
+fn show_claude_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("show-claude-folder"))
+}
+
+fn load_file_browser_settings(app: &AppHandle) -> FileBrowserSettings {
+    FileBrowserSettings {
+        home: app
+            .path()
+            .home_dir()
+            .ok()
+            .and_then(|home| fs::canonicalize(home).ok()),
+        show_claude: AtomicBool::new(show_claude_path(app).is_ok_and(|path| path.is_file())),
+    }
 }
 
 fn read_roots(path: &Path) -> HashMap<String, PathBuf> {
@@ -3690,6 +3726,7 @@ fn delete_session_data(
 
 #[tauri::command]
 async fn list_directory(
+    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
@@ -3710,7 +3747,7 @@ async fn list_directory(
             || name == "node_modules"
             || name == "target"
             || name == ".venv"
-            || is_sensitive_path(&root, &entry.path())
+            || settings.is_sensitive_path(&root, &entry.path())
         {
             continue;
         }
@@ -3747,13 +3784,14 @@ async fn list_directory(
 
 #[tauri::command]
 async fn read_text_file(
+    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
 ) -> Result<String, String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
-    if is_sensitive_path(&root, &path) {
+    if settings.is_sensitive_path(&root, &path) {
         return Err("Sensitive files are hidden from preview".into());
     }
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
@@ -3769,6 +3807,7 @@ async fn read_text_file(
 
 #[tauri::command]
 async fn write_text_file(
+    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
@@ -3779,7 +3818,7 @@ async fn write_text_file(
     }
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
-    if is_sensitive_path(&root, &path) {
+    if settings.is_sensitive_path(&root, &path) {
         return Err("Sensitive files cannot be edited in Lite".into());
     }
     if !path.is_file() {
@@ -3793,10 +3832,15 @@ async fn write_text_file(
 }
 
 #[tauri::command]
-async fn delete_file(roots: State<'_, Roots>, root_id: String, path: String) -> Result<(), String> {
+async fn delete_file(
+    settings: State<'_, FileBrowserSettings>,
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+) -> Result<(), String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_entry(&root, &path)?;
-    if is_sensitive_path(&root, &path) {
+    if settings.is_sensitive_path(&root, &path) {
         return Err("Sensitive files cannot be deleted from Lite".into());
     }
     let file_type = fs::symlink_metadata(&path)
@@ -3806,6 +3850,27 @@ async fn delete_file(roots: State<'_, Roots>, root_id: String, path: String) -> 
         return Err("Only files can be deleted".into());
     }
     fs::remove_file(path).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn show_claude_folder(settings: State<'_, FileBrowserSettings>) -> bool {
+    settings.show_claude.load(Ordering::Relaxed)
+}
+
+#[tauri::command]
+fn set_show_claude_folder(
+    app: AppHandle,
+    settings: State<'_, FileBrowserSettings>,
+    show: bool,
+) -> Result<(), String> {
+    let path = show_claude_path(&app)?;
+    if show {
+        write_atomic(&path, b"")?;
+    } else {
+        forget_record(&path)?;
+    }
+    settings.show_claude.store(show, Ordering::Relaxed);
+    Ok(())
 }
 
 fn bounded_git_changes(
@@ -3923,6 +3988,7 @@ fn git_diff_base(git: &Path, repository: &Path) -> Result<String, String> {
 
 #[tauri::command]
 async fn git_diff(
+    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
@@ -3967,7 +4033,9 @@ async fn git_diff(
                 .into(),
         );
     }
-    if is_sensitive_path(&granted, &file) || is_sensitive_path(&granted, &ancestor) {
+    if settings.is_sensitive_path(&granted, &file)
+        || settings.is_sensitive_path(&granted, &ancestor)
+    {
         return Err("Sensitive files are hidden from Git diffs".into());
     }
     let pathspec = path_text(relative);
@@ -5175,6 +5243,7 @@ pub fn run() {
             app.manage(load_roots(app.handle()));
             app.manage(load_provider_sessions(app.handle()));
             app.manage(load_codex_server(app.handle())?);
+            app.manage(load_file_browser_settings(app.handle()));
             #[cfg(target_os = "macos")]
             {
                 describe_app(app.handle())?;
@@ -5200,6 +5269,8 @@ pub fn run() {
             read_text_file,
             write_text_file,
             delete_file,
+            show_claude_folder,
+            set_show_claude_folder,
             git_status,
             git_diff,
             git_remote,
@@ -5256,6 +5327,33 @@ mod tests {
         assert_eq!(
             command.get_env("LC_CTYPE"),
             cfg!(target_os = "macos").then_some(OsStr::new("UTF-8"))
+        );
+    }
+
+    #[test]
+    fn claude_folder_opt_in_keeps_credentials_hidden() {
+        let root = Path::new("/project");
+        let settings = FileBrowserSettings {
+            home: Some(PathBuf::from("/home/user")),
+            show_claude: AtomicBool::new(false),
+        };
+
+        assert!(settings.is_sensitive_path(root, Path::new("/project/.claude/settings.json")));
+        settings.show_claude.store(true, Ordering::Relaxed);
+        assert!(settings.project_claude_visible(root));
+        for (path, sensitive) in [
+            ("/project/.claude/settings.json", false),
+            ("/project/.claude/.credentials.json", true),
+            ("/project/package/.claude/settings.json", true),
+        ] {
+            assert_eq!(settings.is_sensitive_path(root, Path::new(path)), sensitive);
+        }
+        assert!(
+            FileBrowserSettings {
+                home: Some(root.to_owned()),
+                show_claude: AtomicBool::new(true),
+            }
+            .is_sensitive_path(root, Path::new("/project/.claude/settings.json"))
         );
     }
 

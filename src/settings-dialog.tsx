@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Eye,
   EyeOff,
+  FolderCog,
   Info,
   KeyRound,
   Moon,
@@ -63,6 +64,7 @@ export function SettingsDialog({
   built,
   repo,
   onCheckForUpdates,
+  onFileBrowserChange,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -78,8 +80,10 @@ export function SettingsDialog({
   built: string;
   repo: string;
   onCheckForUpdates: () => void;
+  onFileBrowserChange: () => void;
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
+  const [showClaude, setShowClaude] = useState<boolean>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
@@ -97,9 +101,11 @@ export function SettingsDialog({
     setDrafts({});
     setEditing(new Set());
     setRevealed(new Set());
-    void Promise.all([read(), invoke<boolean>("notifications_supported").then(setNotificationsSupported)]).catch(
-      (reason) => setError(String(reason)),
-    );
+    void Promise.all([
+      read(),
+      invoke<boolean>("notifications_supported").then(setNotificationsSupported),
+      invoke<boolean>("show_claude_folder").then(setShowClaude),
+    ]).catch((reason) => setError(String(reason)));
   }, [isOpen, read]);
 
   function edit(id: string, open: boolean) {
@@ -149,6 +155,20 @@ export function SettingsDialog({
     setBusy("notifications");
     try {
       await onNotificationsChange(enabled);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function changeShowClaude(show: boolean) {
+    setError("");
+    setBusy(".claude");
+    try {
+      await invoke("set_show_claude_folder", { show });
+      setShowClaude(show);
+      onFileBrowserChange();
     } catch (reason) {
       setError(String(reason));
     } finally {
@@ -230,6 +250,23 @@ export function SettingsDialog({
                     </ItemActions>
                   </Item>
                 ) : null}
+                <Item variant="outline">
+                  <ItemMedia variant="icon">
+                    <FolderCog />
+                  </ItemMedia>
+                  <ItemContent>
+                    <ItemTitle>Show Project .claude Folders</ItemTitle>
+                    <ItemDescription>Show project settings, hooks, and plugins in Files.</ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Switch
+                      aria-label="Show project .claude folders"
+                      checked={showClaude ?? false}
+                      disabled={showClaude === undefined || busy === ".claude"}
+                      onCheckedChange={(show) => void changeShowClaude(show)}
+                    />
+                  </ItemActions>
+                </Item>
               </ItemGroup>
             </TabsContent>
             <TabsContent value="keys" className="min-w-0">
