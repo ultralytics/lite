@@ -156,7 +156,7 @@ fn request_notification_permission() -> bool {
 
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn send_notification(title: String, session_id: String) {
+fn send_notification(session_name: String, session_id: String) {
     use objc2_foundation::NSString;
     use objc2_user_notifications::{
         UNMutableNotificationContent, UNNotificationRequest, UNUserNotificationCenter,
@@ -166,8 +166,8 @@ fn send_notification(title: String, session_id: String) {
         return;
     }
     let content = UNMutableNotificationContent::new();
-    content.setTitle(&NSString::from_str(&title));
-    content.setBody(&NSString::from_str("Ready"));
+    content.setTitle(&NSString::from_str("Ready"));
+    content.setBody(&NSString::from_str(&session_name));
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
         &NSString::from_str(&session_id),
         &content,
@@ -179,7 +179,7 @@ fn send_notification(title: String, session_id: String) {
 
 #[cfg(not(target_os = "macos"))]
 #[tauri::command]
-fn send_notification(_title: String, _session_id: String) {}
+fn send_notification(_session_name: String, _session_id: String) {}
 
 #[derive(Clone, Copy)]
 struct CodexProvider {
