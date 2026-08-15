@@ -1146,16 +1146,14 @@ function SessionRow({
   onRestart: () => void;
   onClose: () => void;
 }) {
-  const [name, setName] = useState(session.name);
   const drag = useRef<{ id: number; x: number; y: number; row: HTMLElement } | undefined>(undefined);
   const drop = useRef<{ row: HTMLElement; after: boolean } | undefined>(undefined);
   const shifted = useRef<HTMLElement[]>([]);
   const dragging = useRef(false);
 
-  function saveName() {
-    const next = name.trim();
-    if (next) onRename(next);
-    else setName(session.name);
+  function saveName(value: string) {
+    const next = value.trim();
+    if (next && next !== session.name) onRename(next);
     onRenamingChange(false);
   }
 
@@ -1303,16 +1301,15 @@ function SessionRow({
       {renaming ? (
         <Input
           autoFocus
-          value={name}
+          defaultValue={session.name}
           className="min-w-0 flex-1"
           aria-label="Session name"
-          onChange={(event) => setName(event.target.value)}
-          onBlur={saveName}
+          onBlur={(event) => saveName(event.currentTarget.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") saveName();
+            if (event.key === "Enter") event.currentTarget.blur();
             if (event.key === "Escape") {
-              setName(session.name);
-              onRenamingChange(false);
+              event.currentTarget.value = session.name;
+              event.currentTarget.blur();
             }
           }}
         />
@@ -2034,7 +2031,7 @@ function App() {
     setKeepAwake(enabled);
   }, []);
 
-  const launch = useCallback(async (session: Session, resume: boolean) => {
+  const launch = useCallback(async (session: Session, resume: boolean, initialPrompt?: string) => {
     if (runs.current.has(session.id)) return true;
     recoveryFailures.current.delete(session.id);
     const runId = crypto.randomUUID();
@@ -2064,6 +2061,7 @@ function App() {
         model: session.model,
         reasoningEffort: session.reasoningEffort,
         mode: session.mode,
+        initialPrompt: initialPrompt ?? null,
         theme: themeRef.current,
         resume,
         cols: 100,
@@ -2097,10 +2095,11 @@ function App() {
       // Taking the marker before launch makes this caller the sole owner of the continuation even
       // when another mount effect or click reaches the same in-flight process.
       const shouldContinue = session.agent !== "shell" && interrupted.current.delete(session.id);
-      const launched = await launch(session, true);
+      const prompt = "Lite restarted while you were working. Continue the previous task.";
+      const launched = await launch(session, true, shouldContinue && session.agent === "claude" ? prompt : undefined);
       if (shouldContinue) {
-        if (launched) runOnStart(session.id, "Lite restarted while you were working. Continue the previous task.");
-        else interrupted.current.add(session.id);
+        if (!launched) interrupted.current.add(session.id);
+        else if (session.agent !== "claude") runOnStart(session.id, prompt);
       }
       return launched;
     },

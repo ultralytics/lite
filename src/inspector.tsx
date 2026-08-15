@@ -74,7 +74,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { githubItemReferences, likelyGitHubItems } from "@/github-items";
+import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
 import { readTerminalInput, readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
@@ -130,6 +130,21 @@ interface GitHubItem {
   updatedAt: string | null;
   additions: number | null;
   deletions: number | null;
+}
+
+const GITHUB_ITEMS_KEY = "lite.github-items";
+
+function sessionGitHubItems(sessionId: string) {
+  const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
+  return sessions[sessionId] ?? [];
+}
+
+function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
+  const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
+  const items = mergeGitHubItems(sessions[sessionId] ?? [], updates);
+  sessions[sessionId] = items;
+  localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
+  return items;
 }
 
 // The colors GitHub itself answers in, so a glance here reads the same as a glance there.
@@ -1315,6 +1330,9 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
   fileEditorsBySession.delete(sessionId);
+  const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
+  delete sessions[sessionId];
+  localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
 }
 
 function GitPanel({
@@ -1336,7 +1354,7 @@ function GitPanel({
 }) {
   const [references, setReferences] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
-  const [items, setItems] = useState<GitHubItem[]>();
+  const [items, setItems] = useState<GitHubItem[]>(() => sessionGitHubItems(sessionId));
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [diffPath, setDiffPath] = useState("");
@@ -1373,39 +1391,49 @@ function GitPanel({
     };
   }, [active, remote, sessionId]);
 
-  // Explicit references always survive the lookup. User prose or an unqualified command inferred from
-  // the session folder survives only when GitHub confirms activity in the last 30 days.
+  // A named item belongs to the session once. Later checks update its GitHub state, but never remove it.
+  // User prose or an unqualified command first has to be confirmed as recent activity.
   useEffect(() => {
     const { explicit, inferred } = references;
-    const urls = [...explicit, ...inferred];
+    const retained = sessionGitHubItems(sessionId);
+    const placeholders = explicit.map((url) => ({
+      url,
+      title: null,
+      state: null,
+      occurredAt: null,
+      updatedAt: null,
+      additions: null,
+      deletions: null,
+    }));
+    const visible = retainGitHubItems(sessionId, mergeGitHubItems(placeholders, retained));
+    const urls = mergeGitHubItems(
+      visible,
+      [...explicit, ...inferred].map((url) => ({ url })),
+    ).map((item) => item.url);
     if (!urls.length) return setItems([]);
     let disposed = false;
-    // A remote that arrives after an empty first pass starts a real check, so the panel goes back to
-    // checking rather than staying empty without a word.
-    setItems(undefined);
+    setItems(visible);
     void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
-        if (!disposed) setItems(likelyGitHubItems(checked, inferred));
-      })
-      // An explicit link survives an unavailable GitHub; an inference cannot be verified and does not.
-      .catch(() => {
-        if (!disposed)
-          setItems(
-            explicit.map((url) => ({
-              url,
-              title: null,
-              state: null,
-              occurredAt: null,
-              updatedAt: null,
-              additions: null,
-              deletions: null,
-            })),
+        if (!disposed) {
+          const known = new Set(
+            visible.map((item) =>
+              `${githubReference(item.url).repository}#${githubReference(item.url).number}`.toLowerCase(),
+            ),
           );
-      });
+          const unconfirmed = inferred.filter((url) => {
+            const reference = githubReference(url);
+            return !known.has(`${reference.repository}#${reference.number}`.toLowerCase());
+          });
+          const updates = likelyGitHubItems(checked, unconfirmed).filter((item) => item.title !== null);
+          setItems(retainGitHubItems(sessionId, updates));
+        }
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
     };
-  }, [references]);
+  }, [references, sessionId]);
 
   const refresh = useCallback(async () => {
     setError("");

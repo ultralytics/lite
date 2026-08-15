@@ -3201,6 +3201,7 @@ async fn spawn_session(
     model: Option<String>,
     reasoning_effort: Option<String>,
     mode: Option<String>,
+    initial_prompt: Option<String>,
     theme: Option<String>,
     resume: bool,
     cols: u16,
@@ -3331,6 +3332,9 @@ async fn spawn_session(
     if !signing_in && agent == "claude" {
         let settings = claude_settings(&app, &session_id, &run_id)?;
         command.args(["--settings", &path_text(&settings)]);
+        if let Some(prompt) = initial_prompt {
+            command.arg(prompt);
+        }
     }
     configure_session_command(&mut command, &cwd, theme.as_deref());
     // Codex records a new thread per launch, so its discovery watches for one the tab did not start with.

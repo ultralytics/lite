@@ -135,6 +135,12 @@ export function likelyGitHubItems<T extends { updatedAt: string | null; url: str
   });
 }
 
+export function mergeGitHubItems<T extends { url: string }>(current: T[], updates: T[]): T[] {
+  const items = new Map(current.map((item) => [itemKey(item.url), item]));
+  for (const item of updates) items.set(itemKey(item.url), item);
+  return [...items.values()];
+}
+
 function itemKey(url: string) {
   const [, , , owner, repository, , number] = url.split("/");
   return `${owner}/${repository}#${number}`.toLowerCase();

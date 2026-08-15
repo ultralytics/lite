@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from "bun:test";
 
-import { githubItemReferences, likelyGitHubItems } from "../src/github-items";
+import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "../src/github-items";
 import { appendOutput, clearOutput, readTerminalInput, recordTerminalInput } from "../src/output-store";
 
 const references = (output: string, remote = "", terminalStream = "", prose = output) =>
@@ -208,6 +208,19 @@ The agent also discussed ultralytics/portal PR #3612.`,
     ];
 
     expect(likelyGitHubItems(items, inferred, now)).toEqual([items[1], items[2]]);
+  });
+
+  test("keeps session items while refreshing mutable GitHub fields", () => {
+    const current = [
+      { url: "https://github.com/ultralytics/lite/pull/107", title: "Old", state: "open" },
+      { url: "https://github.com/ultralytics/lite/issues/99", title: "Kept", state: "open" },
+    ];
+    const updates = [
+      { url: "https://github.com/ultralytics/lite/pull/107", title: "Updated", state: "merged" },
+      { url: "https://github.com/ultralytics/lite/issues/108", title: "Added", state: "open" },
+    ];
+
+    expect(mergeGitHubItems(current, updates)).toEqual([updates[0], current[1], updates[1]]);
   });
 
   test("removes the cross-worktree duplicates from the reported transcript", () => {
