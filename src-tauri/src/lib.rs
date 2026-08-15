@@ -2752,6 +2752,7 @@ fn agent_command(
     agent: &str,
     provider: Option<&str>,
     model: Option<&str>,
+    reasoning_effort: Option<&str>,
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
@@ -2786,6 +2787,16 @@ fn agent_command(
                     }
                 } else {
                     provider.model
+                };
+                let reasoning_effort = if provider.id == "deepseek" {
+                    match reasoning_effort {
+                        Some("low") => Some("low"),
+                        Some("max") => Some("max"),
+                        Some(_) => Some("high"),
+                        None => None,
+                    }
+                } else {
+                    None
                 };
                 if !key && codex_profile_exists(app, provider.id) {
                     // A profile the user wrote owns the provider and catalog; a model chosen for this
@@ -2826,6 +2837,12 @@ fn agent_command(
                             .replace('"', "\\\"");
                         command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
                     }
+                }
+                if let Some(reasoning_effort) = reasoning_effort {
+                    command.args([
+                        "-c",
+                        &format!("model_reasoning_effort=\"{reasoning_effort}\""),
+                    ]);
                 }
             }
             if let Some(provider_session_id) = provider_session_id {
@@ -3244,6 +3261,7 @@ async fn spawn_session(
     agent: String,
     provider: Option<String>,
     model: Option<String>,
+    reasoning_effort: Option<String>,
     mode: Option<String>,
     theme: Option<String>,
     resume: bool,
@@ -3369,6 +3387,7 @@ async fn spawn_session(
             &agent,
             provider.as_deref(),
             model.as_deref(),
+            reasoning_effort.as_deref(),
             resume,
             &session_id,
             provider_session_id.as_deref(),

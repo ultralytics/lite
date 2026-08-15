@@ -13,6 +13,7 @@ export interface Session {
   provider?: ModelProvider;
   // Provider model chosen when the session was created; absent for providers that own model choice.
   model?: string;
+  reasoningEffort?: string;
   // A sign-in session runs the provider's own login command; it is never stored or resumed.
   mode?: "login";
   name: string;

@@ -2051,6 +2051,7 @@ function App() {
         agent: session.agent,
         provider: session.provider,
         model: session.model,
+        reasoningEffort: session.reasoningEffort,
         mode: session.mode,
         theme: themeRef.current,
         resume,

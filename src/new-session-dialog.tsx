@@ -26,6 +26,7 @@ const choices = [...Object.values(AUTH_PROVIDERS), { id: "shell", agent: "shell"
 const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 const CHOICE_KEY = "lite.newSession.choice.v1";
 const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
+const DEEPSEEK_REASONING_KEY = "lite.newSession.deepseekReasoning.v1";
 const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 const DEEPSEEK_MODELS = [
@@ -33,6 +34,8 @@ const DEEPSEEK_MODELS = [
   { value: "deepseek-v4-pro", label: "Pro" },
 ] as const;
 type DeepSeekModel = (typeof DEEPSEEK_MODELS)[number]["value"];
+const DEEPSEEK_REASONING = ["low", "high", "max"] as const;
+type DeepSeekReasoning = (typeof DEEPSEEK_REASONING)[number];
 
 let updateChecks: Promise<Record<string, boolean | null>> | undefined;
 
@@ -91,6 +94,10 @@ export function NewSessionDialog({
   const [deepseekModel, setDeepseekModel] = useState<DeepSeekModel>(() => {
     const stored = localStorage.getItem(DEEPSEEK_MODEL_KEY);
     return DEEPSEEK_MODELS.find(({ value }) => value === stored)?.value ?? DEEPSEEK_MODELS[0].value;
+  });
+  const [deepseekReasoning, setDeepseekReasoning] = useState<DeepSeekReasoning>(() => {
+    const stored = localStorage.getItem(DEEPSEEK_REASONING_KEY);
+    return DEEPSEEK_REASONING.find((effort) => effort === stored) ?? "high";
   });
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
@@ -280,6 +287,7 @@ export function NewSessionDialog({
         agent: choice.agent,
         provider: choice.provider,
         model: choice.provider === "deepseek" ? deepseekModel : undefined,
+        reasoningEffort: choice.provider === "deepseek" ? deepseekReasoning : undefined,
         cwd: folder.path,
         rootId: folder.id,
         name: name || defaultSessionName(folder.path),
@@ -550,30 +558,58 @@ export function NewSessionDialog({
                         </div>
                       </Button>
                       {active && deepseek ? (
-                        <div className="flex items-center border-t px-3 py-2">
-                          <span id="deepseek-model-label" className="text-xs font-medium text-muted-foreground">
-                            Model
-                          </span>
-                          <fieldset
-                            className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
-                            aria-labelledby="deepseek-model-label"
-                          >
-                            {DEEPSEEK_MODELS.map((model) => (
-                              <Button
-                                key={model.value}
-                                type="button"
-                                size="xs"
-                                variant={deepseekModel === model.value ? "secondary" : "ghost"}
-                                aria-pressed={deepseekModel === model.value}
-                                onClick={() => {
-                                  localStorage.setItem(DEEPSEEK_MODEL_KEY, model.value);
-                                  setDeepseekModel(model.value);
-                                }}
-                              >
-                                {model.label}
-                              </Button>
-                            ))}
-                          </fieldset>
+                        <div className="space-y-1 border-t px-3 py-2">
+                          <div className="flex items-center">
+                            <span id="deepseek-model-label" className="text-xs font-medium text-muted-foreground">
+                              Model
+                            </span>
+                            <fieldset
+                              className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
+                              aria-labelledby="deepseek-model-label"
+                            >
+                              {DEEPSEEK_MODELS.map((model) => (
+                                <Button
+                                  key={model.value}
+                                  type="button"
+                                  size="xs"
+                                  variant={deepseekModel === model.value ? "secondary" : "ghost"}
+                                  aria-pressed={deepseekModel === model.value}
+                                  onClick={() => {
+                                    localStorage.setItem(DEEPSEEK_MODEL_KEY, model.value);
+                                    setDeepseekModel(model.value);
+                                  }}
+                                >
+                                  {model.label}
+                                </Button>
+                              ))}
+                            </fieldset>
+                          </div>
+                          <div className="flex items-center">
+                            <span id="deepseek-reasoning-label" className="text-xs font-medium text-muted-foreground">
+                              Thinking
+                            </span>
+                            <fieldset
+                              className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
+                              aria-labelledby="deepseek-reasoning-label"
+                            >
+                              {DEEPSEEK_REASONING.map((effort) => (
+                                <Button
+                                  key={effort}
+                                  type="button"
+                                  size="xs"
+                                  variant={deepseekReasoning === effort ? "secondary" : "ghost"}
+                                  className="capitalize"
+                                  aria-pressed={deepseekReasoning === effort}
+                                  onClick={() => {
+                                    localStorage.setItem(DEEPSEEK_REASONING_KEY, effort);
+                                    setDeepseekReasoning(effort);
+                                  }}
+                                >
+                                  {effort}
+                                </Button>
+                              ))}
+                            </fieldset>
+                          </div>
                         </div>
                       ) : null}
                       {action ? (
