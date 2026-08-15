@@ -1077,12 +1077,12 @@ function SessionMark({ session }: { session: Session }) {
 
 function SessionActionButtons({
   name,
-  disabled = false,
+  starting = false,
   onRestart,
   onClose,
 }: {
   name: string;
-  disabled?: boolean;
+  starting?: boolean;
   onRestart: () => void;
   onClose: () => void;
 }) {
@@ -1090,19 +1090,19 @@ function SessionActionButtons({
     <>
       <ActionIconButton
         size="icon-sm"
-        tooltip="Restart"
-        aria-label={`Restart ${name}`}
-        disabled={disabled}
+        tooltip={starting ? "Restarting…" : "Restart"}
+        aria-label={starting ? `Restarting ${name}` : `Restart ${name}`}
+        disabled={starting}
         onClick={onRestart}
       >
-        <RotateCcw />
+        {starting ? <Spinner /> : <RotateCcw />}
       </ActionIconButton>
       <ActionIconButton
         size="icon-sm"
         className="hover:text-destructive"
         tooltip="Close session"
         aria-label={`Close ${name}`}
-        disabled={disabled}
+        disabled={starting}
         onClick={onClose}
       >
         <Trash2 />
@@ -1352,7 +1352,7 @@ function SessionRow({
         className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex"
         onClick={(event) => event.stopPropagation()}
       >
-        <SessionActionButtons name={session.name} disabled={starting} onRestart={onRestart} onClose={onClose} />
+        <SessionActionButtons name={session.name} starting={starting} onRestart={onRestart} onClose={onClose} />
       </ItemActions>
     </Item>
   );
@@ -3169,7 +3169,7 @@ function App() {
                         ) : null,
                       )}
                     </Suspense>
-                    {selected.running ? (
+                    {selected.running || selectedStarting ? (
                       <fieldset
                         aria-label="Session actions"
                         className="absolute top-2 right-2 z-20 hidden items-center gap-0.5 rounded-lg bg-background/90 p-0.5 text-muted-foreground shadow-sm"
@@ -3180,6 +3180,7 @@ function App() {
                           size="icon-sm"
                           tooltip="Find in terminal"
                           aria-label="Find in terminal"
+                          disabled={selectedStarting}
                           onClick={() =>
                             document
                               .querySelector<HTMLElement>(
@@ -3194,6 +3195,7 @@ function App() {
                           size="icon-sm"
                           tooltip="Scroll to bottom"
                           aria-label="Scroll to bottom"
+                          disabled={selectedStarting}
                           onClick={() =>
                             document
                               .querySelector<HTMLElement>(
@@ -3206,6 +3208,7 @@ function App() {
                         </ActionIconButton>
                         <SessionActionButtons
                           name={selected.name}
+                          starting={selectedStarting}
                           onRestart={() => void restartSession(selected)}
                           onClose={() => closeSession(selected)}
                         />

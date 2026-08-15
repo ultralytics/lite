@@ -271,6 +271,7 @@ const TABS = [
   { value: "git", label: "Git", icon: GitBranch },
   { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
 ] as const;
+type InspectorTab = (typeof TABS)[number]["value"];
 
 // Every optional field arrives from Serde as null, never as a missing key.
 interface UsageWindow {
@@ -423,11 +424,13 @@ function FileTree({
   rootId,
   query,
   onOpen,
+  onLoad,
 }: {
   root: string;
   rootId: string;
   query: string;
   onOpen: (entry: FileEntry) => void;
+  onLoad: (tab: InspectorTab) => void;
 }) {
   const [children, setChildren] = useState<Record<string, DirectoryListing & { after: DirectoryCursor | null }>>({});
   // The root is the folder the session works in; showing it shut asks for a click to say what the
@@ -463,8 +466,8 @@ function FileTree({
   );
 
   useEffect(() => {
-    void load(root);
-  }, [load, root]);
+    void load(root).finally(() => onLoad("files"));
+  }, [load, onLoad, root]);
 
   async function toggle(path: string) {
     const next = new Set(expanded);
@@ -1025,12 +1028,14 @@ function FilesPanel({
   sessionId,
   fontSize,
   searchRef,
+  onLoad,
 }: {
   root: string;
   rootId: string;
   sessionId: string;
   fontSize: number;
   searchRef: Ref<HTMLInputElement>;
+  onLoad: (tab: InspectorTab) => void;
 }) {
   const [cached] = useState(() => {
     const current = fileEditorsBySession.get(sessionId);
@@ -1127,7 +1132,14 @@ function FilesPanel({
         <SearchInput inputRef={searchRef} value={query} placeholder="Search files" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
           <div style={contentZoomStyle(fontSize)}>
-            <FileTree key={rootId} root={root} rootId={rootId} query={query} onOpen={(entry) => void openFile(entry)} />
+            <FileTree
+              key={rootId}
+              root={root}
+              rootId={rootId}
+              query={query}
+              onOpen={(entry) => void openFile(entry)}
+              onLoad={onLoad}
+            />
           </div>
         </ScrollArea>
       </div>
@@ -1299,6 +1311,7 @@ function GitPanel({
   active,
   fontSize,
   searchRef,
+  onLoad,
 }: {
   rootId: string;
   sessionId: string;
@@ -1306,6 +1319,7 @@ function GitPanel({
   active: boolean;
   fontSize: number;
   searchRef: Ref<HTMLInputElement>;
+  onLoad: (tab: InspectorTab) => void;
 }) {
   const [references, setReferences] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
@@ -1414,6 +1428,10 @@ function GitPanel({
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if ((status !== undefined || error) && items !== undefined) onLoad("git");
+  }, [error, items, onLoad, status]);
+
   const repositories = repositoryGroups(remote, status ?? null, items ?? []);
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
   // repository's own name — and drops the cards left holding nothing.
@@ -1489,7 +1507,15 @@ function missingUsage(session: Session): string {
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
 
-function UsagePanel({ session, fontSize }: { session: Session; fontSize: number }) {
+function UsagePanel({
+  session,
+  fontSize,
+  onLoad,
+}: {
+  session: Session;
+  fontSize: number;
+  onLoad: (tab: InspectorTab) => void;
+}) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
 
@@ -1509,11 +1535,14 @@ function UsagePanel({ session, fontSize }: { session: Session; fontSize: number 
       })
       .catch((reason) => {
         if (!disposed) setError(String(reason));
+      })
+      .finally(() => {
+        if (!disposed) onLoad("usage");
       });
     return () => {
       disposed = true;
     };
-  }, [session.agent, session.provider, session.id]);
+  }, [onLoad, session.agent, session.provider, session.id]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1609,12 +1638,18 @@ export function Inspector({
   // A tab already names the panel it shows, so the panel does not name itself again. The refresh button
   // rebuilds whichever is open, and every explicit Files visit rebuilds that disk snapshot as well.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
+  const [refreshing, setRefreshing] = useState<InspectorTab>();
+
+  const finishRefresh = useCallback((value: InspectorTab) => {
+    setRefreshing((current) => (current === value ? undefined : current));
+  }, []);
 
   function visitTab(value: string) {
     setVisited((current) => including(current, value));
   }
 
-  function refreshTab(value: keyof typeof reload) {
+  function refreshTab(value: InspectorTab) {
+    setRefreshing(value);
     setReload((counts) => ({ ...counts, [value]: counts[value] + 1 }));
   }
 
@@ -1714,12 +1749,13 @@ export function Inspector({
               <ActionIconButton
                 size="icon-sm"
                 className="ml-auto"
-                tooltip="Refresh"
-                aria-label="Refresh"
+                tooltip={refreshing === tab ? "Refreshing…" : "Refresh"}
+                aria-label={refreshing === tab ? "Refreshing" : "Refresh"}
                 data-context-refresh
+                disabled={refreshing === tab}
                 onClick={() => refreshTab(tab as keyof typeof reload)}
               >
-                <RefreshCw />
+                {refreshing === tab ? <Spinner /> : <RefreshCw />}
               </ActionIconButton>
             )}
           </div>
@@ -1732,6 +1768,7 @@ export function Inspector({
                 sessionId={session.id}
                 fontSize={fontSize}
                 searchRef={fileSearch}
+                onLoad={finishRefresh}
               />
             </TabsContent>
           ) : null}
@@ -1745,12 +1782,13 @@ export function Inspector({
                 active={tab === "git" && !collapsed}
                 fontSize={fontSize}
                 searchRef={gitSearch}
+                onLoad={finishRefresh}
               />
             </TabsContent>
           ) : null}
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
-              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} />
+              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} onLoad={finishRefresh} />
             </TabsContent>
           ) : null}
         </Tabs>
