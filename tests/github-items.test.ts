@@ -36,15 +36,17 @@ gh pr view --json number -R ultralytics/lite 94
 gh api repos/ultralytics/assistant/pulls/3048
 `;
 
-    expect(explicit(transcript)).toEqual([
-      "https://github.com/ultralytics/lite/pull/102",
-      "https://github.com/ultralytics/portal/issues/3608",
-      "https://github.com/ultralytics/assistant/issues/3052",
-      "https://github.com/ultralytics/lite/pull/97",
-      "https://github.com/ultralytics/portal/issues/3497",
-      "https://github.com/ultralytics/lite/pull/94",
-      "https://github.com/ultralytics/assistant/pull/3048",
-    ]);
+    expect(githubItemReferences(transcript, "")).toEqual({
+      explicit: [
+        "https://github.com/ultralytics/lite/pull/102",
+        "https://github.com/ultralytics/assistant/issues/3052",
+        "https://github.com/ultralytics/lite/pull/97",
+        "https://github.com/ultralytics/portal/issues/3497",
+        "https://github.com/ultralytics/lite/pull/94",
+        "https://github.com/ultralytics/assistant/pull/3048",
+      ],
+      inferred: ["https://github.com/ultralytics/portal/issues/3608"],
+    });
   });
 
   test("rejects ambiguous and malformed references", () => {
@@ -120,6 +122,23 @@ ultralytics/lite PR #102
         "https://github.com/ultralytics/lite/issues/3052",
         "https://github.com/ultralytics/lite/pull/94",
         "https://github.com/ultralytics/lite/issues/88",
+      ],
+    });
+  });
+
+  test("uses one named repository to resolve bare references without a Git remote", () => {
+    const references = githubItemReferences(
+      `Let's fix and merge https://github.com/ultralytics/portal/pulls
+Reviewed PR 3612, pull request #3611, and issue 3497.`,
+      "",
+    );
+
+    expect(references).toEqual({
+      explicit: [],
+      inferred: [
+        "https://github.com/ultralytics/portal/pull/3612",
+        "https://github.com/ultralytics/portal/pull/3611",
+        "https://github.com/ultralytics/portal/issues/3497",
       ],
     });
   });

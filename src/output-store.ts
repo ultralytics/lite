@@ -19,6 +19,9 @@ interface Buffer {
 
 const buffers = new Map<string, Buffer>();
 const listeners = new Map<string, Set<(data: Uint8Array) => void>>();
+const terminalReaders = new Map<string, () => string>();
+const terminalSnapshots = new Map<string, string>();
+const terminalListeners = new Map<string, Set<() => void>>();
 
 // Titles and working directories arrive whether or not the session is visible, so their shared OSC
 // owner lives here where every session's output arrives rather than in the mounted terminal. Lite's
@@ -143,15 +146,44 @@ export function subscribeOutput(sessionId: string, listener: (data: Uint8Array) 
 // The buffer is bytes because a terminal is bytes. Anything that wants to read back what a session
 // said needs the same bytes as text, decoded as one stream so a character split across two chunks
 // survives the join.
-export function readOutput(sessionId: string) {
+function readOutput(sessionId: string) {
   const buffer = buffers.get(sessionId);
   if (!buffer) return "";
   const decoder = new TextDecoder();
   return buffer.chunks.map((chunk) => decoder.decode(chunk, { stream: true })).join("") + decoder.decode();
 }
 
+// The terminal owns what its control stream means. Consumers that need what a person can actually
+// read ask that owner instead of guessing at cursor movement, erased lines, and soft wrapping.
+export function connectTerminalOutput(sessionId: string, read: () => string) {
+  terminalReaders.set(sessionId, read);
+  return () => {
+    if (terminalReaders.get(sessionId) !== read) return;
+    terminalSnapshots.set(sessionId, read());
+    terminalReaders.delete(sessionId);
+  };
+}
+
+export function readTerminalOutput(sessionId: string) {
+  return terminalReaders.get(sessionId)?.() ?? terminalSnapshots.get(sessionId) ?? readOutput(sessionId);
+}
+
+export function notifyTerminalOutput(sessionId: string) {
+  for (const listener of terminalListeners.get(sessionId) ?? []) listener();
+}
+
+export function subscribeTerminalOutput(sessionId: string, listener: () => void) {
+  const sessionListeners = terminalListeners.get(sessionId) ?? new Set();
+  sessionListeners.add(listener);
+  terminalListeners.set(sessionId, sessionListeners);
+  return () => sessionListeners.delete(listener);
+}
+
 export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
+  terminalReaders.delete(sessionId);
+  terminalSnapshots.delete(sessionId);
+  terminalListeners.delete(sessionId);
   writes.delete(sessionId);
 }
 

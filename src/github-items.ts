@@ -17,10 +17,12 @@ export interface GitHubReferences {
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 const GITHUB_ITEM = /\bhttps:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(pull|issues)\/([1-9]\d{0,8})(?!\w)/gi;
+const GITHUB_REPOSITORY =
+  /\bhttps:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?=\/(?:pulls?|issues)(?:[/?#\s]|$)|\/?(?:[?#\s]|$))/gi;
 const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
 const ITEM_MENTION =
-  /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?![\w.])/gi;
-const BARE_ITEM_MENTION = /(?:^|[^\w./-])(pull requests?|PRs?|issues?)[ \t]+#([1-9]\d{0,8})(?![\w.])/gi;
+  /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?!\w|\.\d)/gi;
+const BARE_ITEM_MENTION = /(?:^|[^\w./-])(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const GH_ITEM_COMMAND =
   /\bgh\s+(issue|pr)\s+(?!create\b|list\b|status\b)[\w-]+((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
@@ -47,16 +49,21 @@ export function githubItemReferences(output: string, remote: string): GitHubRefe
     });
   };
   const base = remote.match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i);
-  const repository = base ? `${base[1]}/${base[2]}` : "";
+  const repositories = new Set<string>();
+  for (const match of text.matchAll(GITHUB_REPOSITORY)) repositories.add(`${match[1]}/${match[2]}`);
+  const repository = base ? `${base[1]}/${base[2]}` : repositories.size === 1 ? [...repositories][0] : "";
 
   for (const match of text.matchAll(GITHUB_ITEM))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
-  for (const match of text.matchAll(QUALIFIED_ITEM)) add(match, `${match[1]}/${match[2]}`, "issues", match[3], 1);
+  for (const match of text.matchAll(QUALIFIED_ITEM)) add(match, `${match[1]}/${match[2]}`, "issues", match[3], 1, true);
+  const qualifiedMentions: [number, number][] = [];
   for (const match of text.matchAll(ITEM_MENTION)) {
     add(match, match[1], match[2].toLowerCase().startsWith("issue") ? "issues" : "pull", match[3], 2);
+    qualifiedMentions.push([match.index, match.index + match[0].length]);
   }
   if (repository) {
     for (const match of text.matchAll(BARE_ITEM_MENTION)) {
+      if (qualifiedMentions.some(([start, end]) => match.index >= start && match.index < end)) continue;
       add(match, repository, match[1].toLowerCase().startsWith("issue") ? "issues" : "pull", match[2], 0, true);
     }
   }
