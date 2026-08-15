@@ -3,10 +3,21 @@
 import { describe, expect, test } from "bun:test";
 
 import { githubItemReferences, likelyGitHubItems } from "../src/github-items";
+import { clearOutput, readTerminalInput, recordTerminalInput } from "../src/output-store";
 
-const explicit = (output: string) => githubItemReferences(output, "").explicit;
+const references = (output: string, remote = "", terminalStream = "", prose = output) =>
+  githubItemReferences(output, remote, terminalStream, prose);
+const explicit = (output: string) => references(output).explicit;
 
 describe("githubItemReferences", () => {
+  test("keeps user prose separate from terminal output for the session lifetime", () => {
+    recordTerminalInput("session", "Review PR #112");
+    recordTerminalInput("session", "and issue 90");
+    expect(readTerminalInput("session")).toBe("Review PR #112\nand issue 90");
+    clearOutput("session");
+    expect(readTerminalInput("session")).toBe("");
+  });
+
   test("does not assign commands from moved worktrees to the session repository", () => {
     const transcript = `
 $ gh pr view 3608 --repo ultralytics/portal --json url
@@ -36,7 +47,7 @@ gh pr view --json number -R ultralytics/lite 94
 gh api repos/ultralytics/assistant/pulls/3048
 `;
 
-    expect(githubItemReferences(transcript, "")).toEqual({
+    expect(references(transcript)).toEqual({
       explicit: [
         "https://github.com/ultralytics/lite/pull/102",
         "https://github.com/ultralytics/portal/issues/3608",
@@ -99,7 +110,7 @@ gh issue view 102 --repo ULTRALYTICS/LITE
       "\u001b[32mhttps://github.com/ultralytics/lite/issues/88\u001b[0m " +
       "\u001b]8;;https://github.com/ultralytics/lite/pull/90\u0007PR\u001b]8;;\u0007";
 
-    expect(githubItemReferences("https://github.com/ultralytics/lite/issues/88 PR", "", transcript).explicit).toEqual([
+    expect(references("https://github.com/ultralytics/lite/issues/88 PR", "", transcript).explicit).toEqual([
       "https://github.com/ultralytics/lite/issues/88",
       "https://github.com/ultralytics/lite/pull/90",
     ]);
@@ -107,11 +118,11 @@ gh issue view 102 --repo ULTRALYTICS/LITE
 
   test("does not recover incomplete plain URLs from the control stream", () => {
     const stream = "https://github.com/ultralytics/lite/pull/36\u001b[2D12";
-    expect(githubItemReferences("", "", stream)).toEqual({ explicit: [], inferred: [] });
+    expect(references("", "", stream)).toEqual({ explicit: [], inferred: [] });
   });
 
   test("separates ambiguous references for recent-activity verification", () => {
-    const references = githubItemReferences(
+    const found = references(
       `
 PR #102 and issue #3052
 gh pr view 94
@@ -122,7 +133,7 @@ ultralytics/lite PR #102
       "https://github.com/ultralytics/lite",
     );
 
-    expect(references).toEqual({
+    expect(found).toEqual({
       explicit: ["https://github.com/ultralytics/lite/pull/102", "https://github.com/ultralytics/lite/pull/97"],
       inferred: [
         "https://github.com/ultralytics/lite/issues/3052",
@@ -132,25 +143,26 @@ ultralytics/lite PR #102
     });
   });
 
-  test("uses one named repository to resolve bare references without a Git remote", () => {
-    const references = githubItemReferences(
-      `Let's fix and merge https://github.com/ultralytics/portal/pulls
-Reviewed PR 3612, pull request #3611, and issue 3497.`,
+  test("accepts user prose while rejecting unrelated output prose", () => {
+    const found = references(
+      `https://github.com/ultralytics/lite/pull/111
+PRs #57/#56 merged
+sessionUndoToast, PR 57, Shift+Enter, PR 56
+91cec83 Add macOS session notifications and settings workspace (#84)
+The agent also discussed ultralytics/portal PR #3612.`,
+      "https://github.com/ultralytics/lite",
       "",
+      "Review PR #112 and issue 90 in this session",
     );
 
-    expect(references).toEqual({
-      explicit: [],
-      inferred: [
-        "https://github.com/ultralytics/portal/pull/3612",
-        "https://github.com/ultralytics/portal/pull/3611",
-        "https://github.com/ultralytics/portal/issues/3497",
-      ],
+    expect(found).toEqual({
+      explicit: ["https://github.com/ultralytics/lite/pull/111", "https://github.com/ultralytics/portal/pull/3612"],
+      inferred: ["https://github.com/ultralytics/lite/pull/112", "https://github.com/ultralytics/lite/issues/90"],
     });
   });
 
-  test("excludes sentence punctuation from a repository link", () => {
-    expect(githubItemReferences("See https://github.com/ultralytics/portal. Then review PR 3612.", "")).toEqual({
+  test("uses one named repository to resolve user prose without a Git remote", () => {
+    expect(references("See https://github.com/ultralytics/portal. Then review PR 3612.")).toEqual({
       explicit: [],
       inferred: ["https://github.com/ultralytics/portal/pull/3612"],
     });
@@ -172,7 +184,7 @@ Reviewed PR 3612, pull request #3611, and issue 3497.`,
   });
 
   test("removes the cross-worktree duplicates from the reported transcript", () => {
-    const references = githubItemReferences(
+    const found = references(
       `
 gh pr view 102 --json url
 https://github.com/ultralytics/lite/pull/102
@@ -181,12 +193,12 @@ https://github.com/ultralytics/assistant/pull/3052
 `,
       "https://github.com/ultralytics/portal",
     );
-    const checked = [...references.explicit, ...references.inferred].map((url) => ({
+    const checked = [...found.explicit, ...found.inferred].map((url) => ({
       url,
       updatedAt: url.includes("/portal/") ? "2026-07-01T00:00:00Z" : "2026-08-14T17:00:00Z",
     }));
 
-    expect(likelyGitHubItems(checked, references.inferred, Date.parse("2026-08-14T18:00:00Z"))).toEqual([
+    expect(likelyGitHubItems(checked, found.inferred, Date.parse("2026-08-14T18:00:00Z"))).toEqual([
       checked[0],
       checked[1],
     ]);

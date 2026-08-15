@@ -14,6 +14,7 @@ import {
   connectTerminalOutput,
   MAX_OUTPUT_BYTES,
   notifyTerminalOutput,
+  recordTerminalInput,
   subscribeOutput,
   writeSession,
 } from "@/output-store";
@@ -276,7 +277,10 @@ export function TerminalView({
         if (character === "\r" || character === "\n") {
           const line = typed.trim();
           typed = "";
-          if (line) promptRef.current(line);
+          if (line) {
+            recordTerminalInput(sessionId, line);
+            promptRef.current(line);
+          }
         } else if (character === "\u007f") typed = typed.slice(0, -1);
         else if (character >= " ") typed += character;
       }

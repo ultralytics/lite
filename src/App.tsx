@@ -1941,7 +1941,7 @@ function App() {
         ) {
           const session = sessionsRef.current.find((item) => item.id === payload.sessionId);
           if (notificationsRef.current && session)
-            void invoke("send_notification", { title: session.name, sessionId: session.id }).catch(() => {});
+            void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
         }
         if (activity !== false) markWorking(payload.sessionId);
       }),
@@ -2279,7 +2279,8 @@ function App() {
       }
     });
     toastId = toast.add({
-      title: `${action} “${session.name}”`,
+      title: action,
+      description: session.name,
       type: "success",
       timeout: 8000,
       onClose: async () => {

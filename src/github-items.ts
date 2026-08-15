@@ -12,8 +12,8 @@ export interface GitHubReferences {
   inferred: string[];
 }
 
-// Repository-qualified references are certain. Bare references use the session repository only as a
-// candidate: GitHub activity must independently confirm them before they reach the panel.
+// Repository-qualified references are certain. Bare references from user prose and unqualified GitHub CLI
+// commands use the session repository only as a candidate: GitHub activity must confirm them before the panel.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC hyperlinks are terminal framing.
@@ -32,8 +32,14 @@ const GH_REPOSITORY =
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
 
-export function githubItemReferences(output: string, remote: string, terminalStream = ""): GitHubReferences {
+export function githubItemReferences(
+  output: string,
+  remote: string,
+  terminalStream: string,
+  prose: string,
+): GitHubReferences {
   const text = output.replace(COLOR, "");
+  const userText = prose.replace(COLOR, "");
   const candidates: Candidate[] = [];
   const add = (
     match: RegExpMatchArray,
@@ -64,14 +70,16 @@ export function githubItemReferences(output: string, remote: string, terminalStr
     for (const match of hyperlink[1].matchAll(GITHUB_ITEM))
       add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
   }
-  for (const match of text.matchAll(QUALIFIED_ITEM)) add(match, `${match[1]}/${match[2]}`, "issues", match[3], 1);
   const qualifiedMentions: [number, number][] = [];
-  for (const match of text.matchAll(ITEM_MENTION)) {
-    add(match, match[1], match[2].toLowerCase().startsWith("issue") ? "issues" : "pull", match[3], 2);
-    qualifiedMentions.push([match.index, match.index + match[0].length]);
+  for (const source of new Set([text, userText])) {
+    for (const match of source.matchAll(QUALIFIED_ITEM)) add(match, `${match[1]}/${match[2]}`, "issues", match[3], 1);
+    for (const match of source.matchAll(ITEM_MENTION)) {
+      add(match, match[1], match[2].toLowerCase().startsWith("issue") ? "issues" : "pull", match[3], 2);
+      if (source === userText) qualifiedMentions.push([match.index, match.index + match[0].length]);
+    }
   }
   if (repository) {
-    for (const match of text.matchAll(BARE_ITEM_MENTION)) {
+    for (const match of userText.matchAll(BARE_ITEM_MENTION)) {
       if (qualifiedMentions.some(([start, end]) => match.index >= start && match.index < end)) continue;
       add(match, repository, match[1].toLowerCase().startsWith("issue") ? "issues" : "pull", match[2], 0, true);
     }

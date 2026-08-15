@@ -77,7 +77,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { githubItemReferences, likelyGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
-import { readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
+import { readTerminalInput, readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
 import { contentZoomStyle } from "@/theme";
 import {
   type DirectoryCursor,
@@ -94,7 +94,12 @@ import {
 const CodePreview = lazy(() => import("@/code-preview"));
 
 function namedInSession(sessionId: string, remote: string) {
-  return githubItemReferences(readTerminalOutput(sessionId), remote, readTerminalStream(sessionId));
+  return githubItemReferences(
+    readTerminalOutput(sessionId),
+    remote,
+    readTerminalStream(sessionId),
+    readTerminalInput(sessionId),
+  );
 }
 
 interface GitHubReference {
@@ -1360,8 +1365,8 @@ function GitPanel({
     };
   }, [active, remote, sessionId]);
 
-  // Explicit references always survive the lookup. A bare reference inferred from the session folder
-  // survives only when GitHub confirms activity in the last 30 days.
+  // Explicit references always survive the lookup. User prose or an unqualified command inferred from
+  // the session folder survives only when GitHub confirms activity in the last 30 days.
   useEffect(() => {
     const { explicit, inferred } = references;
     const urls = [...explicit, ...inferred];
