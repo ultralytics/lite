@@ -3,11 +3,38 @@
 import { describe, expect, test } from "bun:test";
 
 import { githubItemReferences, likelyGitHubItems } from "../src/github-items";
-import { clearOutput, readTerminalInput, recordTerminalInput } from "../src/output-store";
+import { appendOutput, clearOutput, readTerminalInput, recordTerminalInput } from "../src/output-store";
 
 const references = (output: string, remote = "", terminalStream = "", prose = output) =>
   githubItemReferences(output, remote, terminalStream, prose);
 const explicit = (output: string) => references(output).explicit;
+
+describe("output activity", () => {
+  test("keeps Claude background activity authoritative across output chunks", () => {
+    const bytes = (value: string) => [...new TextEncoder().encode(value)];
+    expect(appendOutput("activity", bytes("\x1b]6973;lite-work"))).toMatchObject({
+      activityChanged: false,
+      backgroundActivity: undefined,
+    });
+    expect(appendOutput("activity", bytes("ing\x07Lite"))).toMatchObject({
+      activity: true,
+      activityChanged: true,
+      backgroundActivity: true,
+    });
+    expect(appendOutput("activity", bytes("\x07"))).toMatchObject({
+      activity: undefined,
+      activityChanged: false,
+      backgroundActivity: true,
+      notification: true,
+    });
+    expect(appendOutput("activity", bytes("\x1b]6973;lite-idle\x07Lite"))).toMatchObject({
+      activity: false,
+      activityChanged: true,
+      backgroundActivity: false,
+    });
+    clearOutput("activity");
+  });
+});
 
 describe("githubItemReferences", () => {
   test("keeps user prose separate from terminal output for the session lifetime", () => {

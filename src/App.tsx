@@ -1855,13 +1855,17 @@ function App() {
   }, [commit, askRelease]);
 
   // Output arrives as a stream of chunks, so this touches React state only on the two edges of a
-  // burst: the first chunk marks the session working, and a quiet spell marks it idle again. Between
-  // those the timer is just reset, which keeps a busy session from re-rendering the sidebar per chunk.
-  const markWorking = useCallback((sessionId: string) => {
+  // burst. Claude's explicit background activity holds the working edge until its last descendant
+  // stops; ordinary output still becomes idle after one quiet spell.
+  const markWorking = useCallback((sessionId: string, sustained = false) => {
     const timers = workTimers.current;
     const pending = timers.get(sessionId);
     if (pending) window.clearTimeout(pending);
     else setWorking((current) => including(current, sessionId));
+    if (sustained) {
+      timers.delete(sessionId);
+      return;
+    }
     timers.set(
       sessionId,
       window.setTimeout(() => {
@@ -1931,11 +1935,16 @@ function App() {
     void Promise.all([
       listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const { title, path, activity, notification } = appendOutput(payload.sessionId, payload.data);
+        const { title, path, activity, activityChanged, backgroundActivity, notification } = appendOutput(
+          payload.sessionId,
+          payload.data,
+        );
         if (title) markTitle(payload.sessionId, title);
         if (path) markDirectory(payload.sessionId, path);
+        if (activity === true) clearAttention(payload.sessionId);
         if (
           notification &&
+          !backgroundActivity &&
           (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()) &&
           markAttention(payload.sessionId)
         ) {
@@ -1943,7 +1952,8 @@ function App() {
           if (notificationsRef.current && session)
             void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
         }
-        if (activity !== false) markWorking(payload.sessionId);
+        if (activity !== false) markWorking(payload.sessionId, backgroundActivity);
+        else if (activityChanged) markWorking(payload.sessionId);
       }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
@@ -1993,7 +2003,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
+  }, [clearAttention, forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
 
   const changeNotifications = useCallback(async (enabled: boolean) => {
     const stored = localStorage.getItem(NOTIFICATIONS_KEY);
