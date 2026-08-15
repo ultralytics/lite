@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { FitAddon } from "@xterm/addon-fit";
-import { SearchAddon } from "@xterm/addon-search";
+import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
 import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
@@ -22,6 +22,20 @@ import type { Agent } from "@/types";
 
 const SEARCH_HIGHLIGHT_LIMIT = 5000;
 const countFormat = new Intl.NumberFormat();
+
+function searchOptions(theme: Theme): ISearchOptions {
+  const dark = theme === "dark";
+  return {
+    decorations: {
+      matchBackground: dark ? "#92400e" : "#fde68a",
+      matchBorder: dark ? "#fbbf24" : "#f59e0b",
+      matchOverviewRuler: "#f59e0b",
+      activeMatchBackground: dark ? "#c2410c" : "#fdba74",
+      activeMatchBorder: "#fb923c",
+      activeMatchColorOverviewRuler: "#f97316",
+    },
+  };
+}
 
 // Surface colors follow the app tokens; ANSI colors follow GitHub light and dark, matching the code preview.
 const themes: Record<Theme, ITheme> = {
@@ -152,6 +166,9 @@ export function TerminalView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState({ resultIndex: -1, resultCount: 0 });
+  const searchQueryRef = useRef("");
+  const searchResultRef = useRef(searchResult);
+  const desiredSearchResultRef = useRef(0);
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
   const workingRef = useRef(working);
@@ -194,7 +211,10 @@ export function TerminalView({
     const searchAddon = new SearchAddon({ highlightLimit: SEARCH_HIGHLIGHT_LIMIT });
     searchAddonRef.current = searchAddon;
     terminal.loadAddon(searchAddon);
-    const searchResults = searchAddon.onDidChangeResults(setSearchResult);
+    const searchResults = searchAddon.onDidChangeResults((result) => {
+      searchResultRef.current = result;
+      setSearchResult(result);
+    });
     // Links go to the system browser, the way every other terminal handles them.
     terminal.loadAddon(
       new WebLinksAddon((event, url) => {
@@ -204,7 +224,36 @@ export function TerminalView({
     );
     terminal.open(container);
     const disconnectTerminalOutput = connectTerminalOutput(sessionId, () => renderedOutput(terminal));
-    const parsed = terminal.onWriteParsed(() => notifyTerminalOutput(sessionId));
+    // The addon waits for output to go quiet before rebuilding its result map, which a live TUI may
+    // never do. Refresh at a bounded rate while it writes, then once more after its final redraw.
+    let searchRefresh = 0;
+    let searchSettle = 0;
+    const refreshSearch = () => {
+      const query = searchQueryRef.current;
+      if (!query) return;
+      const activeResult = desiredSearchResultRef.current;
+      const options = searchOptions(themeRef.current);
+      terminal.clearSelection();
+      searchAddon.clearDecorations();
+      searchAddon.findNext(query, options);
+      const target = Math.min(activeResult, searchResultRef.current.resultCount - 1);
+      for (let index = 0; index < target; index++) searchAddon.findNext(query, options);
+      desiredSearchResultRef.current = Math.max(0, target);
+    };
+    const parsed = terminal.onWriteParsed(() => {
+      notifyTerminalOutput(sessionId);
+      if (!searchQueryRef.current) return;
+      if (!searchRefresh)
+        searchRefresh = window.setTimeout(() => {
+          searchRefresh = 0;
+          refreshSearch();
+        }, 200);
+      window.clearTimeout(searchSettle);
+      searchSettle = window.setTimeout(() => {
+        searchSettle = 0;
+        refreshSearch();
+      }, 250);
+    });
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
     // Typing, pasting, and the terminal's own answers to the program's cursor, focus, and color
@@ -293,6 +342,8 @@ export function TerminalView({
 
     return () => {
       window.clearTimeout(settle);
+      window.clearTimeout(searchRefresh);
+      window.clearTimeout(searchSettle);
       observer.disconnect();
       searchResults.dispose();
       input.dispose();
@@ -315,7 +366,10 @@ export function TerminalView({
   }, [starting]);
 
   useEffect(() => {
-    if (terminalRef.current) terminalRef.current.options.theme = themes[theme];
+    if (terminalRef.current)
+      terminalRef.current.options.theme = searchQueryRef.current
+        ? { ...themes[theme], selectionBackground: theme === "dark" ? "#c2410c" : "#fdba74" }
+        : themes[theme];
   }, [theme]);
 
   useEffect(() => {
@@ -334,30 +388,32 @@ export function TerminalView({
   function find(term: string, previous = false, incremental = false) {
     const searchAddon = searchAddonRef.current;
     if (!searchAddon) return;
+    const terminal = terminalRef.current;
     if (!term) {
       searchAddon.clearDecorations();
-      setSearchResult({ resultIndex: -1, resultCount: 0 });
+      if (terminal) terminal.options.theme = themes[themeRef.current];
+      const result = { resultIndex: -1, resultCount: 0 };
+      searchResultRef.current = result;
+      setSearchResult(result);
       return;
     }
     const dark = themeRef.current === "dark";
-    searchAddon[previous ? "findPrevious" : "findNext"](term, {
-      incremental,
-      decorations: {
-        matchBackground: dark ? "#78350f" : "#fde68a",
-        matchBorder: dark ? "#fbbf24" : "#f59e0b",
-        matchOverviewRuler: "#f59e0b",
-        activeMatchBackground: dark ? "#c2410c" : "#fdba74",
-        activeMatchBorder: "#fb923c",
-        activeMatchColorOverviewRuler: "#f97316",
-      },
-    });
+    if (terminal && terminal.options.theme?.selectionBackground === themes[themeRef.current].selectionBackground)
+      terminal.options.theme = { ...themes[themeRef.current], selectionBackground: dark ? "#c2410c" : "#fdba74" };
+    searchAddon[previous ? "findPrevious" : "findNext"](term, { ...searchOptions(themeRef.current), incremental });
+    if (searchResultRef.current.resultIndex >= 0) desiredSearchResultRef.current = searchResultRef.current.resultIndex;
   }
 
   function closeSearch() {
     searchAddonRef.current?.clearDecorations();
+    if (terminalRef.current) terminalRef.current.options.theme = themes[themeRef.current];
     setSearchOpen(false);
     setSearchQuery("");
-    setSearchResult({ resultIndex: -1, resultCount: 0 });
+    searchQueryRef.current = "";
+    desiredSearchResultRef.current = 0;
+    const result = { resultIndex: -1, resultCount: 0 };
+    searchResultRef.current = result;
+    setSearchResult(result);
     terminalRef.current?.focus();
   }
 
@@ -405,6 +461,8 @@ export function TerminalView({
               placeholder="Find in terminal"
               aria-label="Find in terminal"
               onChange={(event) => {
+                searchQueryRef.current = event.target.value;
+                desiredSearchResultRef.current = 0;
                 setSearchQuery(event.target.value);
                 find(event.target.value, false, true);
               }}
