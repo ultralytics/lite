@@ -2,6 +2,15 @@
 
 blank_issues_enabled: true
 contact_links:
-  - name: Ultralytics discussions
-    url: https://github.com/orgs/ultralytics/discussions
-    about: Ask the broader Ultralytics community.
+  - name: 📦 Releases
+    url: https://github.com/ultralytics/lite/releases/latest
+    about: Download the latest Ultralytics Lite release
+  - name: 💬 Forum
+    url: https://community.ultralytics.com/
+    about: Ask on Ultralytics Community Forum
+  - name: 🎧 Discord
+    url: https://ultralytics.com/discord
+    about: Ask on Ultralytics Discord
+  - name: ⌨️ Reddit
+    url: https://reddit.com/r/ultralytics
+    about: Ask on Ultralytics Subreddit

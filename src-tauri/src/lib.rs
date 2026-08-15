@@ -430,6 +430,7 @@ fn set_keep_awake(wake_lock: State<WakeLock>, enabled: bool) -> Result<(), Strin
 #[derive(Default)]
 struct Roots(Mutex<HashMap<String, PathBuf>>);
 
+#[derive(Default)]
 struct FileBrowserSettings {
     home: Option<PathBuf>,
     show_claude: AtomicBool,
@@ -616,13 +617,56 @@ fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
 // entry itself: following a symlink here would delete its target instead of the link the user chose.
 fn scoped_entry(root: &Path, path: &str) -> Result<PathBuf, String> {
     let path = Path::new(path);
-    let name = path.file_name().ok_or("Path is not a file")?;
+    let Some(std::path::Component::Normal(name)) = path.components().next_back() else {
+        return Err("Path is outside the selected folder".into());
+    };
     let parent = path.parent().ok_or("Path is outside the selected folder")?;
     let parent = fs::canonicalize(parent).map_err(|error| error.to_string())?;
     if !parent.starts_with(root) {
         return Err("Path is outside the selected folder".into());
     }
     Ok(parent.join(name))
+}
+
+fn contains_sensitive_entry(
+    settings: &FileBrowserSettings,
+    root: &Path,
+    path: &Path,
+) -> Result<bool, String> {
+    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        if settings.is_sensitive_path(root, &entry.path()) {
+            return Ok(true);
+        }
+        if entry
+            .file_type()
+            .map_err(|error| error.to_string())?
+            .is_dir()
+            && contains_sensitive_entry(settings, root, &entry.path())?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn remove_entry(settings: &FileBrowserSettings, root: &Path, path: &Path) -> Result<(), String> {
+    if settings.is_sensitive_path(root, path) {
+        return Err("Sensitive files and folders cannot be deleted from Lite".into());
+    }
+    let file_type = fs::symlink_metadata(path)
+        .map_err(|error| error.to_string())?
+        .file_type();
+    if file_type.is_dir() {
+        if contains_sensitive_entry(settings, root, path)? {
+            return Err("Folders containing sensitive files cannot be deleted from Lite".into());
+        }
+        fs::remove_dir_all(path).map_err(|error| error.to_string())
+    } else if file_type.is_file() || file_type.is_symlink() {
+        fs::remove_file(path).map_err(|error| error.to_string())
+    } else {
+        Err("Only files and folders can be deleted".into())
+    }
 }
 
 fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
@@ -3832,7 +3876,7 @@ async fn write_text_file(
 }
 
 #[tauri::command]
-async fn delete_file(
+async fn delete_entry(
     settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
@@ -3840,16 +3884,7 @@ async fn delete_file(
 ) -> Result<(), String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_entry(&root, &path)?;
-    if settings.is_sensitive_path(&root, &path) {
-        return Err("Sensitive files cannot be deleted from Lite".into());
-    }
-    let file_type = fs::symlink_metadata(&path)
-        .map_err(|error| error.to_string())?
-        .file_type();
-    if !file_type.is_file() && !file_type.is_symlink() {
-        return Err("Only files can be deleted".into());
-    }
-    fs::remove_file(path).map_err(|error| error.to_string())
+    remove_entry(&settings, &root, &path)
 }
 
 #[tauri::command]
@@ -5268,7 +5303,7 @@ pub fn run() {
             list_directory,
             read_text_file,
             write_text_file,
-            delete_file,
+            delete_entry,
             show_claude_folder,
             set_show_claude_folder,
             git_status,
@@ -5374,6 +5409,54 @@ mod tests {
         let entry = scoped_entry(&root, link.to_str().unwrap()).unwrap();
         fs::remove_dir_all(base).unwrap();
         assert_eq!(entry, root.join("link.txt"));
+    }
+
+    #[test]
+    fn remove_entry_deletes_nonempty_directories() {
+        let directory =
+            std::env::temp_dir().join(format!("lite-delete-directory-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("nested")).unwrap();
+        fs::write(directory.join("nested/file.txt"), "delete").unwrap();
+
+        remove_entry(
+            &FileBrowserSettings::default(),
+            directory.parent().unwrap(),
+            &directory,
+        )
+        .unwrap();
+
+        assert!(!directory.exists());
+    }
+
+    #[test]
+    fn remove_entry_preserves_sensitive_descendants() {
+        let directory =
+            std::env::temp_dir().join(format!("lite-delete-directory-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(directory.join("nested")).unwrap();
+        fs::write(directory.join("nested/.env"), "keep").unwrap();
+
+        assert!(
+            remove_entry(
+                &FileBrowserSettings::default(),
+                directory.parent().unwrap(),
+                &directory
+            )
+            .is_err()
+        );
+        assert!(directory.join("nested/.env").exists());
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn scoped_entry_rejects_parent_segments() {
+        let root = std::env::temp_dir().join(format!("lite-scoped-entry-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("child")).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+
+        assert!(scoped_entry(&root, &path_text(&root.join("child/.."))).is_err());
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[cfg(not(windows))]
