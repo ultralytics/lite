@@ -170,8 +170,6 @@ export function TerminalView({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState({ resultIndex: -1, resultCount: 0 });
   const searchQueryRef = useRef("");
-  const searchResultRef = useRef(searchResult);
-  const desiredSearchResultRef = useRef(0);
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
   const workingRef = useRef(working);
@@ -215,7 +213,6 @@ export function TerminalView({
     searchAddonRef.current = searchAddon;
     terminal.loadAddon(searchAddon);
     const searchResults = searchAddon.onDidChangeResults((result) => {
-      searchResultRef.current = result;
       setSearchResult(result);
     });
     // Links go to the system browser, the way every other terminal handles them.
@@ -228,20 +225,15 @@ export function TerminalView({
     terminal.open(container);
     const disconnectTerminalOutput = connectTerminalOutput(sessionId, () => renderedOutput(terminal));
     // The addon waits for output to go quiet before rebuilding its result map, which a live TUI may
-    // never do. Refresh at a bounded rate while it writes, then once more after its final redraw.
+    // never do. Refresh at a bounded rate while it writes; the addon's own timer handles the final pass.
     let searchRefresh = 0;
-    let searchSettle = 0;
     const refreshSearch = () => {
       const query = searchQueryRef.current;
       if (!query) return;
-      const activeResult = desiredSearchResultRef.current;
-      const options = searchOptions(themeRef.current);
-      terminal.clearSelection();
+      // Clearing decorations leaves xterm's selection in place, so the addon rebuilds highlights and
+      // reselects that same match directly instead of replaying every earlier match.
       searchAddon.clearDecorations();
-      searchAddon.findNext(query, options);
-      const target = Math.min(activeResult, searchResultRef.current.resultCount - 1);
-      for (let index = 0; index < target; index++) searchAddon.findNext(query, options);
-      desiredSearchResultRef.current = Math.max(0, target);
+      searchAddon.findNext(query, { ...searchOptions(themeRef.current), incremental: true });
     };
     const parsed = terminal.onWriteParsed(() => {
       notifyTerminalOutput(sessionId);
@@ -251,11 +243,6 @@ export function TerminalView({
           searchRefresh = 0;
           refreshSearch();
         }, 200);
-      window.clearTimeout(searchSettle);
-      searchSettle = window.setTimeout(() => {
-        searchSettle = 0;
-        refreshSearch();
-      }, 250);
     });
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
@@ -349,7 +336,6 @@ export function TerminalView({
     return () => {
       window.clearTimeout(settle);
       window.clearTimeout(searchRefresh);
-      window.clearTimeout(searchSettle);
       observer.disconnect();
       searchResults.dispose();
       input.dispose();
@@ -399,7 +385,6 @@ export function TerminalView({
       searchAddon.clearDecorations();
       if (terminal) terminal.options.theme = themes[themeRef.current];
       const result = { resultIndex: -1, resultCount: 0 };
-      searchResultRef.current = result;
       setSearchResult(result);
       return;
     }
@@ -408,14 +393,7 @@ export function TerminalView({
         ...themes[themeRef.current],
         selectionBackground: searchHighlights[themeRef.current].active,
       };
-    const current = desiredSearchResultRef.current;
     searchAddon[previous ? "findPrevious" : "findNext"](term, { ...searchOptions(themeRef.current), incremental });
-    const result = searchResultRef.current;
-    if (result.resultIndex >= 0) desiredSearchResultRef.current = result.resultIndex;
-    else if (result.resultCount)
-      desiredSearchResultRef.current = incremental
-        ? 0
-        : (current + (previous ? -1 : 1) + result.resultCount) % result.resultCount;
   }
 
   function closeSearch() {
@@ -424,9 +402,7 @@ export function TerminalView({
     setSearchOpen(false);
     setSearchQuery("");
     searchQueryRef.current = "";
-    desiredSearchResultRef.current = 0;
     const result = { resultIndex: -1, resultCount: 0 };
-    searchResultRef.current = result;
     setSearchResult(result);
     terminalRef.current?.focus();
   }
@@ -490,7 +466,6 @@ export function TerminalView({
               aria-label="Find in terminal"
               onChange={(event) => {
                 searchQueryRef.current = event.target.value;
-                desiredSearchResultRef.current = 0;
                 setSearchQuery(event.target.value);
                 find(event.target.value, false, true);
               }}
