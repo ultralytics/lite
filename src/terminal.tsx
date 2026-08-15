@@ -22,17 +22,19 @@ import type { Agent } from "@/types";
 
 const SEARCH_HIGHLIGHT_LIMIT = 5000;
 const countFormat = new Intl.NumberFormat();
+const searchHighlights: Record<Theme, { match: string; active: string }> = {
+  light: { match: "#fff8c5", active: "#d4a72c" },
+  dark: { match: "#5a4314", active: "#9e6a03" },
+};
 
 function searchOptions(theme: Theme): ISearchOptions {
-  const dark = theme === "dark";
+  const highlights = searchHighlights[theme];
   return {
     decorations: {
-      matchBackground: dark ? "#92400e" : "#fde68a",
-      matchBorder: dark ? "#fbbf24" : "#f59e0b",
-      matchOverviewRuler: "#f59e0b",
-      activeMatchBackground: dark ? "#c2410c" : "#fdba74",
-      activeMatchBorder: "#fb923c",
-      activeMatchColorOverviewRuler: "#f97316",
+      matchBackground: highlights.match,
+      matchOverviewRuler: "#d4a72c",
+      activeMatchBackground: highlights.active,
+      activeMatchColorOverviewRuler: "#9a6700",
     },
   };
 }
@@ -368,7 +370,7 @@ export function TerminalView({
   useEffect(() => {
     if (terminalRef.current)
       terminalRef.current.options.theme = searchQueryRef.current
-        ? { ...themes[theme], selectionBackground: theme === "dark" ? "#c2410c" : "#fdba74" }
+        ? { ...themes[theme], selectionBackground: searchHighlights[theme].active }
         : themes[theme];
   }, [theme]);
 
@@ -397,9 +399,11 @@ export function TerminalView({
       setSearchResult(result);
       return;
     }
-    const dark = themeRef.current === "dark";
     if (terminal && terminal.options.theme?.selectionBackground === themes[themeRef.current].selectionBackground)
-      terminal.options.theme = { ...themes[themeRef.current], selectionBackground: dark ? "#c2410c" : "#fdba74" };
+      terminal.options.theme = {
+        ...themes[themeRef.current],
+        selectionBackground: searchHighlights[themeRef.current].active,
+      };
     searchAddon[previous ? "findPrevious" : "findNext"](term, { ...searchOptions(themeRef.current), incremental });
     if (searchResultRef.current.resultIndex >= 0) desiredSearchResultRef.current = searchResultRef.current.resultIndex;
   }
