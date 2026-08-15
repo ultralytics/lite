@@ -3675,12 +3675,7 @@ function App() {
             built={built}
             repo={repo}
             onCheckForUpdates={() => void checkForUpdates()}
-            onFileBrowserChange={() => {
-              sessions.forEach((session) => {
-                clearInspectorCache(session.id);
-              });
-              setFileBrowserVersion((version) => version + 1);
-            }}
+            onFileBrowserChange={() => setFileBrowserVersion((version) => version + 1)}
           />
           <Toaster />
         </div>

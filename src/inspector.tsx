@@ -1038,6 +1038,7 @@ function FilesPanel({
   rootId,
   sessionId,
   fontSize,
+  fileBrowserVersion,
   searchRef,
   onLoad,
 }: {
@@ -1045,6 +1046,7 @@ function FilesPanel({
   rootId: string;
   sessionId: string;
   fontSize: number;
+  fileBrowserVersion: number;
   searchRef: Ref<HTMLInputElement>;
   onLoad: (tab: InspectorTab) => void;
 }) {
@@ -1144,7 +1146,7 @@ function FilesPanel({
         <ScrollArea className="min-h-0 flex-1">
           <div style={contentZoomStyle(fontSize)}>
             <FileTree
-              key={rootId}
+              key={`${rootId}:${fileBrowserVersion}`}
               root={root}
               rootId={rootId}
               query={query}
@@ -1775,11 +1777,12 @@ export function Inspector({
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
               <FilesPanel
-                key={`${session.rootId}:${reload.files}:${fileBrowserVersion}`}
+                key={`${session.rootId}:${reload.files}`}
                 root={session.cwd}
                 rootId={session.rootId}
                 sessionId={session.id}
                 fontSize={fontSize}
+                fileBrowserVersion={fileBrowserVersion}
                 searchRef={fileSearch}
                 onLoad={finishRefresh}
               />
