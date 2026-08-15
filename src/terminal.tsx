@@ -358,10 +358,17 @@ export function TerminalView({
   }, [starting]);
 
   useEffect(() => {
-    if (terminalRef.current)
-      terminalRef.current.options.theme = searchQueryRef.current
-        ? { ...themes[theme], selectionBackground: searchHighlights[theme].active }
-        : themes[theme];
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const query = searchQueryRef.current;
+    terminal.options.theme = query
+      ? { ...themes[theme], selectionBackground: searchHighlights[theme].active }
+      : themes[theme];
+    const searchAddon = searchAddonRef.current;
+    if (query && searchAddon) {
+      searchAddon.clearDecorations();
+      searchAddon.findNext(query, { ...searchOptions(theme), incremental: true });
+    }
   }, [theme]);
 
   useEffect(() => {
