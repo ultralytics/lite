@@ -1364,10 +1364,10 @@ struct Lookup {
 // the cap is what one request comfortably carries rather than how long the panel is allowed to wait.
 const CHECKED_GITHUB_ITEMS: usize = 100;
 
-// gh carries the user's sign-in without Lite reading it. Every explicit reference goes into one
-// GraphQL request, because a process and network round trip per item would make the panel wait. A
-// reference is dropped only when GitHub confirms the repository exists and the item does not;
-// otherwise an unavailable or private item remains visible as the command or link named it.
+// gh carries the user's sign-in without Lite reading it. References share bounded GraphQL requests,
+// because a process and network round trip per item would make the panel wait. A reference is dropped
+// only when GitHub confirms the repository exists and the item does not; otherwise an unavailable or
+// private item remains visible as the command or link named it.
 fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
     let mut lookups: Vec<Lookup> = Vec::new();
     let mut seen = HashSet::new();
@@ -1503,9 +1503,13 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             deletions: None,
         })
         .collect();
-    tauri::async_runtime::spawn_blocking(move || check_github_items(urls))
-        .await
-        .unwrap_or(unanswered)
+    tauri::async_runtime::spawn_blocking(move || {
+        urls.chunks(CHECKED_GITHUB_ITEMS)
+            .flat_map(|batch| check_github_items(batch.to_vec()))
+            .collect()
+    })
+    .await
+    .unwrap_or(unanswered)
 }
 
 #[tauri::command]
