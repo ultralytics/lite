@@ -16,6 +16,8 @@ export interface GitHubReferences {
 // candidate: GitHub activity must independently confirm them before they reach the panel.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
+// biome-ignore lint/suspicious/noControlCharactersInRegex: OSC hyperlinks are terminal framing.
+const HYPERLINK = /\u001b]8;[^;]*;([^\u0007\u001b]*)(?:\u0007|\u001b\\)/g;
 const GITHUB_ITEM = /\bhttps:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(pull|issues)\/([1-9]\d{0,8})(?!\w)/gi;
 const GITHUB_REPOSITORY =
   /\bhttps:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?=\/(?:pulls?|issues)(?:[/?#\s]|$)|\/?(?:[?#\s]|$))/gi;
@@ -58,8 +60,10 @@ export function githubItemReferences(output: string, remote: string, terminalStr
 
   for (const match of text.matchAll(GITHUB_ITEM))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
-  for (const match of terminalStream.replace(COLOR, "").matchAll(GITHUB_ITEM))
-    add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
+  for (const hyperlink of terminalStream.matchAll(HYPERLINK)) {
+    for (const match of hyperlink[1].matchAll(GITHUB_ITEM))
+      add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
+  }
   for (const match of text.matchAll(QUALIFIED_ITEM)) add(match, `${match[1]}/${match[2]}`, "issues", match[3], 1);
   const qualifiedMentions: [number, number][] = [];
   for (const match of text.matchAll(ITEM_MENTION)) {

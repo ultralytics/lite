@@ -99,10 +99,15 @@ gh issue view 102 --repo ULTRALYTICS/LITE
       "\u001b[32mhttps://github.com/ultralytics/lite/issues/88\u001b[0m " +
       "\u001b]8;;https://github.com/ultralytics/lite/pull/90\u0007PR\u001b]8;;\u0007";
 
-    expect(githubItemReferences("PR", "", transcript).explicit).toEqual([
+    expect(githubItemReferences("https://github.com/ultralytics/lite/issues/88 PR", "", transcript).explicit).toEqual([
       "https://github.com/ultralytics/lite/issues/88",
       "https://github.com/ultralytics/lite/pull/90",
     ]);
+  });
+
+  test("does not recover incomplete plain URLs from the control stream", () => {
+    const stream = "https://github.com/ultralytics/lite/pull/36\u001b[2D12";
+    expect(githubItemReferences("", "", stream)).toEqual({ explicit: [], inferred: [] });
   });
 
   test("separates ambiguous references for recent-activity verification", () => {

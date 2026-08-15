@@ -88,7 +88,18 @@ function renderedOutput(terminal: Terminal) {
   const { active, normal } = terminal.buffer;
   for (const buffer of active.type === "normal" ? [active] : [normal, active]) {
     if (text) text += "\n";
+    let inputStart = -1;
+    let inputEnd = -1;
+    if (buffer === active) {
+      inputStart = buffer.baseY + buffer.cursorY;
+      inputEnd = inputStart;
+      while (inputStart > 0 && buffer.getLine(inputStart)?.isWrapped) inputStart--;
+      while (inputEnd + 1 < buffer.length && buffer.getLine(inputEnd + 1)?.isWrapped) inputEnd++;
+    }
     for (let index = 0; index < buffer.length; index++) {
+      // The cursor's logical line is still being typed or streamed. It becomes readable history only
+      // after the terminal advances, which keeps partial URLs and PR numbers out of the inspector.
+      if (index >= inputStart && index <= inputEnd) continue;
       const line = buffer.getLine(index);
       if (!line) continue;
       if (index && !line.isWrapped) text += "\n";
