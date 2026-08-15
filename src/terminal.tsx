@@ -7,7 +7,13 @@ import { type ITheme, Terminal } from "@xterm/xterm";
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 
-import { subscribeOutput, writeSession } from "@/output-store";
+import {
+  connectTerminalOutput,
+  MAX_OUTPUT_BYTES,
+  notifyTerminalOutput,
+  subscribeOutput,
+  writeSession,
+} from "@/output-store";
 import { type Theme, zoomStep } from "@/theme";
 import type { Agent } from "@/types";
 
@@ -76,6 +82,32 @@ const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]
 // it is the Escape key, and holding it back would swallow the next character typed.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$/;
+
+function renderedOutput(terminal: Terminal) {
+  let text = "";
+  const { active, normal } = terminal.buffer;
+  for (const buffer of active.type === "normal" ? [active] : [normal, active]) {
+    if (text) text += "\n";
+    let inputStart = -1;
+    let inputEnd = -1;
+    if (buffer === active) {
+      inputStart = buffer.baseY + buffer.cursorY;
+      inputEnd = inputStart;
+      while (inputStart > 0 && buffer.getLine(inputStart)?.isWrapped) inputStart--;
+      while (inputEnd + 1 < buffer.length && buffer.getLine(inputEnd + 1)?.isWrapped) inputEnd++;
+    }
+    for (let index = 0; index < buffer.length; index++) {
+      // The cursor's logical line is still being typed or streamed. It becomes readable history only
+      // after the terminal advances, which keeps partial URLs and PR numbers out of the inspector.
+      if (index >= inputStart && index <= inputEnd) continue;
+      const line = buffer.getLine(index);
+      if (!line) continue;
+      if (index && !line.isWrapped) text += "\n";
+      text += line.translateToString(true, 0, Math.min(line.length, terminal.cols));
+    }
+  }
+  return text.slice(-MAX_OUTPUT_BYTES);
+}
 
 export function TerminalView({
   sessionId,
@@ -154,6 +186,8 @@ export function TerminalView({
       }),
     );
     terminal.open(container);
+    const disconnectTerminalOutput = connectTerminalOutput(sessionId, () => renderedOutput(terminal));
+    const parsed = terminal.onWriteParsed(() => notifyTerminalOutput(sessionId));
     const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
     // What the user types before the first Enter is the closest thing a session has to a subject.
     // Typing, pasting, and the terminal's own answers to the program's cursor, focus, and color
@@ -245,6 +279,8 @@ export function TerminalView({
       observer.disconnect();
       input.dispose();
       unsubscribe();
+      parsed.dispose();
+      disconnectTerminalOutput();
       terminal.dispose();
       terminalRef.current = null;
       resizeRef.current = () => undefined;

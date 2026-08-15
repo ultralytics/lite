@@ -76,7 +76,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { githubItemReferences, likelyGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
-import { MAX_OUTPUT_BYTES, readOutput, subscribeOutput } from "@/output-store";
+import { readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
 import { contentZoomStyle } from "@/theme";
 import {
   type DirectoryCursor,
@@ -93,7 +93,7 @@ import {
 const CodePreview = lazy(() => import("@/code-preview"));
 
 function namedInSession(sessionId: string, remote: string) {
-  return githubItemReferences(readOutput(sessionId).slice(-MAX_OUTPUT_BYTES), remote);
+  return githubItemReferences(readTerminalOutput(sessionId), remote, readTerminalStream(sessionId));
 }
 
 interface GitHubReference {
@@ -1298,26 +1298,27 @@ function GitPanel({
   const [diffLoading, setDiffLoading] = useState(false);
   const diffRequest = useRef(0);
 
-  // While Git is visible, follow the output stream it summarizes. Subscribing replays the existing
-  // chunks synchronously, so one initial scan replaces rescanning the whole bounded buffer per chunk.
+  // While Git is visible, follow the terminal text it summarizes after xterm has applied redraws.
   useEffect(() => {
     if (!active) return;
-    let replaying = true;
     let settle = 0;
     const scan = () => {
       const next = namedInSession(sessionId, remote);
       setReferences((current) => {
-        const same = (key: keyof typeof next) =>
-          current[key].length === next[key].length && current[key].every((url, index) => url === next[key][index]);
-        return same("explicit") && same("inferred") ? current : next;
+        // Alternate-screen redraws can hide earlier conversation text, so an observed reference stays
+        // with this session until the user explicitly refreshes the panel.
+        const explicit = [...new Set([...current.explicit, ...next.explicit])];
+        const certain = new Set(explicit);
+        const inferred = [...new Set([...current.inferred, ...next.inferred])].filter((url) => !certain.has(url));
+        return explicit.length === current.explicit.length && inferred.length === current.inferred.length
+          ? current
+          : { explicit, inferred };
       });
     };
-    const unsubscribe = subscribeOutput(sessionId, () => {
-      if (replaying) return;
+    const unsubscribe = subscribeTerminalOutput(sessionId, () => {
       window.clearTimeout(settle);
       settle = window.setTimeout(scan, 250);
     });
-    replaying = false;
     scan();
     return () => {
       window.clearTimeout(settle);
