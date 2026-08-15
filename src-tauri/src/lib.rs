@@ -432,27 +432,7 @@ struct Roots(Mutex<HashMap<String, PathBuf>>);
 
 #[derive(Default)]
 struct FileBrowserSettings {
-    home: Option<PathBuf>,
-    show_claude: AtomicBool,
-}
-
-impl FileBrowserSettings {
-    fn project_claude_visible(&self, root: &Path) -> bool {
-        self.show_claude.load(Ordering::Relaxed)
-            && self.home.as_deref().is_some_and(|home| home != root)
-    }
-
-    fn is_sensitive_path(&self, root: &Path, path: &Path) -> bool {
-        let show_claude = self.project_claude_visible(root);
-        path.strip_prefix(root).is_ok_and(|relative| {
-            relative.components().enumerate().any(|(index, component)| {
-                is_sensitive_component(component.as_os_str())
-                    && !(show_claude
-                        && index == 0
-                        && component.as_os_str().eq_ignore_ascii_case(".claude"))
-            })
-        })
-    }
+    hide_hidden: AtomicBool,
 }
 
 #[derive(Default)]
@@ -596,12 +576,7 @@ fn root_path(roots: &Roots, root_id: &str) -> Result<PathBuf, String> {
     let root = roots
         .get(root_id)
         .ok_or("Folder permission is no longer available")?;
-    let root = fs::canonicalize(root).map_err(|_| MISSING_DIRECTORY.to_owned())?;
-    if is_sensitive_root(&root) {
-        Err("Credential and configuration folders cannot be opened".into())
-    } else {
-        Ok(root)
-    }
+    fs::canonicalize(root).map_err(|_| MISSING_DIRECTORY.to_owned())
 }
 
 fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
@@ -628,77 +603,17 @@ fn scoped_entry(root: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(parent.join(name))
 }
 
-fn contains_sensitive_entry(
-    settings: &FileBrowserSettings,
-    root: &Path,
-    path: &Path,
-) -> Result<bool, String> {
-    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
-        let entry = entry.map_err(|error| error.to_string())?;
-        if settings.is_sensitive_path(root, &entry.path()) {
-            return Ok(true);
-        }
-        if entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_dir()
-            && contains_sensitive_entry(settings, root, &entry.path())?
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn remove_entry(settings: &FileBrowserSettings, root: &Path, path: &Path) -> Result<(), String> {
-    if settings.is_sensitive_path(root, path) {
-        return Err("Sensitive files and folders cannot be deleted from Lite".into());
-    }
+fn remove_entry(path: &Path) -> Result<(), String> {
     let file_type = fs::symlink_metadata(path)
         .map_err(|error| error.to_string())?
         .file_type();
     if file_type.is_dir() {
-        if contains_sensitive_entry(settings, root, path)? {
-            return Err("Folders containing sensitive files cannot be deleted from Lite".into());
-        }
         fs::remove_dir_all(path).map_err(|error| error.to_string())
     } else if file_type.is_file() || file_type.is_symlink() {
         fs::remove_file(path).map_err(|error| error.to_string())
     } else {
         Err("Only files and folders can be deleted".into())
     }
-}
-
-fn is_sensitive_component(component: &std::ffi::OsStr) -> bool {
-    let name = component.to_string_lossy().to_lowercase();
-    name == ".env"
-        || name.starts_with(".env.")
-        || [
-            ".credentials.json",
-            ".aws",
-            ".azure",
-            ".claude",
-            ".codex",
-            ".config",
-            ".docker",
-            ".gemini",
-            ".git-credentials",
-            ".gnupg",
-            ".kimi-code",
-            ".netrc",
-            ".npmrc",
-            ".pypirc",
-            ".qwen",
-            ".ssh",
-            "id_ed25519",
-            "id_rsa",
-        ]
-        .contains(&name.as_str())
-}
-
-fn is_sensitive_root(path: &Path) -> bool {
-    path.components()
-        .any(|component| is_sensitive_component(component.as_os_str()))
 }
 
 fn command_output(git: &Path, directory: &Path, args: &[&str]) -> Result<String, String> {
@@ -739,22 +654,17 @@ fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
         .join("last-directory"))
 }
 
-fn show_claude_path(app: &AppHandle) -> Result<PathBuf, String> {
+fn hide_hidden_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?
-        .join("show-claude-folder"))
+        .join("hide-hidden-files"))
 }
 
 fn load_file_browser_settings(app: &AppHandle) -> FileBrowserSettings {
     FileBrowserSettings {
-        home: app
-            .path()
-            .home_dir()
-            .ok()
-            .and_then(|home| fs::canonicalize(home).ok()),
-        show_claude: AtomicBool::new(show_claude_path(app).is_ok_and(|path| path.is_file())),
+        hide_hidden: AtomicBool::new(hide_hidden_path(app).is_ok_and(|path| path.is_file())),
     }
 }
 
@@ -1080,9 +990,6 @@ fn grant_directory(
     root_id: Option<String>,
 ) -> Result<DirectoryGrant, String> {
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
-    if is_sensitive_root(&path) {
-        return Err("Credential and configuration folders cannot be opened".into());
-    }
     let id = root_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     update_roots(app, roots, |roots| {
         roots.insert(id.clone(), path.clone());
@@ -1384,16 +1291,6 @@ async fn use_directory(
 ) -> Result<DirectoryGrant, String> {
     let path = typed_path(&app, &path)?;
     if !path.exists() {
-        // Resolve the closest existing ancestor before creating through it: a symlink into a sensitive
-        // configuration folder must not let the final canonical-path check happen after the mutation.
-        let mut ancestor = path.as_path();
-        while !ancestor.exists() {
-            ancestor = ancestor.parent().ok_or("That folder cannot be created")?;
-        }
-        let ancestor = fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
-        if is_sensitive_root(&ancestor) || is_sensitive_root(&path) {
-            return Err("Credential and configuration folders cannot be opened".into());
-        }
         fs::create_dir_all(&path).map_err(|error| error.to_string())?;
     }
     if !path.is_dir() {
@@ -3317,9 +3214,6 @@ async fn spawn_session(
     {
         uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid folder permission")?;
         let path = fs::canonicalize(cwd).map_err(|_| MISSING_DIRECTORY)?;
-        if is_sensitive_root(&path) {
-            return Err("Credential and configuration folders cannot be opened".into());
-        }
         update_roots(&app, &roots, |roots| {
             roots.entry(root_id.clone()).or_insert(path);
         })?;
@@ -3822,12 +3716,7 @@ async fn list_directory(
             continue;
         };
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name == ".git"
-            || name == "node_modules"
-            || name == "target"
-            || name == ".venv"
-            || settings.is_sensitive_path(&root, &entry.path())
-        {
+        if settings.hide_hidden.load(Ordering::Relaxed) && name.starts_with('.') {
             continue;
         }
         let entry = FileEntry {
@@ -3863,16 +3752,12 @@ async fn list_directory(
 
 #[tauri::command]
 async fn read_text_file(
-    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
 ) -> Result<String, String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
-    if settings.is_sensitive_path(&root, &path) {
-        return Err("Sensitive files are hidden from preview".into());
-    }
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_FILE_BYTES {
         return Err("File is larger than 500 KB".into());
@@ -3886,7 +3771,6 @@ async fn read_text_file(
 
 #[tauri::command]
 async fn write_text_file(
-    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
@@ -3897,9 +3781,6 @@ async fn write_text_file(
     }
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
-    if settings.is_sensitive_path(&root, &path) {
-        return Err("Sensitive files cannot be edited in Lite".into());
-    }
     if !path.is_file() {
         return Err("Only files can be edited".into());
     }
@@ -3912,34 +3793,33 @@ async fn write_text_file(
 
 #[tauri::command]
 async fn delete_entry(
-    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
 ) -> Result<(), String> {
     let root = root_path(&roots, &root_id)?;
     let path = scoped_entry(&root, &path)?;
-    remove_entry(&settings, &root, &path)
+    remove_entry(&path)
 }
 
 #[tauri::command]
-fn show_claude_folder(settings: State<'_, FileBrowserSettings>) -> bool {
-    settings.show_claude.load(Ordering::Relaxed)
+fn hide_hidden_files(settings: State<'_, FileBrowserSettings>) -> bool {
+    settings.hide_hidden.load(Ordering::Relaxed)
 }
 
 #[tauri::command]
-fn set_show_claude_folder(
+fn set_hide_hidden_files(
     app: AppHandle,
     settings: State<'_, FileBrowserSettings>,
-    show: bool,
+    hide: bool,
 ) -> Result<(), String> {
-    let path = show_claude_path(&app)?;
-    if show {
+    let path = hide_hidden_path(&app)?;
+    if hide {
         write_atomic(&path, b"")?;
     } else {
         forget_record(&path)?;
     }
-    settings.show_claude.store(show, Ordering::Relaxed);
+    settings.hide_hidden.store(hide, Ordering::Relaxed);
     Ok(())
 }
 
@@ -4058,7 +3938,6 @@ fn git_diff_base(git: &Path, repository: &Path) -> Result<String, String> {
 
 #[tauri::command]
 async fn git_diff(
-    settings: State<'_, FileBrowserSettings>,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
@@ -4102,11 +3981,6 @@ async fn git_diff(
             "This change is outside the selected folder; start a session from the repository root to view it"
                 .into(),
         );
-    }
-    if settings.is_sensitive_path(&granted, &file)
-        || settings.is_sensitive_path(&granted, &ancestor)
-    {
-        return Err("Sensitive files are hidden from Git diffs".into());
     }
     let pathspec = path_text(relative);
     let file = path_text(&file);
@@ -5182,10 +5056,8 @@ fn local_repo() -> Option<&'static str> {
     option_env!("LITE_REPO")
 }
 
-// That same tree, opened for the one thing Lite does with it. The path is the one compiled into this
-// build rather than one handed in, and it deliberately does not go through use_directory: that records
-// what it opens as the folder to offer next, and rebuilding Lite is not the same as choosing to work
-// in it. The sensitive-folder rule still applies, as it does to every other grant.
+// That same tree, opened for the one thing Lite does with it. It deliberately bypasses the last folder
+// preference because rebuilding Lite is not the same as choosing a workspace.
 #[tauri::command]
 async fn grant_repo(app: AppHandle, roots: State<'_, Roots>) -> Result<DirectoryGrant, String> {
     let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
@@ -5339,8 +5211,8 @@ pub fn run() {
             read_text_file,
             write_text_file,
             delete_entry,
-            show_claude_folder,
-            set_show_claude_folder,
+            hide_hidden_files,
+            set_hide_hidden_files,
             git_status,
             git_diff,
             git_remote,
@@ -5400,33 +5272,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn claude_folder_opt_in_keeps_credentials_hidden() {
-        let root = Path::new("/project");
-        let settings = FileBrowserSettings {
-            home: Some(PathBuf::from("/home/user")),
-            show_claude: AtomicBool::new(false),
-        };
-
-        assert!(settings.is_sensitive_path(root, Path::new("/project/.claude/settings.json")));
-        settings.show_claude.store(true, Ordering::Relaxed);
-        assert!(settings.project_claude_visible(root));
-        for (path, sensitive) in [
-            ("/project/.claude/settings.json", false),
-            ("/project/.claude/.credentials.json", true),
-            ("/project/package/.claude/settings.json", true),
-        ] {
-            assert_eq!(settings.is_sensitive_path(root, Path::new(path)), sensitive);
-        }
-        assert!(
-            FileBrowserSettings {
-                home: Some(root.to_owned()),
-                show_claude: AtomicBool::new(true),
-            }
-            .is_sensitive_path(root, Path::new("/project/.claude/settings.json"))
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn scoped_entry_keeps_a_symlink_as_the_deletion_target() {
@@ -5453,34 +5298,9 @@ mod tests {
         fs::create_dir_all(directory.join("nested")).unwrap();
         fs::write(directory.join("nested/file.txt"), "delete").unwrap();
 
-        remove_entry(
-            &FileBrowserSettings::default(),
-            directory.parent().unwrap(),
-            &directory,
-        )
-        .unwrap();
+        remove_entry(&directory).unwrap();
 
         assert!(!directory.exists());
-    }
-
-    #[test]
-    fn remove_entry_preserves_sensitive_descendants() {
-        let directory =
-            std::env::temp_dir().join(format!("lite-delete-directory-{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(directory.join("nested")).unwrap();
-        fs::write(directory.join("nested/.env"), "keep").unwrap();
-
-        assert!(
-            remove_entry(
-                &FileBrowserSettings::default(),
-                directory.parent().unwrap(),
-                &directory
-            )
-            .is_err()
-        );
-        assert!(directory.join("nested/.env").exists());
-
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

@@ -83,7 +83,7 @@ export function SettingsDialog({
   onFileBrowserChange: () => void;
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
-  const [showClaude, setShowClaude] = useState<boolean>();
+  const [hideHidden, setHideHidden] = useState<boolean>();
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
@@ -104,7 +104,7 @@ export function SettingsDialog({
     void Promise.all([
       read(),
       invoke<boolean>("notifications_supported").then(setNotificationsSupported),
-      invoke<boolean>("show_claude_folder").then(setShowClaude),
+      invoke<boolean>("hide_hidden_files").then(setHideHidden),
     ]).catch((reason) => setError(String(reason)));
   }, [isOpen, read]);
 
@@ -162,12 +162,12 @@ export function SettingsDialog({
     }
   }
 
-  async function changeShowClaude(show: boolean) {
+  async function changeHideHidden(hide: boolean) {
     setError("");
-    setBusy(".claude");
+    setBusy("hidden-files");
     try {
-      await invoke("set_show_claude_folder", { show });
-      setShowClaude(show);
+      await invoke("set_hide_hidden_files", { hide });
+      setHideHidden(hide);
       onFileBrowserChange();
     } catch (reason) {
       setError(String(reason));
@@ -193,6 +193,10 @@ export function SettingsDialog({
               <TabsTrigger value="keys">
                 <KeyRound />
                 API Keys
+              </TabsTrigger>
+              <TabsTrigger value="files">
+                <FolderCog />
+                Files
               </TabsTrigger>
               <TabsTrigger value="about">
                 <Info />
@@ -250,23 +254,6 @@ export function SettingsDialog({
                     </ItemActions>
                   </Item>
                 ) : null}
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <FolderCog />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Show Project .claude Folders</ItemTitle>
-                    <ItemDescription>Show project settings, hooks, and plugins in Files.</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch
-                      aria-label="Show project .claude folders"
-                      checked={showClaude ?? false}
-                      disabled={showClaude === undefined || busy === ".claude"}
-                      onCheckedChange={(show) => void changeShowClaude(show)}
-                    />
-                  </ItemActions>
-                </Item>
               </ItemGroup>
             </TabsContent>
             <TabsContent value="keys" className="min-w-0">
@@ -362,6 +349,29 @@ export function SettingsDialog({
                     </Item>
                   );
                 })}
+              </ItemGroup>
+            </TabsContent>
+            <TabsContent value="files" className="min-w-0">
+              <h2 className="text-base font-semibold">Files</h2>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">Choose which files appear in the browser.</p>
+              <ItemGroup>
+                <Item variant="outline">
+                  <ItemMedia variant="icon">
+                    <EyeOff />
+                  </ItemMedia>
+                  <ItemContent>
+                    <ItemTitle>Hide Hidden Files</ItemTitle>
+                    <ItemDescription>Hide files and folders whose names begin with a period.</ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Switch
+                      aria-label="Hide hidden files"
+                      checked={hideHidden ?? false}
+                      disabled={hideHidden === undefined || busy === "hidden-files"}
+                      onCheckedChange={(hide) => void changeHideHidden(hide)}
+                    />
+                  </ItemActions>
+                </Item>
               </ItemGroup>
             </TabsContent>
             <TabsContent value="about" className="min-w-0">
