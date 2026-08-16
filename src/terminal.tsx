@@ -18,7 +18,7 @@ import {
   subscribeOutput,
   writeSession,
 } from "@/output-store";
-import { matchesShortcut } from "@/shortcuts";
+import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import type { Theme } from "@/theme";
 import type { Agent } from "@/types";
 
@@ -504,6 +504,7 @@ export function TerminalView({
               </span>
               <InputGroupButton
                 size="icon-xs"
+                tooltip={`Previous match · ${IS_MAC ? "⇧↩" : "Shift+Enter"}`}
                 aria-label="Previous match"
                 disabled={!searchQuery}
                 onClick={() => find(searchQuery, true)}
@@ -512,13 +513,14 @@ export function TerminalView({
               </InputGroupButton>
               <InputGroupButton
                 size="icon-xs"
+                tooltip={`Next match · ${IS_MAC ? "↩" : "Enter"}`}
                 aria-label="Next match"
                 disabled={!searchQuery}
                 onClick={() => find(searchQuery)}
               >
                 <ChevronDown />
               </InputGroupButton>
-              <InputGroupButton size="icon-xs" aria-label="Close search" onClick={closeSearch}>
+              <InputGroupButton size="icon-xs" tooltip="Close · Esc" aria-label="Close search" onClick={closeSearch}>
                 <X />
               </InputGroupButton>
             </InputGroupAddon>

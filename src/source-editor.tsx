@@ -24,7 +24,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import { matchesShortcut } from "@/shortcuts";
+import { IS_MAC, matchesShortcut } from "@/shortcuts";
 
 const editorHighlight = HighlightStyle.define([
   { tag: [tags.keyword, tags.bool, tags.null], color: "var(--syntax-keyword)" },
@@ -59,6 +59,19 @@ function detectIndent(path: string, source: string): string {
 }
 
 const SEARCH_COUNT_LIMIT = 5000;
+// The option chords VS Code users already know, held with the platform's command key and Alt.
+const OPTION_BY_KEY: Record<string, "caseSensitive" | "wholeWord" | "regexp" | "replace"> = {
+  c: "caseSensitive",
+  w: "wholeWord",
+  r: "regexp",
+  f: "replace",
+};
+const OPTION_KEYS = Object.fromEntries(
+  Object.entries(OPTION_BY_KEY).map(([key, option]) => [
+    option,
+    IS_MAC ? `⌥⌘${key.toUpperCase()}` : `Ctrl+Alt+${key.toUpperCase()}`,
+  ]),
+) as Record<"caseSensitive" | "wholeWord" | "regexp" | "replace", string>;
 const countFormat = new Intl.NumberFormat();
 
 // Where the selection stands among the matches, counted the way the terminal counts its own.
@@ -117,9 +130,10 @@ function EditorSearch({
     return (
       <InputGroupButton
         size="icon-xs"
+        tooltip={`${label} · ${OPTION_KEYS[field]}`}
         aria-label={label}
         aria-pressed={query[field]}
-        className={query[field] ? "bg-muted text-foreground" : undefined}
+        className={`hidden @[18rem]:inline-flex ${query[field] ? "bg-muted text-foreground" : ""}`}
         onClick={() => commit({ [field]: !query[field] })}
       >
         <Icon />
@@ -129,9 +143,19 @@ function EditorSearch({
 
   return (
     <search
-      className="w-[26rem] max-w-full rounded-lg bg-background shadow-lg"
+      // The bar takes the width the pane gives it, and in a narrow pane the counter and the toggles
+      // step aside so the field, the arrows, and the close always fit.
+      className="@container w-full max-w-[26rem] rounded-lg bg-background shadow-lg"
       onKeyDown={(event) => {
-        if (event.key === "Enter" && event.target === replaceInput.current) {
+        const option =
+          event.altKey && (IS_MAC ? event.metaKey : event.ctrlKey) ? OPTION_BY_KEY[event.key.toLowerCase()] : undefined;
+        if (option === "replace") {
+          event.preventDefault();
+          setReplacing((current) => !current);
+        } else if (option) {
+          event.preventDefault();
+          commit({ [option]: !query[option] });
+        } else if (event.key === "Enter" && event.target === replaceInput.current) {
           event.preventDefault();
           replaceNext(view);
         } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
@@ -154,7 +178,11 @@ function EditorSearch({
           onChange={(event) => commit({ search: event.target.value })}
         />
         <InputGroupAddon align="inline-end" className="gap-0 pr-1">
-          <span className="min-w-14 px-1 text-center text-xs tabular-nums" aria-live="polite" aria-atomic="true">
+          <span
+            className="hidden min-w-14 px-1 text-center text-xs tabular-nums @[22rem]:inline"
+            aria-live="polite"
+            aria-atomic="true"
+          >
             {matches.count ? (matches.index >= 0 ? countFormat.format(matches.index + 1) : "–") : "0"} /{" "}
             {countFormat.format(matches.count)}
             {matches.count >= SEARCH_COUNT_LIMIT ? "+" : ""}
@@ -164,6 +192,7 @@ function EditorSearch({
           {toggle("regexp", "Use regular expression", Regex)}
           <InputGroupButton
             size="icon-xs"
+            tooltip={`Previous match · ${IS_MAC ? "⇧↩" : "Shift+Enter"}`}
             aria-label="Previous match"
             disabled={!query.valid}
             onClick={() => findPrevious(view)}
@@ -172,6 +201,7 @@ function EditorSearch({
           </InputGroupButton>
           <InputGroupButton
             size="icon-xs"
+            tooltip={`Next match · ${IS_MAC ? "↩" : "Enter"}`}
             aria-label="Next match"
             disabled={!query.valid}
             onClick={() => findNext(view)}
@@ -181,6 +211,7 @@ function EditorSearch({
           {view.state.readOnly ? null : (
             <InputGroupButton
               size="icon-xs"
+              tooltip={`Replace · ${OPTION_KEYS.replace}`}
               aria-label="Replace"
               aria-pressed={replacing}
               className={replacing ? "bg-muted text-foreground" : undefined}
@@ -189,7 +220,12 @@ function EditorSearch({
               <Replace />
             </InputGroupButton>
           )}
-          <InputGroupButton size="icon-xs" aria-label="Close search" onClick={() => closeSearchPanel(view)}>
+          <InputGroupButton
+            size="icon-xs"
+            tooltip="Close · Esc"
+            aria-label="Close search"
+            onClick={() => closeSearchPanel(view)}
+          >
             <X />
           </InputGroupButton>
         </InputGroupAddon>
@@ -335,13 +371,12 @@ export default function SourceEditor({
               position: "absolute",
               top: "0.5rem",
               right: "1rem",
-              left: "auto",
+              left: "1rem",
               zIndex: "10",
               display: "flex",
               flexDirection: "column",
               alignItems: "flex-end",
               gap: "0.5rem",
-              maxWidth: "calc(100% - 2rem)",
               border: "none",
               backgroundColor: "transparent",
               color: "inherit",
