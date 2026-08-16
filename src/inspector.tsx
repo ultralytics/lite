@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import {
   lazy,
+  memo,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type Ref,
@@ -317,21 +318,23 @@ function Loading({ label }: { label: string }) {
   );
 }
 
-// The same field the sidebar searches sessions with, placed the same way: it names the panel it
-// narrows, and Escape empties it.
-function SearchInput({
+// The one field every panel narrows itself with: it names the panel and Escape empties it. The
+// sidebar places it in its own header row; the inspector panels give it a row of its own.
+export function SearchInput({
   value,
   placeholder,
   onChange,
   inputRef,
+  className = "shrink-0 p-2",
 }: {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
   inputRef?: Ref<HTMLInputElement>;
+  className?: string;
 }) {
   return (
-    <div className="shrink-0 p-2">
+    <div className={className}>
       <InputGroup>
         <InputGroupAddon>
           <Search />
@@ -861,7 +864,7 @@ function FileViewer({
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDiscardOpen(false)}>
-              Keep Editing
+              Keep editing
             </Button>
             <Button
               variant="destructive"
@@ -871,7 +874,7 @@ function FileViewer({
                 onBack();
               }}
             >
-              Discard Changes
+              Discard changes
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1554,7 +1557,7 @@ function UsagePanel({
   );
 }
 
-export function Inspector({
+export const Inspector = memo(function Inspector({
   session,
   remote,
   fontSize,
@@ -1736,4 +1739,4 @@ export function Inspector({
       </div>
     </>
   );
-}
+});

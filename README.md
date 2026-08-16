@@ -67,7 +67,7 @@ chmod +x Lite_*_linux_amd64.AppImage
 ./Lite_*_linux_amd64.AppImage
 ```
 
-After installing Lite, open the Lite menu in the top bar and choose **Check for updates** to install signed updates and restart Lite. Lite never checks for updates in the background.
+After installing Lite, open **Settings** from the gear in the top bar and choose **Check for updates** under About to install signed updates and restart Lite. Lite never checks for updates in the background.
 
 ## 🚀 First Run
 
@@ -81,7 +81,7 @@ Install the provider CLIs you want to use:
 
 Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
 
-If you would rather use API keys, open **API keys** in the Lite menu and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
+If you would rather use API keys, open **Settings › API Keys** and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/d3ccbfcf-bf4c-498a-8f7f-f0a134a90e92" width="100%" alt="Saving provider API keys in Lite">
@@ -120,7 +120,7 @@ bun run tauri dev
 Useful checks:
 
 ```bash
-bun run check       # Biome and native TypeScript checks
+bun run check       # Biome lint, native TypeScript check, and knip dead-code scan
 bun run local       # Separate Lite Dev app with a red icon and its own app data
 bun run tauri build # Native installer for the current operating system
 ```

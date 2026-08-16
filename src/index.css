@@ -83,7 +83,7 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --success: oklch(0.723 0.219 142.136);
+  --success: oklch(0.55 0.17 145);
   --ultralytics-logo-mark: #0b23a9;
   --ultralytics-logo-gradient-start: #09dbf0;
   --ultralytics-logo-gradient-end: #0b23a9;

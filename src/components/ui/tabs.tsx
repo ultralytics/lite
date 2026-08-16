@@ -9,7 +9,7 @@ function Tabs({ className, orientation = "horizontal", ...props }: TabsPrimitive
   return (
     <TabsPrimitive.Root
       data-slot="tabs"
-      data-orientation={orientation}
+      orientation={orientation}
       // Base UI reports orientation only as data-orientation, and the variants below key off the
       // shorter attribute, so it is set here instead of rewriting every class shadcn ships.
       {...{ [`data-${orientation}`]: "" }}

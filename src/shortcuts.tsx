@@ -12,6 +12,8 @@ export type ShortcutId =
   | "newSession"
   | "switchSession"
   | "closeSession"
+  | "nextSession"
+  | "previousSession"
   | "nextAttention"
   | "settings"
   | "find"
@@ -24,8 +26,10 @@ export type ShortcutId =
 // macOS and Ctrl elsewhere, so one default reads the same on every keyboard.
 export const SHORTCUTS: Record<ShortcutId, { label: string; keys: string }> = {
   newSession: { label: "New session", keys: "Mod+N" },
-  switchSession: { label: "Switch session", keys: IS_MAC ? "Mod+P" : "Mod+Shift+P" },
+  switchSession: { label: "Switch session or run a command", keys: IS_MAC ? "Mod+P" : "Mod+Shift+P" },
   closeSession: { label: "Close session or file", keys: "Mod+W" },
+  nextSession: { label: "Next session", keys: "Mod+Shift+]" },
+  previousSession: { label: "Previous session", keys: "Mod+Shift+[" },
   nextAttention: { label: "Open the next session waiting on you", keys: "Mod+Shift+U" },
   settings: { label: "Open settings", keys: "Mod+," },
   find: { label: "Find in the focused panel", keys: "Mod+F" },
@@ -37,12 +41,30 @@ export const SHORTCUTS: Record<ShortcutId, { label: string; keys: string }> = {
 
 export const SHORTCUT_IDS = Object.keys(SHORTCUTS) as ShortcutId[];
 
-// The keys Lite keeps as they are: they count or point rather than name one action.
-export const FIXED_SHORTCUTS: { label: string; keys: string[] }[] = [
-  { label: "Open a session by its place in the list", keys: ["Mod+1…9"] },
-  { label: "Move a session up or down the list", keys: ["Alt+ArrowUp", "Alt+ArrowDown"] },
-  { label: "Next or previous match", keys: ["Enter", "Shift+Enter"] },
-  { label: "Close a search, preview, or dialog", keys: ["Escape"] },
+// The keys Lite keeps as they are: they count or point rather than name one action, or they belong
+// to the editor, whose keymap is CodeMirror's.
+export const FIXED_SHORTCUTS: { title: string; rows: { label: string; keys: string[] }[] }[] = [
+  {
+    title: "Always",
+    rows: [
+      { label: "Open a session by its place in the list", keys: ["Mod+1…9"] },
+      { label: "Move a session up or down the list", keys: ["Alt+ArrowUp", "Alt+ArrowDown"] },
+      { label: "Next or previous match", keys: ["Enter", "Shift+Enter"] },
+      { label: "Close a search, preview, or dialog", keys: ["Escape"] },
+    ],
+  },
+  {
+    title: "Editor",
+    rows: [
+      { label: "Go to line", keys: ["Mod+Alt+G"] },
+      { label: "Add the next occurrence to the selection", keys: ["Mod+D"] },
+      { label: "Add a cursor above or below", keys: ["Mod+Alt+ArrowUp", "Mod+Alt+ArrowDown"] },
+      { label: "Move the line up or down", keys: ["Alt+ArrowUp", "Alt+ArrowDown"] },
+      { label: "Toggle a comment", keys: ["Mod+/"] },
+      { label: "Indent or outdent", keys: ["Tab", "Shift+Tab"] },
+      { label: "Fold or unfold", keys: ["Mod+Alt+[", "Mod+Alt+]"] },
+    ],
+  },
 ];
 
 function readOverrides(): Partial<Record<ShortcutId, string>> {
@@ -100,8 +122,8 @@ function format(combo: Combo): string {
   return [combo.mod && "Mod", combo.alt && "Alt", combo.shift && "Shift", key].filter(Boolean).join("+");
 }
 
-// Punctuation is named by its physical key so ⌘= and ⌘+ (Shift held) both read as "=", the way every
-// app treats zoom; letters and digits keep the character the layout gives them.
+// Punctuation is named by its physical key so a chord reads the same whether or not Shift changed the
+// character; letters and digits keep the character the layout gives them.
 const CODE_KEYS: Record<string, string> = {
   Equal: "=",
   NumpadAdd: "=",
@@ -117,7 +139,6 @@ const CODE_KEYS: Record<string, string> = {
   Quote: "'",
   Backquote: "`",
 };
-const PUNCTUATION = Object.fromEntries(Object.values(CODE_KEYS).map((key) => [key, true]));
 const MODIFIER_KEYS = new Set(["Meta", "Control", "Alt", "Shift", "CapsLock", "Fn"]);
 
 function eventKey(event: KeyboardEvent | { key: string; code: string }): string {
@@ -127,13 +148,13 @@ function eventKey(event: KeyboardEvent | { key: string; code: string }): string 
   return event.key.length === 1 ? event.key.toLowerCase() : event.key;
 }
 
-// The combo an event spells, or nothing while only modifiers are down. Shift is dropped from a
-// punctuation key because it changes which character is reported, not which key was pressed.
+// The combo an event spells, or nothing while only modifiers are down. ⌘+ is ⌘= with Shift held, and
+// every app reads it as zoom in, so that one key does not count Shift.
 export function eventCombo(event: KeyboardEvent): string | undefined {
   if (MODIFIER_KEYS.has(event.key)) return;
   const key = eventKey(event);
   const mod = IS_MAC ? event.metaKey : event.ctrlKey;
-  return format({ mod, alt: event.altKey, shift: event.shiftKey && !(key in PUNCTUATION), key });
+  return format({ mod, alt: event.altKey, shift: event.shiftKey && key !== "=", key });
 }
 
 export function matchesShortcut(event: KeyboardEvent, id: ShortcutId): boolean {
@@ -142,7 +163,7 @@ export function matchesShortcut(event: KeyboardEvent, id: ShortcutId): boolean {
   if (combo.mod !== mod || combo.alt !== event.altKey) return false;
   const key = eventKey(event);
   if (key.toLowerCase() !== combo.key.toLowerCase()) return false;
-  return combo.shift === event.shiftKey || key in PUNCTUATION;
+  return combo.shift === (event.shiftKey && key !== "=");
 }
 
 const KEY_LABELS: Record<string, string> = {

@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   Bell,
+  Coffee,
   ExternalLink,
   Eye,
   EyeOff,
@@ -313,7 +314,7 @@ export function SettingsDialog({
                 </Item>
                 <Item variant="outline">
                   <ItemMedia variant="icon">
-                    <Sun />
+                    <Coffee />
                   </ItemMedia>
                   <ItemContent>
                     <ItemTitle>Keep System Awake</ItemTitle>
@@ -479,22 +480,26 @@ export function SettingsDialog({
                   />
                 ))}
               </ul>
-              <h3 className="mt-5 mb-1 text-xs font-medium text-muted-foreground">Always</h3>
-              <ul className="divide-y">
-                {FIXED_SHORTCUTS.map(({ label, keys }) => (
-                  <li key={label} className="flex items-center gap-3 py-1.5">
-                    <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-                    <span className="flex items-center gap-1.5 pr-1.5">
-                      {keys.map((combo, index) => (
-                        <span key={combo} className="flex items-center gap-1.5">
-                          {index ? <span className="text-xs text-muted-foreground">/</span> : null}
-                          <ShortcutCaps keys={combo} />
+              {FIXED_SHORTCUTS.map(({ title, rows }) => (
+                <div key={title}>
+                  <h3 className="mt-5 mb-1 text-xs font-medium text-muted-foreground">{title}</h3>
+                  <ul className="divide-y">
+                    {rows.map(({ label, keys }) => (
+                      <li key={label} className="flex items-center gap-3 py-1.5">
+                        <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+                        <span className="flex items-center gap-1.5 pr-1.5">
+                          {keys.map((combo, index) => (
+                            <span key={combo} className="flex items-center gap-1.5">
+                              {index ? <span className="text-xs text-muted-foreground">/</span> : null}
+                              <ShortcutCaps keys={combo} />
+                            </span>
+                          ))}
                         </span>
-                      ))}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </TabsContent>
             <TabsContent value="about" className="min-w-0">
               <div className="flex flex-col items-center pt-3 text-center">

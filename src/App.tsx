@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { getVersion } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -95,7 +95,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearInspectorCache, Inspector } from "@/inspector";
+import { clearInspectorCache, Inspector, SearchInput } from "@/inspector";
 import { including, swapped, without } from "@/lib/utils";
 import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
@@ -107,7 +107,15 @@ import {
   writeSession,
 } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
-import { IS_MAC, matchesShortcut, ShortcutCaps, shortcutAria, shortcutKeys, shortcutText } from "@/shortcuts";
+import {
+  IS_MAC,
+  matchesShortcut,
+  ShortcutCaps,
+  type ShortcutId,
+  shortcutAria,
+  shortcutKeys,
+  shortcutText,
+} from "@/shortcuts";
 import { applyTheme, contentZoomStyle, initialTheme, storedFontSize, type Theme, zoomedFontSize } from "@/theme";
 import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
@@ -919,6 +927,13 @@ function SessionBadge({
   );
 }
 
+interface Command {
+  id: string;
+  label: string;
+  shortcut?: ShortcutId;
+  run: () => void;
+}
+
 function SessionSwitcher({
   open,
   sessions,
@@ -927,6 +942,7 @@ function SessionSwitcher({
   working,
   startingIds,
   shellAgents,
+  commands,
   onOpenChange,
   onSelect,
 }: {
@@ -937,13 +953,21 @@ function SessionSwitcher({
   working: Set<string>;
   startingIds: Set<string>;
   shellAgents: Map<string, Agent>;
+  commands: Command[];
   onOpenChange: (open: boolean) => void;
   onSelect: (session: Session) => void;
 }) {
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState(selectedId);
+  // A leading ">" turns the switcher into a command palette over the same list, the way a terminal's
+  // palette works, so one shortcut reaches every action Lite has as well as every session.
+  const commandMode = query.trimStart().startsWith(">");
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    if (commandMode) {
+      const term = needle.slice(1).trim();
+      return commands.filter((command) => command.label.toLowerCase().includes(term));
+    }
     if (!needle) return sessions;
     return sessions.filter((session) => {
       const status = sessionStatus(session, attention.includes(session.id), working.has(session.id)).label;
@@ -951,7 +975,7 @@ function SessionSwitcher({
         value?.toLowerCase().includes(needle),
       );
     });
-  }, [attention, query, sessions, working]);
+  }, [attention, commandMode, commands, query, sessions, working]);
 
   useEffect(() => {
     if (!open) return;
@@ -960,12 +984,12 @@ function SessionSwitcher({
   }, [open, selectedId]);
 
   useEffect(() => {
-    if (open && !matches.some((session) => session.id === activeId)) setActiveId(matches[0]?.id ?? "");
+    if (open && !matches.some((item) => item.id === activeId)) setActiveId(matches[0]?.id ?? "");
   }, [activeId, matches, open]);
 
   function move(direction: -1 | 1) {
     if (!matches.length) return;
-    const index = matches.findIndex((session) => session.id === activeId);
+    const index = matches.findIndex((item) => item.id === activeId);
     const next =
       index < 0 ? (direction > 0 ? 0 : matches.length - 1) : (index + direction + matches.length) % matches.length;
     const id = matches[next].id;
@@ -973,9 +997,10 @@ function SessionSwitcher({
     requestAnimationFrame(() => document.getElementById(`switch-session-${id}`)?.scrollIntoView({ block: "nearest" }));
   }
 
-  function select(session: Session) {
+  function select(item: Session | Command) {
     onOpenChange(false);
-    onSelect(session);
+    if ("run" in item) item.run();
+    else onSelect(item);
   }
 
   return (
@@ -983,7 +1008,11 @@ function SessionSwitcher({
       <DialogContent className="gap-2 p-2 sm:max-w-xl" showCloseButton={false}>
         <DialogHeader className="sr-only">
           <DialogTitle>Switch session</DialogTitle>
-          <DialogDescription>Search open sessions by name, folder, agent, repository, or status.</DialogDescription>
+          <DialogDescription>
+            Search open sessions by name, folder, agent, repository, or status, or type{" "}
+            <DialogDescription>Search open sessions by name, folder, agent, repository, or status.</DialogDescription>
+            gt; to run a command.
+          </DialogDescription>
         </DialogHeader>
         <InputGroup>
           <InputGroupAddon>
@@ -992,8 +1021,8 @@ function SessionSwitcher({
           <InputGroupInput
             autoFocus
             value={query}
-            placeholder="Switch session…"
-            aria-label="Switch session"
+            placeholder="Switch session, or type > for a command…"
+            aria-label="Switch session or run a command"
             aria-keyshortcuts={shortcutAria("switchSession")}
             role="combobox"
             aria-expanded="true"
@@ -1009,15 +1038,40 @@ function SessionSwitcher({
                 event.preventDefault();
                 move(event.key === "ArrowDown" ? 1 : -1);
               } else if (event.key === "Enter") {
-                const session = matches.find((item) => item.id === activeId) ?? matches[0];
-                if (session) select(session);
+                const item = matches.find((item) => item.id === activeId) ?? matches[0];
+                if (item) select(item);
               }
             }}
           />
         </InputGroup>
         <DialogBody className="max-h-[min(28rem,60dvh)] overscroll-contain">
           <div id="session-switcher-list" role="listbox" className="space-y-0.5">
-            {matches.map((session) => {
+            {matches.map((item) => {
+              if ("run" in item)
+                return (
+                  <Item
+                    key={item.id}
+                    id={`switch-session-${item.id}`}
+                    size="xs"
+                    className={`flex-nowrap text-left ${item.id === activeId ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}
+                    render={<button type="button" role="option" aria-selected={item.id === activeId} />}
+                    onPointerMove={() => setActiveId(item.id)}
+                    onClick={() => select(item)}
+                  >
+                    <ItemMedia variant="icon">
+                      <ChevronRight />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle className="w-full text-xs">{item.label}</ItemTitle>
+                    </ItemContent>
+                    {item.shortcut ? (
+                      <ItemActions>
+                        <ShortcutCaps keys={shortcutKeys(item.shortcut)} />
+                      </ItemActions>
+                    ) : null}
+                  </Item>
+                );
+              const session = item;
               const needsAttention = attention.includes(session.id);
               return (
                 <Item
@@ -1049,7 +1103,9 @@ function SessionSwitcher({
               );
             })}
             {!matches.length ? (
-              <p className="px-2 py-4 text-center text-xs text-muted-foreground">No sessions found</p>
+              <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                {commandMode ? "No commands found" : "No sessions found"}
+              </p>
             ) : null}
           </div>
         </DialogBody>
@@ -1589,6 +1645,13 @@ function App() {
   const closeRef = useRef<(session: Session) => void>(() => {});
   const openRef = useRef<(session: Session) => void>(() => {});
   const recoverRef = useRef<(session: Session) => Promise<void>>(() => Promise.resolve());
+  // Stable handlers, so the inspector — which reads nothing of the per-chunk working and attention
+  // state — is not redrawn, file tree and all, on every burst of output.
+  const expandInspector = useCallback(
+    () => glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size)),
+    [],
+  );
+  const collapseInspector = useCallback(() => glide(inspectorPanel.current, RAIL), []);
   const markAttention = useCallback((sessionId: string) => {
     const current = attentionRef.current;
     if (current[current.length - 1] === sessionId) return false;
@@ -1801,6 +1864,13 @@ function App() {
           .find((session) => session !== undefined);
         if (!target) return;
         openRef.current(target);
+      } else if (matchesShortcut(event, "nextSession") || matchesShortcut(event, "previousSession")) {
+        // Cycling walks the same list the numbers count, wrapping at either end.
+        const list = visibleRef.current;
+        if (!list.length) return;
+        const at = list.findIndex((session) => session.id === selectedRef.current?.id);
+        const step = matchesShortcut(event, "nextSession") ? 1 : -1;
+        openRef.current(list[(at + step + list.length) % list.length]);
       } else if ((IS_MAC ? event.metaKey : event.ctrlKey) && !event.altKey && event.key >= "1" && event.key <= "9") {
         // The numbers count the sessions the sidebar is showing, so a search narrows them with the list.
         const target = visibleRef.current[Number(event.key) - 1];
@@ -1826,6 +1896,11 @@ function App() {
   useEffect(() => {
     if (updateStatus !== "installing") localStorage.setItem(WORKING_KEY, JSON.stringify([...working]));
   }, [updateStatus, working]);
+
+  // The Dock badge follows the count; zero clears it.
+  useEffect(() => {
+    void invoke("set_attention_badge", { count: attention.length }).catch(() => {});
+  }, [attention.length]);
 
   const hasActiveSessions = sessions.some((session) => session.running);
   useEffect(() => {
@@ -1960,7 +2035,6 @@ function App() {
 
   useEffect(() => {
     let disposed = false;
-    let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
     let unlistenAgent: (() => void) | undefined;
     let unlistenNotification: (() => void) | undefined;
@@ -1969,29 +2043,31 @@ function App() {
         const session = sessionsRef.current.find((item) => item.id === sessionId);
         if (session) openRef.current(session);
       });
+    // Output reaches Lite through a channel each launch opens, as raw bytes: an event would carry every
+    // byte as a JSON number and hand back an array to copy again, on the busiest path there is.
+    receiveOutput.current = (sessionId, runId, data) => {
+      if (runs.current.get(sessionId) !== runId) return;
+      const { title, path, activity, activityChanged, backgroundActivity, notification } = appendOutput(
+        sessionId,
+        data,
+      );
+      if (title) markTitle(sessionId, title);
+      if (path) markDirectory(sessionId, path);
+      if (activity === true) clearAttention(sessionId);
+      if (
+        notification &&
+        !backgroundActivity &&
+        (selectedRef.current?.id !== sessionId || !document.hasFocus()) &&
+        markAttention(sessionId)
+      ) {
+        const session = sessionsRef.current.find((item) => item.id === sessionId);
+        if (notificationsRef.current && session)
+          void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
+      }
+      if (activity !== false) markWorking(sessionId, backgroundActivity);
+      else if (activityChanged) markWorking(sessionId);
+    };
     void Promise.all([
-      listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
-        if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const { title, path, activity, activityChanged, backgroundActivity, notification } = appendOutput(
-          payload.sessionId,
-          payload.data,
-        );
-        if (title) markTitle(payload.sessionId, title);
-        if (path) markDirectory(payload.sessionId, path);
-        if (activity === true) clearAttention(payload.sessionId);
-        if (
-          notification &&
-          !backgroundActivity &&
-          (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()) &&
-          markAttention(payload.sessionId)
-        ) {
-          const session = sessionsRef.current.find((item) => item.id === payload.sessionId);
-          if (notificationsRef.current && session)
-            void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
-        }
-        if (activity !== false) markWorking(payload.sessionId, backgroundActivity);
-        else if (activityChanged) markWorking(payload.sessionId);
-      }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         runs.current.delete(payload.sessionId);
@@ -2016,15 +2092,13 @@ function App() {
         });
       }),
       listen("notification-clicked", () => void openNotification()),
-    ]).then(([output, exit, agent, notification]) => {
+    ]).then(([exit, agent, notification]) => {
       if (disposed) {
-        output();
         exit();
         agent();
         notification();
         return;
       }
-      unlistenOutput = output;
       unlistenExit = exit;
       unlistenAgent = agent;
       unlistenNotification = notification;
@@ -2033,7 +2107,7 @@ function App() {
     const timers = workTimers.current;
     return () => {
       disposed = true;
-      unlistenOutput?.();
+      receiveOutput.current = () => {};
       unlistenExit?.();
       unlistenAgent?.();
       unlistenNotification?.();
@@ -2070,6 +2144,7 @@ function App() {
     setKeepAwake(enabled);
   }, []);
 
+  const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const launch = useCallback(async (session: Session, resume: boolean, initialPrompt?: string) => {
     if (runs.current.has(session.id)) return true;
     recoveryFailures.current.delete(session.id);
@@ -2089,7 +2164,10 @@ function App() {
           );
         }
       }
+      const output = new Channel<ArrayBuffer>();
+      output.onmessage = (data) => receiveOutput.current(session.id, runId, new Uint8Array(data));
       const providerSessionId = await invoke<string | null>("spawn_session", {
+        output,
         sessionId: session.id,
         runId,
         rootId: session.rootId,
@@ -3037,21 +3115,13 @@ function App() {
                   <>
                     {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
                     <div className="flex h-11 shrink-0 items-center gap-0.5 pr-1.5 pl-2">
-                      <InputGroup>
-                        <InputGroupAddon>
-                          <Search />
-                        </InputGroupAddon>
-                        <InputGroupInput
-                          ref={sessionSearch}
-                          value={query}
-                          placeholder="Search sessions"
-                          aria-label="Search sessions"
-                          onChange={(event) => setQuery(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") setQuery("");
-                          }}
-                        />
-                      </InputGroup>
+                      <SearchInput
+                        inputRef={sessionSearch}
+                        value={query}
+                        placeholder="Search sessions"
+                        onChange={setQuery}
+                        className="min-w-0 flex-1"
+                      />
                       <ActionIconButton
                         size="icon-sm"
                         tooltip="New session"
@@ -3177,12 +3247,16 @@ function App() {
                 {selected ? (
                   <div data-terminal-surface className="relative min-h-0 flex-1">
                     <Suspense fallback={<div className="absolute inset-0 bg-background" />}>
+                      {/* A background terminal is hidden and moved off the viewport rather than shut: xterm
+                          pauses its renderer from an IntersectionObserver, which visibility alone never
+                          satisfies, and display:none would hand the fit addon a percentage height to read
+                          as pixels and shrink the child's window. Off screen, output is parsed but not drawn. */}
                       {sessions.map((session) =>
                         session.running ? (
                           <div
                             key={session.id}
                             aria-hidden={!selected.running || session.id !== selectedId}
-                            className={`absolute inset-0 ${selected.running && session.id === selectedId ? "visible" : "invisible"}`}
+                            className={`absolute inset-0 ${selected.running && session.id === selectedId ? "" : "invisible translate-x-[-200vw]"}`}
                           >
                             <TerminalView
                               sessionId={session.id}
@@ -3335,10 +3409,8 @@ function App() {
                         fontSize={inspectorFontSize}
                         fileBrowserVersion={fileBrowserVersion}
                         collapsed={shut.inspector}
-                        onExpand={() =>
-                          glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size))
-                        }
-                        onCollapse={() => glide(inspectorPanel.current, RAIL)}
+                        onExpand={expandInspector}
+                        onCollapse={collapseInspector}
                       />
                     </PanelBoundary>
                   </aside>
@@ -3673,6 +3745,45 @@ function App() {
             working={working}
             startingIds={startingIds}
             shellAgents={shellAgents}
+            commands={[
+              { id: "new-session", label: "New session", shortcut: "newSession", run: () => setNewSessionOpen(true) },
+              {
+                id: "next-attention",
+                label: "Open the next session waiting on you",
+                shortcut: "nextAttention",
+                run: () => {
+                  const target = [...attention]
+                    .reverse()
+                    .map((id) => sessions.find((session) => session.id === id))
+                    .find((session) => session !== undefined);
+                  if (target) openRef.current(target);
+                },
+              },
+              ...(selected
+                ? [
+                    {
+                      id: "restart-session",
+                      label: `Restart ${selected.name}`,
+                      run: () => void restartSession(selected),
+                    },
+                    {
+                      id: "close-session",
+                      label: `Close ${selected.name}`,
+                      shortcut: "closeSession" as const,
+                      run: () => closeSession(selected),
+                    },
+                  ]
+                : []),
+              { id: "restart-all", label: "Restart all sessions", run: restartAllSessions },
+              { id: "close-all", label: "Close all sessions", run: () => setClosingAll(true) },
+              {
+                id: "toggle-theme",
+                label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+                run: () => setTheme(theme === "dark" ? "light" : "dark"),
+              },
+              { id: "settings", label: "Open settings", shortcut: "settings", run: () => setSettingsOpen(true) },
+              { id: "check-updates", label: "Check for updates", run: () => void checkForUpdates() },
+            ]}
             onOpenChange={setSessionSwitcherOpen}
             onSelect={(session) => openRef.current(session)}
           />

@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI 或 [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex) 的 [Codex](https://developers.openai.com/codex/cli)、[Kimi Code](https://www.kimi.com/code) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
+Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI、[DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex) 或 [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli) 的 [Codex](https://developers.openai.com/codex/cli)、[Gemini CLI](https://google-gemini.github.io/gemini-cli/)、[Kimi Code](https://www.kimi.com/code)、[Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
 
 <div align="center">
   <br>
@@ -21,8 +21,9 @@ Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claud
 
 ## ✨ 功能
 
-- 并排运行 Claude Code、Codex、Kimi Code 和 shell 会话
-- 通过 Codex 使用 DeepSeek V4 Flash 或 Pro
+- 并排运行 Claude Code、Codex、Gemini CLI、Kimi Code、Qwen Code 和 shell 会话
+- 通过 Codex 使用 DeepSeek V4 Flash、Pro 或 OpenRouter，而无需更改默认的 Codex provider
+- 重启或关闭后有八秒钟可以撤销，之后 Lite 才会停止终端
 - 关闭 Lite 或重启电脑后，会话标签自动恢复
 - 每个 provider 只需登录一次，之后复用其已有的本地凭据
 - 也可以在 Lite 中为每个 provider 保存 API key，完全跳过登录流程
@@ -66,7 +67,7 @@ chmod +x Lite_*_linux_amd64.AppImage
 ./Lite_*_linux_amd64.AppImage
 ```
 
-安装 Lite 之后，在顶栏的 Lite 菜单中选择 **Check for updates**，即可安装带签名的更新并重启 Lite。Lite 从不在后台检查更新。
+安装 Lite 之后，点击顶栏的齿轮打开 **设置**，在“关于”中选择 **Check for Updates**，即可安装带签名的更新并重启 Lite。Lite 从不在后台检查更新。
 
 ## 🚀 首次运行
 
@@ -78,7 +79,7 @@ chmod +x Lite_*_linux_amd64.AppImage
 
 在 Lite 中打开每个 provider 并完成一次常规登录。每个 CLI 都把凭据保存在自己的本地存储中，因此之后的 Lite 会话会复用同一份认证信息。Lite 从不读取或复制这些存储。当某个 CLI 缺失时，新建会话对话框会提示你，并给出对应的安装指引。
 
-如果你更愿意使用 API key，在 Lite 菜单中打开 **API keys**，为每个 provider 粘贴一个 key。Lite 会把它们保存在自己数据目录下仅属主可读的文件中——与 Codex 和 Kimi 保存自身凭据的方式一致——并通过该 CLI 本来就会读取的环境变量（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`MOONSHOT_API_KEY`）把 key 传给会话。不会写入任何 provider 配置文件；删除 key 会在下次启动时生效；应用更新也不会丢失该文件，因为更新程序替换的是应用包而不是你的数据。
+如果你更愿意使用 API key，打开 **设置 › API Keys**，为每个 provider 粘贴一个 key。Lite 会把它们保存在自己数据目录下仅属主可读的文件中——与 Codex 和 Kimi 保存自身凭据的方式一致——并通过该 CLI 本来就会读取的环境变量（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY`、`GEMINI_API_KEY` 或 `MOONSHOT_API_KEY`）把 key 传给会话。Qwen Code 自行负责其区域 provider 与认证设置。不会写入任何 provider 配置文件；删除 key 会在下次启动时生效；应用更新也不会丢失该文件，因为更新程序替换的是应用包而不是你的数据。
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/d3ccbfcf-bf4c-498a-8f7f-f0a134a90e92" width="100%" alt="在 Lite 中保存 provider API key">
