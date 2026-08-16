@@ -237,17 +237,20 @@ export default function CodePreview({
   );
 }
 
-// The unit a file already indents by: a tab if any line starts with one, otherwise the narrowest
-// indent step its lines share, so an edit continues the file rather than reformatting it.
-function detectIndent(source: string): string {
-  const widths = new Map<number, number>();
+// The unit a file already indents by: a tab if any line starts with one, otherwise two spaces when
+// enough lines sit at two or six, four otherwise — so an edit continues the file rather than
+// reformatting it. A file with nothing indented yet takes its language's habit.
+function detectIndent(path: string, source: string): string {
+  let two = 0;
+  let four = 0;
   for (const line of source.split("\n", 400)) {
     if (line.startsWith("\t")) return "\t";
     const width = line.length - line.trimStart().length;
-    if (width > 0 && width % 2 === 0 && width <= 8) widths.set(width, (widths.get(width) ?? 0) + 1);
+    if (width === 2 || width === 6) two++;
+    else if (width === 4 || width === 8) four++;
   }
-  const step = [...widths.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0];
-  return " ".repeat(step && step % 4 === 0 ? 4 : step ? 2 : 4);
+  if (!two && !four) return /\.(m?[jt]sx?|json[c5]?|ya?ml|s?css|html?|vue|svelte|md)$/i.test(path) ? "  " : "    ";
+  return two > four / 4 ? "  " : "    ";
 }
 
 const SEARCH_COUNT_LIMIT = 5000;
@@ -470,7 +473,7 @@ function SourceEditor({
           basicSetup,
           search({ top: true, createPanel }),
           keymap.of([indentWithTab]),
-          indentUnit.of(detectIndent(initialSource.current)),
+          indentUnit.of(detectIndent(path, initialSource.current)),
           syntaxHighlighting(editorHighlight),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) change.current?.(update.state.doc.toString());

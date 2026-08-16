@@ -41,7 +41,6 @@ import {
   ItemMedia,
   ItemTitle,
 } from "@/components/ui/item";
-import { Kbd, KbdGroup } from "@/components/ui/kbd";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -53,9 +52,9 @@ import {
   IS_MAC,
   SHORTCUT_IDS,
   SHORTCUTS,
+  ShortcutCaps,
   type ShortcutId,
   setShortcutKeys,
-  shortcutCaps,
   shortcutKeys,
   useShortcutKeys,
 } from "@/shortcuts";
@@ -64,20 +63,10 @@ import { type Agent, sessionLabel } from "@/types";
 
 const providers = Object.values(AUTH_PROVIDERS);
 
-function ShortcutCaps({ keys }: { keys: string }) {
-  return (
-    <KbdGroup>
-      {shortcutCaps(keys).map((cap) => (
-        <Kbd key={cap}>{cap}</Kbd>
-      ))}
-    </KbdGroup>
-  );
-}
-
 // One shortcut row: the caps it answers to, which turn into a recorder on a click and take the next
 // chord pressed. A chord another shortcut already holds, or one without a modifier, is refused with a
 // reason; Escape or leaving the row keeps what was there.
-function ShortcutItem({
+function ShortcutRow({
   id,
   recording,
   onRecord,
@@ -90,62 +79,58 @@ function ShortcutItem({
   const [error, setError] = useState("");
   const { label } = SHORTCUTS[id];
   return (
-    <Item variant="outline" size="sm">
-      <ItemContent>
-        <ItemTitle>{label}</ItemTitle>
-        {error ? <ItemDescription className="text-destructive">{error}</ItemDescription> : null}
-      </ItemContent>
-      <ItemActions>
-        {keys !== SHORTCUTS[id].keys ? (
-          <ActionIconButton
-            size="icon-xs"
-            tooltip="Reset to default"
-            aria-label={`Reset the ${label} shortcut`}
-            onClick={() => {
-              setError("");
-              setShortcutKeys(id, null);
-            }}
-          >
-            <RotateCcw />
-          </ActionIconButton>
-        ) : null}
-        <button
-          type="button"
-          aria-label={recording ? `Press the new keys for ${label}` : `Change the ${label} shortcut`}
-          className={`flex h-7 min-w-24 items-center justify-end rounded-md px-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring ${recording ? "bg-muted text-xs text-muted-foreground" : "hover:bg-muted"}`}
+    <li className="flex items-center gap-3 py-1.5">
+      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+      {keys !== SHORTCUTS[id].keys ? (
+        <ActionIconButton
+          size="icon-xs"
+          tooltip="Reset to default"
+          aria-label={`Reset the ${label} shortcut`}
           onClick={() => {
             setError("");
-            onRecord(!recording);
-          }}
-          onBlur={() => onRecord(false)}
-          onKeyDown={(event) => {
-            if (!recording) return;
-            event.preventDefault();
-            event.stopPropagation();
-            if (event.key === "Escape") {
-              onRecord(false);
-              return;
-            }
-            const combo = eventCombo(event.nativeEvent);
-            if (!combo) return;
-            if (!/^(Mod|Alt)\+/.test(combo)) {
-              setError(`Hold ${IS_MAC ? "⌘ or ⌥" : "Ctrl or Alt"} with the key.`);
-              return;
-            }
-            const taken = SHORTCUT_IDS.find((other) => other !== id && shortcutKeys(other) === combo);
-            if (taken) {
-              setError(`Already used by ${SHORTCUTS[taken].label}.`);
-              return;
-            }
-            setError("");
-            setShortcutKeys(id, combo);
-            onRecord(false);
+            setShortcutKeys(id, null);
           }}
         >
-          {recording ? "Press keys…" : <ShortcutCaps keys={keys} />}
-        </button>
-      </ItemActions>
-    </Item>
+          <RotateCcw />
+        </ActionIconButton>
+      ) : null}
+      <button
+        type="button"
+        aria-label={recording ? `Press the new keys for ${label}` : `Change the ${label} shortcut`}
+        className={`flex h-7 min-w-24 items-center justify-end rounded-md px-1.5 outline-none focus-visible:ring-2 focus-visible:ring-ring ${recording ? "bg-muted text-xs text-muted-foreground" : "hover:bg-muted"}`}
+        onClick={() => {
+          setError("");
+          onRecord(!recording);
+        }}
+        onBlur={() => onRecord(false)}
+        onKeyDown={(event) => {
+          if (!recording) return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key === "Escape") {
+            onRecord(false);
+            return;
+          }
+          const combo = eventCombo(event.nativeEvent);
+          if (!combo) return;
+          if (!/^(Mod|Alt)\+/.test(combo)) {
+            setError(`Hold ${IS_MAC ? "⌘ or ⌥" : "Ctrl or Alt"} with the key.`);
+            return;
+          }
+          const taken = SHORTCUT_IDS.find((other) => other !== id && shortcutKeys(other) === combo);
+          if (taken) {
+            setError(`Already used by ${SHORTCUTS[taken].label}.`);
+            return;
+          }
+          setError("");
+          setShortcutKeys(id, combo);
+          onRecord(false);
+        }}
+      >
+        {recording ? "Press keys…" : <ShortcutCaps keys={keys} />}
+      </button>
+    </li>
   );
 }
 
@@ -481,37 +466,35 @@ export function SettingsDialog({
             </TabsContent>
             <TabsContent value="shortcuts" className="min-w-0">
               <h2 className="text-base font-semibold">Keyboard Shortcuts</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+              <p className="mt-1 mb-2 text-sm text-muted-foreground">
                 Click a shortcut and press the keys you would rather use.
               </p>
-              <ItemGroup>
+              <ul className="divide-y">
                 {SHORTCUT_IDS.map((id) => (
-                  <ShortcutItem
+                  <ShortcutRow
                     key={id}
                     id={id}
                     recording={recording === id}
                     onRecord={(on) => setRecording((current) => (on ? id : current === id ? null : current))}
                   />
                 ))}
-              </ItemGroup>
-              <h3 className="mt-5 mb-2 text-xs font-medium text-muted-foreground">Always</h3>
-              <ItemGroup>
+              </ul>
+              <h3 className="mt-5 mb-1 text-xs font-medium text-muted-foreground">Always</h3>
+              <ul className="divide-y">
                 {FIXED_SHORTCUTS.map(({ label, keys }) => (
-                  <Item key={label} variant="outline" size="sm">
-                    <ItemContent>
-                      <ItemTitle>{label}</ItemTitle>
-                    </ItemContent>
-                    <ItemActions className="gap-1.5">
+                  <li key={label} className="flex items-center gap-3 py-1.5">
+                    <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+                    <span className="flex items-center gap-1.5 pr-1.5">
                       {keys.map((combo, index) => (
                         <span key={combo} className="flex items-center gap-1.5">
                           {index ? <span className="text-xs text-muted-foreground">/</span> : null}
                           <ShortcutCaps keys={combo} />
                         </span>
                       ))}
-                    </ItemActions>
-                  </Item>
+                    </span>
+                  </li>
                 ))}
-              </ItemGroup>
+              </ul>
             </TabsContent>
             <TabsContent value="about" className="min-w-0">
               <div className="flex flex-col items-center pt-3 text-center">

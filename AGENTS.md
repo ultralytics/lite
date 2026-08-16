@@ -58,7 +58,9 @@ bun run tauri build # native installer for the current operating system
 - `src/inspector.tsx` owns the lazy file browser, Git status, and provider usage surface.
 - `src/code-preview.tsx` owns syntax-highlighted source and rendered Markdown previews.
 - `src/new-session-dialog.tsx` owns harness and provider choice, availability, and the project folder.
-- `src/settings-dialog.tsx` owns API keys and provider sign-in.
+- `src/settings-dialog.tsx` owns API keys, provider sign-in, and shortcut editing.
+- `src/shortcuts.tsx` owns every app shortcut: defaults, user overrides, matching, and display; handlers ask `matchesShortcut` rather than reading keys.
+- `src/file-icons.tsx` owns file and folder icons for the tree.
 - `src-tauri/src/lib.rs` owns PTYs, provider process launch/resume, session id discovery, file access, Git commands, credential storage, and usage adapters.
 
 A harness runs a session and a model provider bills it: Claude Code, Codex, Kimi Code, and the shell are harnesses; OpenAI and DeepSeek are providers on the Codex harness. Keep provider-specific behavior behind the existing Rust commands.

@@ -22,7 +22,11 @@ import { Switch } from "@/components/ui/switch";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
-const choices = [...Object.values(AUTH_PROVIDERS), { id: "shell", agent: "shell" as const, provider: undefined }];
+export const SESSION_CHOICES = [
+  ...Object.values(AUTH_PROVIDERS),
+  { id: "shell", agent: "shell" as const, provider: undefined, label: "Your login shell" },
+];
+const choices = SESSION_CHOICES;
 const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 const CHOICE_KEY = "lite.newSession.choice.v1";
 const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
@@ -80,10 +84,13 @@ interface Availability {
 
 export function NewSessionDialog({
   open: isOpen,
+  choice: chosen,
   onOpenChange,
   onCreate,
 }: {
   open: boolean;
+  // A choice made outside the dialog — a welcome tile — which the dialog opens on.
+  choice?: string;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
 }) {
@@ -121,6 +128,9 @@ export function NewSessionDialog({
   );
   const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
   const status = availability[choice.id];
+  useEffect(() => {
+    if (isOpen && chosen) setChoiceId(chosen);
+  }, [isOpen, chosen]);
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
   // The first explicit open asks every harness in parallel. The answer is kept for this app run, so

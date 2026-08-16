@@ -29,7 +29,6 @@ import {
   Search,
   Settings as SettingsIcon,
   SlidersHorizontal,
-  SquareTerminal,
   Sun,
   TextSelect,
   Trash2,
@@ -98,7 +97,7 @@ import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clearInspectorCache, Inspector } from "@/inspector";
 import { including, swapped, without } from "@/lib/utils";
-import { NewSessionDialog } from "@/new-session-dialog";
+import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
   appendOutput,
   clearOutput,
@@ -108,7 +107,7 @@ import {
   writeSession,
 } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
-import { IS_MAC, matchesShortcut, shortcutAria, shortcutText } from "@/shortcuts";
+import { IS_MAC, matchesShortcut, ShortcutCaps, shortcutAria, shortcutKeys, shortcutText } from "@/shortcuts";
 import { applyTheme, contentZoomStyle, initialTheme, storedFontSize, type Theme, zoomedFontSize } from "@/theme";
 import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
@@ -1059,6 +1058,48 @@ function SessionSwitcher({
   );
 }
 
+// The first thing a new install shows: every agent Lite can run, each one click from a session, so
+// the way in is the choice itself rather than a button that leads to it.
+function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void; onSettings: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-8 overflow-auto p-8 text-center">
+      <div className="flex flex-col items-center gap-3">
+        <UltralyticsLogomark className="size-12" />
+        <h1 className="text-2xl font-semibold tracking-tight">Welcome to Lite</h1>
+        <p className="max-w-md text-sm text-balance text-muted-foreground">
+          Run coding agents side by side in your own folders, with files and Git alongside. Nothing is indexed and
+          nothing leaves this computer.
+        </p>
+      </div>
+      <div className="grid w-full max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
+        {SESSION_CHOICES.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className="flex items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onChoose(option.id)}
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
+              <span className="block truncate text-xs text-muted-foreground">{option.label}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Sign in through each agent the first time, or paste API keys in{" "}
+        <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={onSettings}>
+          Settings
+        </button>
+        . <ShortcutCaps keys={shortcutKeys("newSession")} /> starts a session from anywhere.
+      </p>
+    </div>
+  );
+}
+
 // The provider's own mark, at the size a page can be about rather than the size a row can carry.
 function SessionMark({ session }: { session: Session }) {
   return (
@@ -1453,6 +1494,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [newSessionChoice, setNewSessionChoice] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
@@ -3246,23 +3288,13 @@ function App() {
                     )}
                   </div>
                 ) : (
-                  <Empty className="h-full">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <SquareTerminal />
-                      </EmptyMedia>
-                      <EmptyTitle>Start a session</EmptyTitle>
-                      <EmptyDescription>
-                        Pick a project folder, then choose the agent that should work in it.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                    <EmptyContent>
-                      <Button onClick={() => setNewSessionOpen(true)}>
-                        <Plus />
-                        New session
-                      </Button>
-                    </EmptyContent>
-                  </Empty>
+                  <Welcome
+                    onChoose={(choice) => {
+                      setNewSessionChoice(choice);
+                      setNewSessionOpen(true);
+                    }}
+                    onSettings={() => setSettingsOpen(true)}
+                  />
                 )}
                 {error ? (
                   <div className="flex shrink-0 items-start gap-2 border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -3627,7 +3659,12 @@ function App() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
+          <NewSessionDialog
+            open={newSessionOpen}
+            choice={newSessionChoice}
+            onOpenChange={setNewSessionOpen}
+            onCreate={createSession}
+          />
           <SessionSwitcher
             open={sessionSwitcherOpen}
             sessions={switcherSessions}

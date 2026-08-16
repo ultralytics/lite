@@ -2,6 +2,8 @@
 
 import { useSyncExternalStore } from "react";
 
+import { Kbd, KbdGroup } from "@/components/ui/kbd";
+
 const SHORTCUTS_KEY = "lite.shortcuts.v1";
 
 export const IS_MAC = navigator.platform.includes("Mac");
@@ -157,13 +159,24 @@ const KEY_LABELS: Record<string, string> = {
 };
 
 // The keys as they are printed on a keycap: glyphs on macOS, words elsewhere. Each entry is one cap.
-export function shortcutCaps(keys: string): string[] {
+function shortcutCaps(keys: string): string[] {
   return keys.split("+").map((part) => {
     if (part === "Mod") return IS_MAC ? "⌘" : "Ctrl";
     if (part === "Alt") return IS_MAC ? "⌥" : "Alt";
     if (part === "Shift") return IS_MAC ? "⇧" : "Shift";
     return KEY_LABELS[part] ?? (part.length === 1 ? part.toUpperCase() : part);
   });
+}
+
+// The caps as keycaps, one Kbd each.
+export function ShortcutCaps({ keys }: { keys: string }) {
+  return (
+    <KbdGroup>
+      {shortcutCaps(keys).map((cap) => (
+        <Kbd key={cap}>{cap}</Kbd>
+      ))}
+    </KbdGroup>
+  );
 }
 
 // The same keys as one word for a tooltip: "⌘⇧P" on macOS, "Ctrl+Shift+P" elsewhere.
