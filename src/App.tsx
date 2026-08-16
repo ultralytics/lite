@@ -108,15 +108,8 @@ import {
   writeSession,
 } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
-import {
-  applyTheme,
-  contentZoomStyle,
-  initialTheme,
-  storedFontSize,
-  type Theme,
-  zoomedFontSize,
-  zoomStep,
-} from "@/theme";
+import { IS_MAC, matchesShortcut, shortcutAria, shortcutText } from "@/shortcuts";
+import { applyTheme, contentZoomStyle, initialTheme, storedFontSize, type Theme, zoomedFontSize } from "@/theme";
 import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
@@ -484,7 +477,7 @@ function AppContextMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState(EMPTY_MENU_CONTEXT);
-  const shortcut = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
+  const shortcut = IS_MAC ? "⌘" : "Ctrl+";
   const readonly =
     context.editable instanceof HTMLInputElement || context.editable instanceof HTMLTextAreaElement
       ? context.editable.readOnly || context.editable.disabled
@@ -548,17 +541,17 @@ function AppContextMenu({
             <ContextMenuItem onClick={() => context.zoomIn?.click()}>
               <ZoomIn />
               Zoom in
-              <ContextMenuShortcut>{shortcut}+</ContextMenuShortcut>
+              <ContextMenuShortcut>{shortcutText("zoomIn")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => context.zoomOut?.click()}>
               <ZoomOut />
               Zoom out
-              <ContextMenuShortcut>{shortcut}-</ContextMenuShortcut>
+              <ContextMenuShortcut>{shortcutText("zoomOut")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => context.zoomReset?.click()}>
               <RotateCcw />
               Zoom reset
-              <ContextMenuShortcut>{shortcut}0</ContextMenuShortcut>
+              <ContextMenuShortcut>{shortcutText("zoomReset")}</ContextMenuShortcut>
             </ContextMenuItem>
             {!session && (linkGroup || surfaceGroup) ? <ContextMenuSeparator /> : null}
           </>
@@ -1002,7 +995,7 @@ function SessionSwitcher({
             value={query}
             placeholder="Switch session…"
             aria-label="Switch session"
-            aria-keyshortcuts={navigator.platform.includes("Mac") ? "Meta+P" : "Control+Shift+P"}
+            aria-keyshortcuts={shortcutAria("switchSession")}
             role="combobox"
             aria-expanded="true"
             aria-controls="session-switcher-list"
@@ -1576,7 +1569,6 @@ function App() {
   );
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
   const selectedStarting = selected ? startingIds.has(selected.id) : false;
-  const sessionShortcut = navigator.platform.includes("Mac") ? "⌘P" : "Ctrl+Shift+P";
   // A session is found by what names it: the subject it was given and the folder it works in.
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -1731,9 +1723,15 @@ function App() {
   // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
+      if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey && !event.altKey)) return;
       if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
-      const step = zoomStep(event.key, event.code);
+      const step = matchesShortcut(event, "zoomIn")
+        ? 1
+        : matchesShortcut(event, "zoomOut")
+          ? -1
+          : matchesShortcut(event, "zoomReset")
+            ? 0
+            : undefined;
       const preview = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-context-zoom]") : null;
       if (preview && step !== undefined) {
         const action = step === 1 ? "zoom-in" : step === -1 ? "zoom-out" : "zoom-reset";
@@ -1750,19 +1748,18 @@ function App() {
         event.preventDefault();
         return;
       }
-      const switchSession = event.key.toLowerCase() === "p" && (event.metaKey || (event.ctrlKey && event.shiftKey));
-      if (switchSession) setSessionSwitcherOpen(true);
-      else if (event.key === "n") setNewSessionOpen(true);
-      else if (event.key === ",") setSettingsOpen(true);
-      else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
-      else if (event.shiftKey && event.key.toLowerCase() === "u") {
+      if (matchesShortcut(event, "switchSession")) setSessionSwitcherOpen(true);
+      else if (matchesShortcut(event, "newSession")) setNewSessionOpen(true);
+      else if (matchesShortcut(event, "settings")) setSettingsOpen(true);
+      else if (matchesShortcut(event, "closeSession") && selectedRef.current) closeRef.current(selectedRef.current);
+      else if (matchesShortcut(event, "nextAttention")) {
         const target = [...attentionRef.current]
           .reverse()
           .map((id) => sessionsRef.current.find((session) => session.id === id))
           .find((session) => session !== undefined);
         if (!target) return;
         openRef.current(target);
-      } else if (event.key >= "1" && event.key <= "9") {
+      } else if ((IS_MAC ? event.metaKey : event.ctrlKey) && !event.altKey && event.key >= "1" && event.key <= "9") {
         // The numbers count the sessions the sidebar is showing, so a search narrows them with the list.
         const target = visibleRef.current[Number(event.key) - 1];
         if (!target) return;
@@ -2833,14 +2830,14 @@ function App() {
                           type="button"
                           className="min-w-0 truncate rounded-sm text-xs font-medium hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                           aria-label="Switch session"
-                          aria-keyshortcuts={navigator.platform.includes("Mac") ? "Meta+P" : "Control+Shift+P"}
+                          aria-keyshortcuts={shortcutAria("switchSession")}
                           onClick={() => setSessionSwitcherOpen(true)}
                         />
                       }
                     >
                       {selected.name}
                     </TooltipTrigger>
-                    <TooltipContent>Switch session · {sessionShortcut}</TooltipContent>
+                    <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
                   <button
                     type="button"
@@ -2930,13 +2927,7 @@ function App() {
                 data-zoom-panel="sidebar"
                 className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground"
                 onKeyDownCapture={(event) => {
-                  if (
-                    !shut.sidebar &&
-                    (event.metaKey || event.ctrlKey) &&
-                    !event.altKey &&
-                    !event.shiftKey &&
-                    event.key.toLowerCase() === "f"
-                  ) {
+                  if (!shut.sidebar && matchesShortcut(event.nativeEvent, "find")) {
                     event.preventDefault();
                     sessionSearch.current?.focus();
                     sessionSearch.current?.select();

@@ -18,7 +18,8 @@ import {
   subscribeOutput,
   writeSession,
 } from "@/output-store";
-import { type Theme, zoomStep } from "@/theme";
+import { matchesShortcut } from "@/shortcuts";
+import type { Theme } from "@/theme";
 import type { Agent } from "@/types";
 
 const SEARCH_HIGHLIGHT_LIMIT = 5000;
@@ -325,8 +326,13 @@ export function TerminalView({
         terminal.input(event.key);
         return false;
       }
-      if (!(event.metaKey || event.ctrlKey)) return true;
-      const step = zoomStep(event.key, event.code);
+      const step = matchesShortcut(event, "zoomIn")
+        ? 1
+        : matchesShortcut(event, "zoomOut")
+          ? -1
+          : matchesShortcut(event, "zoomReset")
+            ? 0
+            : undefined;
       if (step === undefined) return true;
       zoomRef.current(step);
       return false;
@@ -448,7 +454,7 @@ export function TerminalView({
           find(searchQuery, event.shiftKey);
           return;
         }
-        if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+        if (matchesShortcut(event.nativeEvent, "find")) {
           event.preventDefault();
           event.stopPropagation();
           openSearch();

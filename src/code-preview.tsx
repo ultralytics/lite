@@ -1,9 +1,22 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { HighlightStyle, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
+import { indentWithTab } from "@codemirror/commands";
+import { HighlightStyle, indentUnit, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages as editorLanguages } from "@codemirror/language-data";
+import {
+  closeSearchPanel,
+  findNext,
+  findPrevious,
+  getSearchQuery,
+  openSearchPanel,
+  replaceAll,
+  replaceNext,
+  SearchQuery,
+  search,
+  setSearchQuery,
+} from "@codemirror/search";
 import { EditorState, StateEffect } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap, type Panel, runScopeHandlers } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import hljs from "highlight.js/lib/core";
@@ -26,9 +39,14 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
-import { useEffect, useMemo, useRef } from "react";
+import { CaseSensitive, ChevronDown, ChevronUp, Regex, Replace, Search, WholeWord, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { matchesShortcut } from "@/shortcuts";
 
 const languages = {
   bash,
@@ -219,6 +237,182 @@ export default function CodePreview({
   );
 }
 
+// The unit a file already indents by: a tab if any line starts with one, otherwise the narrowest
+// indent step its lines share, so an edit continues the file rather than reformatting it.
+function detectIndent(source: string): string {
+  const widths = new Map<number, number>();
+  for (const line of source.split("\n", 400)) {
+    if (line.startsWith("\t")) return "\t";
+    const width = line.length - line.trimStart().length;
+    if (width > 0 && width % 2 === 0 && width <= 8) widths.set(width, (widths.get(width) ?? 0) + 1);
+  }
+  const step = [...widths.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])[0]?.[0];
+  return " ".repeat(step && step % 4 === 0 ? 4 : step ? 2 : 4);
+}
+
+const SEARCH_COUNT_LIMIT = 5000;
+const countFormat = new Intl.NumberFormat();
+
+// Where the selection stands among the matches, counted the way the terminal counts its own.
+function countMatches(state: EditorState): { index: number; count: number } {
+  const query = getSearchQuery(state);
+  if (!query.valid) return { index: -1, count: 0 };
+  const { from, to } = state.selection.main;
+  let index = -1;
+  let count = 0;
+  const cursor = query.getCursor(state);
+  for (let match = cursor.next(); !match.done && count < SEARCH_COUNT_LIMIT; match = cursor.next()) {
+    if (match.value.from === from && match.value.to === to) index = count;
+    count++;
+  }
+  return { index, count };
+}
+
+// The editor's find bar, drawn from the same parts as the terminal's so one search reads like the
+// other. CodeMirror keeps the query, the matches, and the panel's place; this only shows and edits
+// them. Typing lands on the first match past the cursor as the terminal does, Enter and the arrows
+// step, and a second row replaces.
+function EditorSearch({
+  view,
+  query,
+  matches,
+}: {
+  view: EditorView;
+  query: SearchQuery;
+  matches: { index: number; count: number };
+}) {
+  const input = useRef<HTMLInputElement>(null);
+  const replaceInput = useRef<HTMLInputElement>(null);
+  const [replacing, setReplacing] = useState(false);
+
+  useEffect(() => {
+    input.current?.focus();
+    input.current?.select();
+  }, []);
+
+  function commit(
+    changes: Partial<Pick<SearchQuery, "search" | "caseSensitive" | "regexp" | "wholeWord" | "replace">>,
+  ) {
+    const next = new SearchQuery({
+      search: query.search,
+      caseSensitive: query.caseSensitive,
+      regexp: query.regexp,
+      wholeWord: query.wholeWord,
+      replace: query.replace,
+      ...changes,
+    });
+    view.dispatch({ effects: setSearchQuery.of(next) });
+    if (!("replace" in changes) && next.valid && countMatches(view.state).index < 0) findNext(view);
+  }
+
+  function toggle(field: "caseSensitive" | "regexp" | "wholeWord", label: string, Icon: typeof Regex) {
+    return (
+      <InputGroupButton
+        size="icon-xs"
+        aria-label={label}
+        aria-pressed={query[field]}
+        className={query[field] ? "bg-muted text-foreground" : undefined}
+        onClick={() => commit({ [field]: !query[field] })}
+      >
+        <Icon />
+      </InputGroupButton>
+    );
+  }
+
+  return (
+    <search
+      className="w-[26rem] max-w-full rounded-lg bg-background shadow-lg"
+      onKeyDown={(event) => {
+        if (event.key === "Enter" && event.target === replaceInput.current) {
+          event.preventDefault();
+          replaceNext(view);
+        } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          event.preventDefault();
+          (event.key === "ArrowUp" ? findPrevious : findNext)(view);
+        } else if (runScopeHandlers(view, event.nativeEvent, "search-panel")) event.preventDefault();
+      }}
+    >
+      <InputGroup>
+        <InputGroupAddon>
+          <Search />
+        </InputGroupAddon>
+        <InputGroupInput
+          ref={input}
+          main-field="true"
+          value={query.search}
+          placeholder="Find in file"
+          aria-label="Find in file"
+          aria-invalid={query.search !== "" && !query.valid ? true : undefined}
+          onChange={(event) => commit({ search: event.target.value })}
+        />
+        <InputGroupAddon align="inline-end" className="gap-0 pr-1">
+          <span className="min-w-14 px-1 text-center text-xs tabular-nums" aria-live="polite" aria-atomic="true">
+            {matches.count ? (matches.index >= 0 ? countFormat.format(matches.index + 1) : "–") : "0"} /{" "}
+            {countFormat.format(matches.count)}
+            {matches.count >= SEARCH_COUNT_LIMIT ? "+" : ""}
+          </span>
+          {toggle("caseSensitive", "Match case", CaseSensitive)}
+          {toggle("wholeWord", "Match whole word", WholeWord)}
+          {toggle("regexp", "Use regular expression", Regex)}
+          <InputGroupButton
+            size="icon-xs"
+            aria-label="Previous match"
+            disabled={!query.valid}
+            onClick={() => findPrevious(view)}
+          >
+            <ChevronUp />
+          </InputGroupButton>
+          <InputGroupButton
+            size="icon-xs"
+            aria-label="Next match"
+            disabled={!query.valid}
+            onClick={() => findNext(view)}
+          >
+            <ChevronDown />
+          </InputGroupButton>
+          {view.state.readOnly ? null : (
+            <InputGroupButton
+              size="icon-xs"
+              aria-label="Replace"
+              aria-pressed={replacing}
+              className={replacing ? "bg-muted text-foreground" : undefined}
+              onClick={() => setReplacing((current) => !current)}
+            >
+              <Replace />
+            </InputGroupButton>
+          )}
+          <InputGroupButton size="icon-xs" aria-label="Close search" onClick={() => closeSearchPanel(view)}>
+            <X />
+          </InputGroupButton>
+        </InputGroupAddon>
+      </InputGroup>
+      {replacing ? (
+        <InputGroup className="mt-1">
+          <InputGroupAddon>
+            <Replace />
+          </InputGroupAddon>
+          <InputGroupInput
+            ref={replaceInput}
+            autoFocus
+            value={query.replace}
+            placeholder="Replace with"
+            aria-label="Replace with"
+            onChange={(event) => commit({ replace: event.target.value })}
+          />
+          <InputGroupAddon align="inline-end" className="gap-0 pr-1">
+            <InputGroupButton disabled={!query.valid} onClick={() => replaceNext(view)}>
+              Replace
+            </InputGroupButton>
+            <InputGroupButton disabled={!query.valid} onClick={() => replaceAll(view)}>
+              All
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+      ) : null}
+    </search>
+  );
+}
+
 function SourceEditor({
   path,
   source,
@@ -234,16 +428,49 @@ function SourceEditor({
   const view = useRef<EditorView>(null);
   const change = useRef(onChange);
   const initialSource = useRef(source);
+  const [panel, setPanel] = useState<{ dom: HTMLElement; view: EditorView } | null>(null);
+  const [query, setQuery] = useState(() => new SearchQuery({ search: "" }));
+  const [matches, setMatches] = useState({ index: -1, count: 0 });
   change.current = onChange;
 
   useEffect(() => {
     if (!parent.current) return;
+    // The search panel is a slot CodeMirror opens and closes; React draws into it through a portal,
+    // and the panel reports the query and the match count back whenever the document, the selection,
+    // or the query changes.
+    function createPanel(editor: EditorView): Panel {
+      const dom = document.createElement("div");
+      const sync = (state: EditorState) => {
+        setQuery(getSearchQuery(state));
+        setMatches(countMatches(state));
+      };
+      sync(editor.state);
+      setPanel({ dom, view: editor });
+      return {
+        dom,
+        top: true,
+        update(update) {
+          if (
+            update.docChanged ||
+            update.selectionSet ||
+            update.transactions.some((tr) => tr.effects.some((effect) => effect.is(setSearchQuery)))
+          )
+            sync(update.state);
+        },
+        destroy() {
+          setPanel(null);
+        },
+      };
+    }
     const editor = new EditorView({
       parent: parent.current,
       state: EditorState.create({
         doc: initialSource.current,
         extensions: [
           basicSetup,
+          search({ top: true, createPanel }),
+          keymap.of([indentWithTab]),
+          indentUnit.of(detectIndent(initialSource.current)),
           syntaxHighlighting(editorHighlight),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) change.current?.(update.state.doc.toString());
@@ -263,8 +490,60 @@ function SourceEditor({
             ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
               backgroundColor: "color-mix(in oklab, var(--ring) 35%, transparent) !important",
             },
+            ".cm-searchMatch": { backgroundColor: "var(--search-match)" },
+            ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--search-match-active)" },
             ".cm-cursor": { borderLeftColor: "var(--foreground)" },
             "&.cm-focused": { outline: "none" },
+            // Panels float over the top right corner the way the terminal's find bar does, instead of
+            // taking a grey strip across the top of the file.
+            ".cm-panels": {
+              position: "absolute",
+              top: "0.5rem",
+              right: "1rem",
+              left: "auto",
+              zIndex: "10",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: "0.5rem",
+              maxWidth: "calc(100% - 2rem)",
+              border: "none",
+              backgroundColor: "transparent",
+              color: "inherit",
+            },
+            ".cm-panel.cm-dialog": {
+              display: "flex",
+              alignItems: "center",
+              gap: "0.5rem",
+              padding: "0.25rem 0.5rem",
+              borderRadius: "0.5rem",
+              backgroundColor: "var(--background)",
+              boxShadow: "var(--shadow-lg, 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1))",
+              border: "1px solid var(--input)",
+              fontSize: "0.75rem",
+              "& label": { display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "inherit" },
+              "& .cm-textfield": {
+                height: "1.5rem",
+                width: "5rem",
+                padding: "0 0.5rem",
+                borderRadius: "0.375rem",
+                border: "1px solid var(--input)",
+                backgroundColor: "transparent",
+                font: "inherit",
+                color: "inherit",
+              },
+              "& .cm-button": {
+                height: "1.5rem",
+                padding: "0 0.5rem",
+                borderRadius: "0.375rem",
+                border: "none",
+                background: "var(--muted)",
+                font: "inherit",
+                color: "inherit",
+                cursor: "pointer",
+              },
+              "& .cm-dialog-close": { position: "static", padding: "0 0.25rem", color: "var(--muted-foreground)" },
+            },
           }),
         ],
       }),
@@ -289,5 +568,19 @@ function SourceEditor({
     if (fontSize !== undefined) view.current?.requestMeasure();
   }, [fontSize]);
 
-  return <div ref={parent} className="size-full" style={{ fontSize }} />;
+  return (
+    <div
+      ref={parent}
+      className="size-full"
+      style={{ fontSize }}
+      onKeyDownCapture={(event) => {
+        if (!view.current || !matchesShortcut(event.nativeEvent, "find")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        openSearchPanel(view.current);
+      }}
+    >
+      {panel ? createPortal(<EditorSearch view={panel.view} query={query} matches={matches} />, panel.dom) : null}
+    </div>
+  );
 }

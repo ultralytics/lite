@@ -10,34 +10,15 @@ import {
   ChevronsUpDown,
   CircleCheck,
   CircleDot,
-  Container,
-  Database,
-  File,
-  FileArchive,
-  FileAudio,
-  FileCode,
-  FileCog,
   FileDiff,
-  FileImage,
-  FileJson,
-  FileKey,
-  FileLock,
-  FileSpreadsheet,
-  FileTerminal,
-  FileText,
-  FileType,
-  FileVideo,
   Folder,
   GitBranch,
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
   GitPullRequestDraft,
-  Hammer,
-  type LucideIcon,
   RefreshCw,
   Save,
-  Scale,
   Search,
   Trash2,
   X,
@@ -74,10 +55,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { FileIcon } from "@/file-icons";
 import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
 import { readTerminalInput, readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
+import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import { contentZoomStyle } from "@/theme";
 import {
   type DirectoryCursor,
@@ -324,65 +307,6 @@ const formatTime = new Intl.DateTimeFormat(undefined, {
   hour: "numeric",
   minute: "2-digit",
 });
-
-// A tree is read by shape before it is read by name, so each family of file gets its own icon and its
-// own color and the plain sheet is left for the types nothing here recognizes. Languages are colored
-// the way their own ecosystems are, which is what makes a folder scannable at a glance.
-type FileKind = { icon: LucideIcon; color: string };
-
-const FILE_FAMILIES: (FileKind & { extensions: string[] })[] = [
-  { icon: FileCode, color: "text-sky-500", extensions: ["py", "pyi", "pyw"] },
-  { icon: FileCode, color: "text-amber-500", extensions: ["js", "jsx", "mjs", "cjs"] },
-  { icon: FileCode, color: "text-blue-500", extensions: ["ts", "tsx", "mts", "cts"] },
-  { icon: FileCode, color: "text-orange-600", extensions: ["rs"] },
-  { icon: FileCode, color: "text-cyan-500", extensions: ["go"] },
-  { icon: FileCode, color: "text-violet-500", extensions: ["c", "cc", "cpp", "cxx", "h", "hpp", "cs", "java", "kt"] },
-  { icon: FileCode, color: "text-rose-500", extensions: ["rb", "php", "swift"] },
-  { icon: FileCode, color: "text-orange-500", extensions: ["html", "htm", "xml", "vue", "svelte"] },
-  { icon: FileCode, color: "text-fuchsia-500", extensions: ["css", "scss", "sass", "less"] },
-  { icon: FileJson, color: "text-amber-500", extensions: ["json", "jsonc", "json5"] },
-  {
-    icon: FileCog,
-    color: "text-violet-500",
-    extensions: ["yaml", "yml", "toml", "ini", "cfg", "conf", "editorconfig"],
-  },
-  { icon: FileCog, color: "text-stone-500", extensions: ["gitignore", "gitattributes", "dockerignore"] },
-  { icon: FileKey, color: "text-amber-600", extensions: ["env", "pem", "key", "crt", "cert"] },
-  { icon: FileLock, color: "text-stone-500", extensions: ["lock", "lockb"] },
-  { icon: FileTerminal, color: "text-emerald-500", extensions: ["sh", "bash", "zsh", "fish", "ps1", "bat", "cmd"] },
-  { icon: FileImage, color: "text-pink-500", extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "avif"] },
-  { icon: FileAudio, color: "text-purple-500", extensions: ["mp3", "wav", "flac", "ogg", "m4a"] },
-  { icon: FileVideo, color: "text-purple-500", extensions: ["mp4", "mov", "mkv", "webm", "avi"] },
-  { icon: FileSpreadsheet, color: "text-green-600", extensions: ["csv", "tsv", "xls", "xlsx", "parquet"] },
-  { icon: FileArchive, color: "text-stone-500", extensions: ["zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar"] },
-  { icon: Database, color: "text-indigo-500", extensions: ["sql", "db", "sqlite", "sqlite3"] },
-  { icon: FileType, color: "text-muted-foreground", extensions: ["woff", "woff2", "ttf", "otf"] },
-  { icon: FileDiff, color: "text-muted-foreground", extensions: ["diff", "patch"] },
-  { icon: FileText, color: "text-muted-foreground", extensions: ["md", "mdx", "rst", "txt", "adoc"] },
-];
-
-const FILE_TYPES = new Map<string, FileKind>(
-  FILE_FAMILIES.flatMap(({ icon, color, extensions }) => extensions.map((extension) => [extension, { icon, color }])),
-);
-
-// The few files a project names rather than extends, which say more than the extension they lack.
-const FILE_NAMES = new Map<string, FileKind>([
-  ["dockerfile", { icon: Container, color: "text-blue-500" }],
-  ["makefile", { icon: Hammer, color: "text-stone-500" }],
-  ["cmakelists.txt", { icon: Hammer, color: "text-stone-500" }],
-  ["license", { icon: Scale, color: "text-muted-foreground" }],
-]);
-
-function FileIcon({ name, directory }: { name: string; directory?: boolean }) {
-  const lower = name.toLowerCase();
-  const kind = FILE_NAMES.get(lower) ?? FILE_TYPES.get(lower.split(".").pop() ?? "");
-  const Icon = directory ? Folder : (kind?.icon ?? File);
-  return (
-    <Icon
-      className={`size-4 shrink-0 ${directory ? "fill-current text-muted-foreground" : (kind?.color ?? "text-muted-foreground")}`}
-    />
-  );
-}
 
 function Loading({ label }: { label: string }) {
   return (
@@ -645,11 +569,7 @@ function FileTree({
                   data-context-expanded={entry.isDirectory ? expanded.has(entry.path) : undefined}
                   onClick={() => (entry.isDirectory ? void toggle(entry.path) : onOpen(entry))}
                   onKeyDown={(event) => {
-                    if (
-                      event.key !== "Delete" &&
-                      !(navigator.platform.includes("Mac") && event.metaKey && event.key === "Backspace")
-                    )
-                      return;
+                    if (event.key !== "Delete" && !(IS_MAC && event.metaKey && event.key === "Backspace")) return;
                     event.preventDefault();
                     setDeleteError("");
                     setDeleting(entry);
@@ -660,7 +580,7 @@ function FileTree({
                       <ChevronRight
                         className={`size-3 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
                       />
-                      <FileIcon name={entry.name} directory />
+                      <FileIcon name={entry.name} directory open={open} />
                     </>
                   ) : (
                     <>
@@ -753,7 +673,7 @@ function FileTree({
           <ChevronRight
             className={`size-3 text-muted-foreground transition-transform ${rootOpen ? "rotate-90" : ""}`}
           />
-          <FileIcon name={name} directory />
+          <FileIcon name={name} directory open={rootOpen} />
           <span className="truncate">{name}</span>
         </button>
         <ActionIconButton
@@ -815,17 +735,12 @@ function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
 }
 
 function previewKeyDown(event: ReactKeyboardEvent<HTMLElement>, onClose: () => void, onSave?: () => void) {
-  const command = event.metaKey || (!navigator.platform.includes("Mac") && event.ctrlKey);
-  if (!command) return;
-  if (onSave && event.key.toLowerCase() === "s") {
+  if (onSave && matchesShortcut(event.nativeEvent, "saveFile")) {
     event.preventDefault();
     onSave();
-    return;
-  }
-  if (event.key.toLowerCase() === "w") {
+  } else if (matchesShortcut(event.nativeEvent, "closeSession")) {
     event.preventDefault();
     onClose();
-    return;
   }
 }
 
@@ -1730,7 +1645,7 @@ export function Inspector({
         data-context-surface
         className={collapsed ? "hidden" : "h-full"}
         onKeyDownCapture={(event) => {
-          if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+          if (matchesShortcut(event.nativeEvent, "find")) {
             const input = tab === "files" ? fileSearch.current : tab === "git" ? gitSearch.current : null;
             if (!input?.offsetParent) return;
             event.preventDefault();
