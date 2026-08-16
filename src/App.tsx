@@ -1009,9 +1009,7 @@ function SessionSwitcher({
         <DialogHeader className="sr-only">
           <DialogTitle>Switch session</DialogTitle>
           <DialogDescription>
-            Search open sessions by name, folder, agent, repository, or status, or type{" "}
-            <DialogDescription>Search open sessions by name, folder, agent, repository, or status.</DialogDescription>
-            gt; to run a command.
+            Search open sessions by name, folder, agent, repository, or status, or type &gt; to run a command.
           </DialogDescription>
         </DialogHeader>
         <InputGroup>
@@ -1619,6 +1617,8 @@ function App() {
   const [updateError, setUpdateError] = useState("");
   const updateDialog = useRef<HTMLDivElement>(null);
   const runs = useRef(new Map<string, string>());
+  // What a launch's output channel calls; the listener effect fills it in.
+  const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const recoveries = useRef(new Map<string, Promise<void>>());
   const recoveryFailures = useRef(new Set<string>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
@@ -2144,7 +2144,6 @@ function App() {
     setKeepAwake(enabled);
   }, []);
 
-  const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const launch = useCallback(async (session: Session, resume: boolean, initialPrompt?: string) => {
     if (runs.current.has(session.id)) return true;
     recoveryFailures.current.delete(session.id);
