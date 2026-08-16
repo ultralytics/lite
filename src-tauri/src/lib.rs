@@ -233,6 +233,9 @@ struct PtySession {
     // Shared so a write takes only this session's lock: a paste into a busy child blocks on the tty,
     // and holding the whole session table for that would stall every other tab's resize and stop.
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    // Where output goes: the channel of the launch that opened the session, or of a later page that
+    // found it still running and reattached.
+    output: Arc<Mutex<Channel<InvokeResponseBody>>>,
     run_id: String,
     alive: Arc<AtomicBool>,
     agent_watch: Arc<AtomicU64>,
@@ -3289,6 +3292,8 @@ async fn spawn_session(
                 .map_err(|error| error.to_string())?
                 .is_none()
             {
+                // A page that reloaded while the child ran takes over its output from here.
+                *session.output.lock().map_err(|error| error.to_string())? = output;
                 return Ok(provider_session_id);
             }
             running.remove(&session_id)
@@ -3300,6 +3305,7 @@ async fn spawn_session(
         stop_pty(&mut session)?;
     }
 
+    let output = Arc::new(Mutex::new(output));
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -3405,6 +3411,7 @@ async fn spawn_session(
             child,
             master: pair.master,
             writer: Arc::new(Mutex::new(writer)),
+            output: output.clone(),
             run_id: run_id.clone(),
             alive: Arc::new(AtomicBool::new(true)),
             agent_watch: Arc::new(AtomicU64::new(0)),
@@ -3416,14 +3423,17 @@ async fn spawn_session(
     let event_run_id = run_id.clone();
     let output_app = app.clone();
     thread::spawn(move || {
-        // Bytes go to the page as bytes over the launch's own channel; an event would spell each one
+        // Bytes go to the page as bytes over the session's channel; an event would spell each one
         // out as a JSON number.
         let mut buffer = [0_u8; 8192];
         while let Ok(count) = reader.read(&mut buffer) {
             if count == 0 {
                 break;
             }
-            if output
+            let Ok(channel) = output.lock().map(|channel| channel.clone()) else {
+                break;
+            };
+            if channel
                 .send(InvokeResponseBody::Raw(buffer[..count].to_vec()))
                 .is_err()
             {

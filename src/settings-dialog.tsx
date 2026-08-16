@@ -120,8 +120,9 @@ function ShortcutRow({
             return;
           }
           const taken = SHORTCUT_IDS.find((other) => other !== id && shortcutKeys(other) === combo);
-          if (taken) {
-            setError(`Already used by ${SHORTCUTS[taken].label}.`);
+          const fixed = FIXED_SHORTCUTS.flatMap(({ rows }) => rows).find(({ keys }) => keys.includes(combo));
+          if (taken || fixed) {
+            setError(`Already used by ${taken ? SHORTCUTS[taken].label : fixed?.label}.`);
             return;
           }
           setError("");

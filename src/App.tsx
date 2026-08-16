@@ -3733,7 +3733,11 @@ function App() {
           <NewSessionDialog
             open={newSessionOpen}
             choice={newSessionChoice}
-            onOpenChange={setNewSessionOpen}
+            onOpenChange={(open) => {
+              setNewSessionOpen(open);
+              // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
+              if (!open) setNewSessionChoice(undefined);
+            }}
             onCreate={createSession}
           />
           <SessionSwitcher
