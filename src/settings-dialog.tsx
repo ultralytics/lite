@@ -114,6 +114,10 @@ function ShortcutRow({
             onRecord(false);
             return;
           }
+          if (IS_MAC ? event.ctrlKey : event.metaKey) {
+            setError(`Do not hold ${IS_MAC ? "Control" : "Meta"} with the shortcut.`);
+            return;
+          }
           const combo = eventCombo(event.nativeEvent);
           if (!combo) return;
           if (!/^(Mod|Alt)\+/.test(combo)) {

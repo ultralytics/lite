@@ -42,6 +42,14 @@ describe("shortcuts", () => {
     expect(matchesShortcut(key({ key: ",", code: "Comma", ...mod }), "settings")).toBe(true);
   });
 
+  test("the other platform modifier cannot alter or trigger a binding", () => {
+    const opposite = IS_MAC ? { ctrlKey: true } : { metaKey: true };
+    expect(eventCombo(key({ key: "k", code: "KeyK", altKey: true, ...opposite }))).toBeUndefined();
+    setShortcutKeys("settings", "Alt+K");
+    expect(matchesShortcut(key({ key: "k", code: "KeyK", altKey: true, ...opposite }), "settings")).toBe(false);
+    setShortcutKeys("settings", null);
+  });
+
   test("recording keeps native and platform editor chords reserved", () => {
     expect(fixedShortcut("Mod+C")?.label).toContain("copy");
     expect(fixedShortcut("Mod+Z")?.label).toContain("Undo");

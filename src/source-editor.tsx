@@ -58,16 +58,16 @@ function detectIndent(path: string, source: string): string {
 
 const SEARCH_COUNT_LIMIT = 5000;
 // The option chords VS Code users already know, held with the platform's command key and Alt.
-const OPTION_BY_KEY: Record<string, "caseSensitive" | "wholeWord" | "regexp" | "replace"> = {
-  c: "caseSensitive",
-  w: "wholeWord",
-  r: "regexp",
-  f: "replace",
+const OPTION_BY_CODE: Record<string, "caseSensitive" | "wholeWord" | "regexp" | "replace"> = {
+  KeyC: "caseSensitive",
+  KeyW: "wholeWord",
+  KeyR: "regexp",
+  KeyF: "replace",
 };
 const OPTION_KEYS = Object.fromEntries(
-  Object.entries(OPTION_BY_KEY).map(([key, option]) => [
+  Object.entries(OPTION_BY_CODE).map(([code, option]) => [
     option,
-    IS_MAC ? `⌥⌘${key.toUpperCase()}` : `Ctrl+Alt+${key.toUpperCase()}`,
+    IS_MAC ? `⌥⌘${code.slice(-1)}` : `Ctrl+Alt+${code.slice(-1)}`,
   ]),
 ) as Record<"caseSensitive" | "wholeWord" | "regexp" | "replace", string>;
 const countFormat = new Intl.NumberFormat();
@@ -181,7 +181,7 @@ function EditorSearch({
       className="@container ml-auto w-full max-w-[26rem] rounded-lg bg-background shadow-lg"
       onKeyDown={(event) => {
         const option =
-          event.altKey && (IS_MAC ? event.metaKey : event.ctrlKey) ? OPTION_BY_KEY[event.key.toLowerCase()] : undefined;
+          event.altKey && (IS_MAC ? event.metaKey : event.ctrlKey) ? OPTION_BY_CODE[event.code] : undefined;
         if (option === "replace") {
           event.preventDefault();
           setReplacing((current) => !current);

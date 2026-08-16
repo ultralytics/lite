@@ -174,13 +174,14 @@ function eventKey(event: KeyboardEvent | { key: string; code: string }): string 
 // The combo an event spells, or nothing while only modifiers are down. ⌘+ is ⌘= with Shift held, and
 // every app reads it as zoom in, so that one key does not count Shift.
 export function eventCombo(event: KeyboardEvent): string | undefined {
-  if (MODIFIER_KEYS.has(event.key)) return;
+  if (MODIFIER_KEYS.has(event.key) || (IS_MAC ? event.ctrlKey : event.metaKey)) return;
   const key = eventKey(event);
   const mod = IS_MAC ? event.metaKey : event.ctrlKey;
   return format({ mod, alt: event.altKey, shift: event.shiftKey && key !== "=", key });
 }
 
 export function matchesShortcut(event: KeyboardEvent, id: ShortcutId): boolean {
+  if (IS_MAC ? event.ctrlKey : event.metaKey) return false;
   const combo = parse(shortcutKeys(id));
   const mod = IS_MAC ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey;
   if (combo.mod !== mod || combo.alt !== event.altKey) return false;

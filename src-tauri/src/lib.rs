@@ -3442,12 +3442,9 @@ async fn spawn_session(
             let Ok(channel) = output.lock().map(|channel| channel.clone()) else {
                 break;
             };
-            if channel
-                .send(InvokeResponseBody::Raw(buffer[..count].to_vec()))
-                .is_err()
-            {
-                break;
-            }
+            // A page reload drops its callback before the next page reattaches. Losing output during
+            // that gap must not turn into a process stop; spawn_session replaces this channel.
+            let _ = channel.send(InvokeResponseBody::Raw(buffer[..count].to_vec()));
         }
         let completed = output_app
             .state::<Sessions>()
