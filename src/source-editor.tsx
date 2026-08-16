@@ -5,8 +5,6 @@ import { HighlightStyle, indentUnit, LanguageDescription, syntaxHighlighting } f
 import { languages as editorLanguages } from "@codemirror/language-data";
 import {
   closeSearchPanel,
-  findNext,
-  findPrevious,
   getSearchQuery,
   openSearchPanel,
   replaceAll,
@@ -16,7 +14,7 @@ import {
   setSearchQuery,
 } from "@codemirror/search";
 import { EditorSelection, EditorState, StateEffect } from "@codemirror/state";
-import { EditorView, keymap, type Panel, runScopeHandlers } from "@codemirror/view";
+import { EditorView, keymap, type Panel } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import { CaseSensitive, ChevronDown, ChevronUp, Regex, Replace, Search, WholeWord, X } from "lucide-react";
@@ -123,19 +121,42 @@ function EditorSearch({
       ...changes,
     });
     view.dispatch({ effects: setSearchQuery.of(next) });
-    // Typing lands on the first match past the cursor, wrapping to the top; findNext would do the
-    // same but also selects the field's text, which is right after Enter and wrong mid-word.
-    if ("replace" in changes || !next.valid || countMatches(view.state).index >= 0) return;
-    const { to } = view.state.selection.main;
-    const match = [next.getCursor(view.state, to).next(), next.getCursor(view.state, 0).next()].find(
-      (found) => !found.done,
-    );
-    if (match && !match.done)
+    // Typing lands on the first match from the cursor, as the terminal's incremental find does.
+    if (!("replace" in changes) && next.valid && countMatches(view.state).index < 0) step(next, false, true);
+  }
+
+  // One step through the matches, forward or back, wrapping at either end — the same move as the
+  // terminal's find. CodeMirror's own findNext also selects the field's text, so it is not used.
+  function step(of: SearchQuery = query, previous = false, incremental = false) {
+    if (!of.valid) return;
+    const { from, to } = view.state.selection.main;
+    let match: { from: number; to: number } | undefined;
+    if (previous) {
+      let last: { from: number; to: number } | undefined;
+      const cursor = of.getCursor(view.state);
+      for (let found = cursor.next(); !found.done; found = cursor.next()) {
+        if (found.value.to <= from) match = found.value;
+        last = found.value;
+      }
+      match ??= last;
+    } else {
+      const start = incremental ? from : to;
+      match = [of.getCursor(view.state, start).next(), of.getCursor(view.state, 0).next()].find(
+        (found) => !found.done,
+      )?.value;
+    }
+    if (match)
       view.dispatch({
-        selection: EditorSelection.single(match.value.from, match.value.to),
-        effects: EditorView.scrollIntoView(match.value.from, { y: "nearest" }),
+        selection: EditorSelection.single(match.from, match.to),
+        effects: EditorView.scrollIntoView(match.from, { y: "nearest" }),
         userEvent: "select.search",
       });
+  }
+
+  // Closing forgets the query, as the terminal's does, and returns to the text.
+  function close() {
+    view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) });
+    closeSearchPanel(view);
   }
 
   function toggle(field: "caseSensitive" | "regexp" | "wholeWord", label: string, Icon: typeof Regex) {
@@ -170,10 +191,20 @@ function EditorSearch({
         } else if (event.key === "Enter" && event.target === replaceInput.current) {
           event.preventDefault();
           replaceNext(view);
-        } else if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        } else if (event.key === "Escape") {
           event.preventDefault();
-          (event.key === "ArrowUp" ? findPrevious : findNext)(view);
-        } else if (runScopeHandlers(view, event.nativeEvent, "search-panel")) event.preventDefault();
+          close();
+        } else if (
+          event.key === "Enter" ||
+          event.key === "ArrowUp" ||
+          event.key === "ArrowDown" ||
+          event.key === "F3" ||
+          ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "g")
+        ) {
+          // The terminal's keys, exactly: Enter and F3 step (Shift steps back), the arrows step by name.
+          event.preventDefault();
+          step(query, event.key === "ArrowUp" || (event.key !== "ArrowDown" && event.shiftKey));
+        }
       }}
     >
       <InputGroup>
@@ -207,7 +238,7 @@ function EditorSearch({
             tooltip={`Previous match · ${IS_MAC ? "⇧↩" : "Shift+Enter"}`}
             aria-label="Previous match"
             disabled={!query.valid}
-            onClick={() => findPrevious(view)}
+            onClick={() => step(query, true)}
           >
             <ChevronUp />
           </InputGroupButton>
@@ -216,7 +247,7 @@ function EditorSearch({
             tooltip={`Next match · ${IS_MAC ? "↩" : "Enter"}`}
             aria-label="Next match"
             disabled={!query.valid}
-            onClick={() => findNext(view)}
+            onClick={() => step()}
           >
             <ChevronDown />
           </InputGroupButton>
@@ -232,12 +263,7 @@ function EditorSearch({
               <Replace />
             </InputGroupButton>
           )}
-          <InputGroupButton
-            size="icon-xs"
-            tooltip="Close · Esc"
-            aria-label="Close search"
-            onClick={() => closeSearchPanel(view)}
-          >
+          <InputGroupButton size="icon-xs" tooltip="Close · Esc" aria-label="Close search" onClick={close}>
             <X />
           </InputGroupButton>
         </InputGroupAddon>
@@ -459,7 +485,12 @@ export default function SourceEditor({
         if (!view.current || !matchesShortcut(event.nativeEvent, "find")) return;
         event.preventDefault();
         event.stopPropagation();
-        openSearchPanel(view.current);
+        // Open, the shortcut takes the field back and selects it, as the terminal's does.
+        const field = view.current.dom.querySelector<HTMLInputElement>("[main-field]");
+        if (field) {
+          field.focus();
+          field.select();
+        } else openSearchPanel(view.current);
       }}
     >
       {panel ? createPortal(<EditorSearch view={panel.view} query={query} matches={matches} />, panel.dom) : null}

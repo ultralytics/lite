@@ -420,7 +420,15 @@ export function TerminalView({
     terminalRef.current?.focus();
   }
 
+  // Opening on a selection searches for it, as the editor's find does; the field is then selected so
+  // typing replaces it.
   function openSearch() {
+    const selection = terminalRef.current?.getSelection().trim() ?? "";
+    if (selection && !selection.includes("\n") && selection.length <= 100) {
+      searchQueryRef.current = selection;
+      setSearchQuery(selection);
+      find(selection, false, true);
+    }
     if (searchOpen) {
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
