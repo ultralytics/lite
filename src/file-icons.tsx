@@ -443,7 +443,7 @@ function fileIconName(lower: string): string {
   return "file";
 }
 
-export function FileIcon({ name, directory, open }: { name: string; directory?: boolean; open?: boolean }) {
+export default function FileIcon({ name, directory, open }: { name: string; directory?: boolean; open?: boolean }) {
   const lower = name.toLowerCase();
   const icon = directory
     ? `folder${FOLDER_NAMES[lower] ? `-${FOLDER_NAMES[lower]}` : ""}${open ? "-open" : ""}`

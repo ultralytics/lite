@@ -56,7 +56,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { FileIcon } from "@/file-icons";
 import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { including, without } from "@/lib/utils";
@@ -76,6 +75,16 @@ import {
 } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
+// The icon table is the file browser's, so it loads with the first tree rather than with the app; a
+// row keeps its icon's place while it does.
+const Icon = lazy(() => import("@/file-icons"));
+function FileIcon(props: { name: string; directory?: boolean; open?: boolean }) {
+  return (
+    <Suspense fallback={<span className="size-4 shrink-0" />}>
+      <Icon {...props} />
+    </Suspense>
+  );
+}
 
 function namedInSession(sessionId: string, remote: string) {
   return githubItemReferences(

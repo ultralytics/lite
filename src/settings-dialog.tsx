@@ -120,7 +120,9 @@ function ShortcutRow({
             return;
           }
           const taken = SHORTCUT_IDS.find((other) => other !== id && shortcutKeys(other) === combo);
-          const fixed = FIXED_SHORTCUTS.flatMap(({ rows }) => rows).find(({ keys }) => keys.includes(combo));
+          const fixed = FIXED_SHORTCUTS.flatMap(({ rows }) => rows).find(({ keys }) =>
+            keys.some((chord) => chord === combo || (chord === "Mod+1…9" && /^Mod\+[1-9]$/.test(combo))),
+          );
           if (taken || fixed) {
             setError(`Already used by ${taken ? SHORTCUTS[taken].label : fixed?.label}.`);
             return;
