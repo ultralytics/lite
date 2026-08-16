@@ -23,7 +23,9 @@ use tauri_plugin_updater::UpdaterExt;
 use tungstenite::Message;
 
 #[cfg(target_os = "macos")]
-use objc2_foundation::{NSObject, NSObjectProtocol};
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
 #[cfg(target_os = "macos")]
 use objc2_user_notifications::{
     UNNotificationDefaultActionIdentifier, UNNotificationResponse, UNUserNotificationCenter,
@@ -5144,6 +5146,20 @@ fn startup_ready(app: AppHandle) {
     }
 }
 
+// Clipboard writes stay synchronous because AppKit pasteboard access belongs on the main thread.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn write_clipboard(text: String) -> Result<(), String> {
+    let pasteboard = NSPasteboard::generalPasteboard();
+    // SAFETY: AppKit owns this immutable process-lifetime constant.
+    let text_type = unsafe { NSPasteboardTypeString };
+    pasteboard.clearContents();
+    pasteboard
+        .setString_forType(&NSString::from_str(&text), text_type)
+        .then_some(())
+        .ok_or("Could not write to the clipboard".into())
+}
+
 // Tauri fills the About panel from the bundle config, which reaches it with only a name and version,
 // so the panel read as bare. macOS only: it is the one platform Tauri gives an application menu, and
 // setting one on Windows or Linux would put a native menu bar on a window that draws its own chrome.
@@ -5198,6 +5214,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            #[cfg(target_os = "macos")]
+            write_clipboard,
             choose_directory,
             follow_directory,
             github_items,

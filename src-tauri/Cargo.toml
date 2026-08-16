@@ -43,6 +43,7 @@ tauri-plugin-updater = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
 objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSPasteboard"] }
 objc2-core-foundation = { version = "0.3.2", features = ["CFString"] }
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSString"] }
 objc2-io-kit = { version = "0.3.2", features = ["pwr_mgt"] }

@@ -439,7 +439,10 @@ function hasMenuItems(context: AppMenuContext): boolean {
 }
 
 function writeClipboard(text: string) {
-  void navigator.clipboard.writeText(text).catch(() => undefined);
+  const write = navigator.platform.includes("Mac")
+    ? invoke("write_clipboard", { text })
+    : navigator.clipboard.writeText(text);
+  void write.catch((error) => toast.add({ title: "Could not copy", description: String(error), type: "error" }));
 }
 
 function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
