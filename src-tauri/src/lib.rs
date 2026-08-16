@@ -3669,9 +3669,14 @@ async fn write_session(
             .writer
             .clone()
     };
-    let mut writer = writer.lock().map_err(|error| error.to_string())?;
-    writer.write_all(&data).map_err(|error| error.to_string())?;
-    writer.flush().map_err(|error| error.to_string())
+    // A full tty blocks the write until the child reads, so it runs off the async workers.
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut writer = writer.lock().map_err(|error| error.to_string())?;
+        writer.write_all(&data).map_err(|error| error.to_string())?;
+        writer.flush().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -5059,20 +5064,25 @@ fn stop_runtime(app: &AppHandle) {
 async fn local_update() -> Result<Option<String>, String> {
     let built = option_env!("LITE_COMMIT").ok_or("This is not a local build")?;
     let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
-    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    command_output(
-        &git,
-        Path::new(repo),
-        &["fetch", "--quiet", "origin", "main"],
-    )
-    .map_err(|_| "Could not fetch origin/main".to_string())?;
-    let head = command_output(
-        &git,
-        Path::new(repo),
-        &["rev-parse", "--short", "origin/main"],
-    )
-    .map_err(|_| format!("Could not read {repo}"))?;
-    Ok((head != built).then_some(head))
+    // The fetch goes to the network, so it runs off the async workers as well as off the UI thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        command_output(
+            &git,
+            Path::new(repo),
+            &["fetch", "--quiet", "origin", "main"],
+        )
+        .map_err(|_| "Could not fetch origin/main".to_string())?;
+        let head = command_output(
+            &git,
+            Path::new(repo),
+            &["rev-parse", "--short", "origin/main"],
+        )
+        .map_err(|_| format!("Could not read {repo}"))?;
+        Ok((head != built).then_some(head))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // When this build was made, which for a release is the day it was published.
