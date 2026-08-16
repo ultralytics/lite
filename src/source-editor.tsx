@@ -15,7 +15,7 @@ import {
   search,
   setSearchQuery,
 } from "@codemirror/search";
-import { EditorState, StateEffect } from "@codemirror/state";
+import { EditorSelection, EditorState, StateEffect } from "@codemirror/state";
 import { EditorView, keymap, type Panel, runScopeHandlers } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
@@ -123,7 +123,19 @@ function EditorSearch({
       ...changes,
     });
     view.dispatch({ effects: setSearchQuery.of(next) });
-    if (!("replace" in changes) && next.valid && countMatches(view.state).index < 0) findNext(view);
+    // Typing lands on the first match past the cursor, wrapping to the top; findNext would do the
+    // same but also selects the field's text, which is right after Enter and wrong mid-word.
+    if ("replace" in changes || !next.valid || countMatches(view.state).index >= 0) return;
+    const { to } = view.state.selection.main;
+    const match = [next.getCursor(view.state, to).next(), next.getCursor(view.state, 0).next()].find(
+      (found) => !found.done,
+    );
+    if (match && !match.done)
+      view.dispatch({
+        selection: EditorSelection.single(match.value.from, match.value.to),
+        effects: EditorView.scrollIntoView(match.value.from, { y: "nearest" }),
+        userEvent: "select.search",
+      });
   }
 
   function toggle(field: "caseSensitive" | "regexp" | "wholeWord", label: string, Icon: typeof Regex) {
@@ -145,7 +157,7 @@ function EditorSearch({
     <search
       // The bar takes the width the pane gives it, and in a narrow pane the counter and the toggles
       // step aside so the field, the arrows, and the close always fit.
-      className="@container w-full max-w-[26rem] rounded-lg bg-background shadow-lg"
+      className="@container ml-auto w-full max-w-[26rem] rounded-lg bg-background shadow-lg"
       onKeyDown={(event) => {
         const option =
           event.altKey && (IS_MAC ? event.metaKey : event.ctrlKey) ? OPTION_BY_KEY[event.key.toLowerCase()] : undefined;
@@ -375,7 +387,6 @@ export default function SourceEditor({
               zIndex: "10",
               display: "flex",
               flexDirection: "column",
-              alignItems: "flex-end",
               gap: "0.5rem",
               border: "none",
               backgroundColor: "transparent",
@@ -383,6 +394,7 @@ export default function SourceEditor({
             },
             ".cm-panel.cm-dialog": {
               display: "flex",
+              alignSelf: "flex-end",
               alignItems: "center",
               gap: "0.5rem",
               padding: "0.25rem 0.5rem",
