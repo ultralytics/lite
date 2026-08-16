@@ -41,20 +41,21 @@ const editorHighlight = HighlightStyle.define([
   { tag: [tags.contentSeparator, tags.list, tags.quote], color: "var(--syntax-bullet)" },
 ]);
 
-// The unit a file already indents by: a tab if any line starts with one, otherwise two spaces when
-// enough lines sit at two or six, four otherwise — so an edit continues the file rather than
-// reformatting it. A file with nothing indented yet takes its language's habit.
+// The unit a file already indents by: a tab if any line starts with one, two spaces if any line sits
+// at two or six (a four-space file has no such line), four if lines sit at four or eight — so an edit
+// continues the file rather than reformatting it. A file with nothing indented takes its language's habit.
 function detectIndent(path: string, source: string): string {
-  let two = 0;
-  let four = 0;
+  let two = false;
+  let four = false;
   for (const line of source.split("\n", 400)) {
     if (line.startsWith("\t")) return "\t";
     const width = line.length - line.trimStart().length;
-    if (width === 2 || width === 6) two++;
-    else if (width === 4 || width === 8) four++;
+    if (width === 2 || width === 6) two = true;
+    else if (width === 4 || width === 8) four = true;
   }
-  if (!two && !four) return /\.(m?[jt]sx?|json[c5]?|ya?ml|s?css|html?|vue|svelte|md)$/i.test(path) ? "  " : "    ";
-  return two > four / 4 ? "  " : "    ";
+  if (two) return "  ";
+  if (four) return "    ";
+  return /\.(m?[jt]sx?|json[c5]?|ya?ml|s?css|html?|vue|svelte|md)$/i.test(path) ? "  " : "    ";
 }
 
 const SEARCH_COUNT_LIMIT = 5000;

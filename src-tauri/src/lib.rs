@@ -3578,7 +3578,7 @@ fn watch_shell_agent(
     ) {
         return Err("Unknown agent".into());
     }
-    let (root, run_id, alive, agent_watch) = {
+    let (root, alive, agent_watch) = {
         let sessions = sessions.0.lock().map_err(|error| error.to_string())?;
         let session = sessions.get(&session_id).ok_or("Session is not running")?;
         let root = session
@@ -3587,12 +3587,24 @@ fn watch_shell_agent(
             .ok_or("Session has no process id")?;
         (
             sysinfo::Pid::from_u32(root),
-            session.run_id.clone(),
             Arc::clone(&session.alive),
             Arc::clone(&session.agent_watch),
         )
     };
     thread::spawn(move || {
+        // The run id is read when an event goes out, since a page that reattached has renamed it.
+        let run_id = |app: &AppHandle| {
+            app.state::<Sessions>()
+                .0
+                .lock()
+                .ok()
+                .and_then(|sessions| {
+                    sessions
+                        .get(&session_id)
+                        .map(|session| session.run_id.clone())
+                })
+                .unwrap_or_default()
+        };
         let discover = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::OnlyIfNotSet)
             .without_tasks();
@@ -3617,7 +3629,7 @@ fn watch_shell_agent(
             "shell-agent",
             ShellAgent {
                 session_id: session_id.clone(),
-                run_id: run_id.clone(),
+                run_id: run_id(&app),
                 agent: Some(agent),
             },
         );
@@ -3643,8 +3655,8 @@ fn watch_shell_agent(
                 let _ = app.emit(
                     "shell-agent",
                     ShellAgent {
+                        run_id: run_id(&app),
                         session_id,
-                        run_id,
                         agent: None,
                     },
                 );
