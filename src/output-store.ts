@@ -77,8 +77,7 @@ export function syncTerminalTheme(theme: Theme) {
 }
 
 // Returns the last title and directory the chunk set, empty when it set neither.
-export function appendOutput(sessionId: string, data: number[]) {
-  const bytes = new Uint8Array(data);
+export function appendOutput(sessionId: string, bytes: Uint8Array) {
   const buffer = buffers.get(sessionId) ?? {
     chunks: [],
     size: 0,
@@ -206,6 +205,7 @@ export function subscribeTerminalOutput(sessionId: string, listener: () => void)
 
 export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
+  listeners.delete(sessionId);
   terminalReaders.delete(sessionId);
   terminalSnapshots.delete(sessionId);
   terminalInputs.delete(sessionId);

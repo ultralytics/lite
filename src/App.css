@@ -14,14 +14,6 @@ html[data-session-dragging] * {
   display: inline-flex;
 }
 
-/* The scroll areas live in narrow panels, so their bars are slimmer than the component's default. */
-[data-slot="scroll-area-scrollbar"][data-orientation="vertical"] {
-  width: 0.375rem;
-}
-[data-slot="scroll-area-scrollbar"][data-orientation="horizontal"] {
-  height: 0.375rem;
-}
-
 [data-context-session] .xterm .xterm-viewport {
   background-color: var(--background);
   scrollbar-width: none;

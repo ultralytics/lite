@@ -117,6 +117,9 @@
   --syntax-addition-background: #f0fff4;
   --syntax-deletion: #b31d28;
   --syntax-deletion-background: #ffeef0;
+  /* Search highlights, the same pair the terminal paints its matches with */
+  --search-match: #fff8c5;
+  --search-match-active: #d4a72c;
 }
 
 .dark {
@@ -168,6 +171,8 @@
   --syntax-addition-background: #033a16;
   --syntax-deletion: #ffdcd7;
   --syntax-deletion-background: #67060c;
+  --search-match: #5a4314;
+  --search-match-active: #9e6a03;
 }
 
 @layer base {

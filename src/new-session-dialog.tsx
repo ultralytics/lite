@@ -22,8 +22,11 @@ import { Switch } from "@/components/ui/switch";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
-const choices = [...Object.values(AUTH_PROVIDERS), { id: "shell", agent: "shell" as const, provider: undefined }];
-const harnesses = [...new Set(choices.map((option) => option.agent).filter((agent) => agent !== "shell"))];
+export const SESSION_CHOICES = [
+  ...Object.values(AUTH_PROVIDERS),
+  { id: "shell", agent: "shell" as const, provider: undefined, label: "Your login shell" },
+];
+const harnesses = [...new Set(SESSION_CHOICES.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 const CHOICE_KEY = "lite.newSession.choice.v1";
 const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
 const DEEPSEEK_REASONING_KEY = "lite.newSession.deepseekReasoning.v1";
@@ -80,16 +83,19 @@ interface Availability {
 
 export function NewSessionDialog({
   open: isOpen,
+  choice: chosen,
   onOpenChange,
   onCreate,
 }: {
   open: boolean;
+  // A choice made outside the dialog — a welcome tile — which the dialog opens on.
+  choice?: string;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
 }) {
   const [choiceId, setChoiceId] = useState(() => {
     const stored = localStorage.getItem(CHOICE_KEY);
-    return choices.find((option) => option.id === stored)?.id ?? choices[0].id;
+    return SESSION_CHOICES.find((option) => option.id === stored)?.id ?? SESSION_CHOICES[0].id;
   });
   const [deepseekModel, setDeepseekModel] = useState<DeepSeekModel>(() => {
     const stored = localStorage.getItem(DEEPSEEK_MODEL_KEY);
@@ -119,8 +125,11 @@ export function NewSessionDialog({
   const [title, setTitle] = useState<string | undefined>(() =>
     localStorage.getItem(NAME_KEY) === "true" ? "" : undefined,
   );
-  const choice = choices.find((option) => option.id === choiceId) ?? choices[0];
+  const choice = SESSION_CHOICES.find((option) => option.id === choiceId) ?? SESSION_CHOICES[0];
   const status = availability[choice.id];
+  useEffect(() => {
+    if (isOpen && chosen) setChoiceId(chosen);
+  }, [isOpen, chosen]);
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = status && !status.available ? status : undefined;
   // The first explicit open asks every harness in parallel. The answer is kept for this app run, so
@@ -197,7 +206,7 @@ export function NewSessionDialog({
         if (!disposed) setError(String(reason));
       });
     // Installation and provider setup can change while the app runs, so refresh them on each open.
-    for (const option of choices) {
+    for (const option of SESSION_CHOICES) {
       void invoke<Availability>("agent_availability", { agent: option.agent, provider: option.provider })
         .then((result) => {
           if (!disposed) setAvailability((current) => ({ ...current, [option.id]: result }));
@@ -304,24 +313,22 @@ export function NewSessionDialog({
     }
   }
 
-  async function install(option: (typeof choices)[number] = choice) {
+  async function install(option: (typeof SESSION_CHOICES)[number] = choice) {
     setInstalling(option.id);
     setError("");
     try {
       await invoke("install_agent", { agent: option.agent });
       const results = await Promise.all(
-        choices
-          .filter((candidate) => candidate.agent === option.agent)
-          .map(
-            async (candidate) =>
-              [
-                candidate.id,
-                await invoke<Availability>("agent_availability", {
-                  agent: candidate.agent,
-                  provider: candidate.provider,
-                }),
-              ] as const,
-          ),
+        SESSION_CHOICES.filter((candidate) => candidate.agent === option.agent).map(
+          async (candidate) =>
+            [
+              candidate.id,
+              await invoke<Availability>("agent_availability", {
+                agent: candidate.agent,
+                provider: candidate.provider,
+              }),
+            ] as const,
+        ),
       );
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === option.id)?.[1];
@@ -500,7 +507,7 @@ export function NewSessionDialog({
             <div className="space-y-1.5">
               <p className={SECTION}>Agent</p>
               <div className="grid min-w-0 grid-cols-2 gap-2">
-                {choices.map((option) => {
+                {SESSION_CHOICES.map((option) => {
                   const active = choiceId === option.id;
                   const deepseek = option.id === "deepseek";
                   const state = availability[option.id];

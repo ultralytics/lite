@@ -17,6 +17,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use tauri::ipc::{Channel, InvokeResponseBody};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -183,6 +184,22 @@ fn send_notification(session_name: String, session_id: String) {
 #[tauri::command]
 fn send_notification(_session_name: String, _session_id: String) {}
 
+// The number of sessions waiting on the user, on the Dock or taskbar icon, where someone who has
+// switched to another app will see it. Windows has no badge count; it keeps the notification alone.
+#[tauri::command]
+fn set_attention_badge(app: AppHandle, count: u32) -> Result<(), String> {
+    let window = app.get_webview_window("main").ok_or("No main window")?;
+    #[cfg(windows)]
+    {
+        let _ = (window, count);
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    window
+        .set_badge_count((count > 0).then_some(i64::from(count)))
+        .map_err(|error| error.to_string())
+}
+
 #[derive(Clone, Copy)]
 struct CodexProvider {
     id: &'static str,
@@ -215,7 +232,12 @@ const CODEX_PROVIDERS: [CodexProvider; 2] = [
 struct PtySession {
     child: Box<dyn Child + Send + Sync>,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    // Shared so a write takes only this session's lock: a paste into a busy child blocks on the tty,
+    // and holding the whole session table for that would stall every other tab's resize and stop.
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    // Where output goes: the channel of the launch that opened the session, or of a later page that
+    // found it still running and reattached.
+    output: Arc<Mutex<Channel<InvokeResponseBody>>>,
     run_id: String,
     alive: Arc<AtomicBool>,
     agent_watch: Arc<AtomicU64>,
@@ -445,14 +467,6 @@ struct CodexServer(Mutex<CodexServerState>);
 struct CodexServerState {
     child: Option<std::process::Child>,
     endpoint: String,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct PtyOutput {
-    session_id: String,
-    run_id: String,
-    data: Vec<u8>,
 }
 
 #[derive(Clone, Serialize)]
@@ -1942,16 +1956,15 @@ fn stop_codex_server(server: &CodexServer) {
     };
     #[cfg(unix)]
     {
-        for attempts in [500, 40] {
-            let _ = Command::new("kill")
-                .args(["-TERM", &child.id().to_string()])
-                .status();
-            for _ in 0..attempts {
-                if child.try_wait().ok().flatten().is_some() {
-                    return;
-                }
-                thread::sleep(Duration::from_millis(50));
+        // Runs while Lite quits, so the grace is short: two seconds for a clean exit, then a kill.
+        let _ = Command::new("kill")
+            .args(["-TERM", &child.id().to_string()])
+            .status();
+        for _ in 0..40 {
+            if child.try_wait().ok().flatten().is_some() {
+                return;
             }
+            thread::sleep(Duration::from_millis(50));
         }
         let _ = child.kill();
         let _ = child.wait();
@@ -2210,19 +2223,24 @@ fn load_api_keys(app: &AppHandle) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
+// The file is created owner-only rather than made so afterwards, so no save leaves it readable for a
+// moment between the rename and the change of mode.
 fn write_api_keys(app: &AppHandle, keys: &HashMap<String, String>) -> Result<(), String> {
     let path = api_keys_path(app)?;
-    write_atomic(
-        &path,
-        &serde_json::to_vec(keys).map_err(|error| error.to_string())?,
-    )?;
+    if let Some(directory) = path.parent() {
+        fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+    }
+    let contents = serde_json::to_vec(keys).map_err(|error| error.to_string())?;
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-            .map_err(|error| error.to_string())?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    Ok(())
+    AtomicFile::new(&path, AllowOverwrite)
+        .write_with_options(|file| file.write_all(&contents), options)
+        .map_err(|error| error.to_string())
 }
 
 // macOS keeps Claude Code's credentials in the login keychain; other platforms write a file. Presence is
@@ -3193,6 +3211,7 @@ async fn spawn_session(
     roots: State<'_, Roots>,
     provider_sessions: State<'_, ProviderSessions>,
     codex_server: State<'_, CodexServer>,
+    output: Channel<InvokeResponseBody>,
     session_id: String,
     run_id: String,
     root_id: String,
@@ -3249,16 +3268,16 @@ async fn spawn_session(
             uuid::Uuid::new_v4().to_string()
         });
     }
-    if !signing_in && (agent == "codex" || agent == "kimi") {
-        if let Some(saved_provider_session_id) = provider_sessions
+    if !signing_in
+        && (agent == "codex" || agent == "kimi")
+        && let Some(saved_provider_session_id) = provider_sessions
             .0
             .lock()
             .map_err(|error| error.to_string())?
             .get(&session_id)
             .cloned()
-        {
-            provider_session_id = Some(saved_provider_session_id);
-        }
+    {
+        provider_session_id = Some(saved_provider_session_id);
     }
     // An id the tab already holds is recorded here too, so no other tab claims that same session.
     if let Some(known) = provider_session_id.as_deref() {
@@ -3278,6 +3297,10 @@ async fn spawn_session(
                 .map_err(|error| error.to_string())?
                 .is_none()
             {
+                // A page that reloaded while the child ran takes over its output from here, and its
+                // run id names the events that follow, the exit included.
+                *session.output.lock().map_err(|error| error.to_string())? = output;
+                session.run_id = run_id;
                 return Ok(provider_session_id);
             }
             running.remove(&session_id)
@@ -3289,6 +3312,8 @@ async fn spawn_session(
         stop_pty(&mut session)?;
     }
 
+    let output = Arc::new(Mutex::new(output));
+    let alive = Arc::new(AtomicBool::new(true));
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -3297,13 +3322,12 @@ async fn spawn_session(
             pixel_height: 0,
         })
         .map_err(|error| error.to_string())?;
+    // An app server that cannot answer costs the check, not the session: the tab opens on the recorded
+    // thread and Codex itself says whether it can resume, as the discovery below already assumes.
     if !signing_in
         && agent == "codex"
-        && provider_session_id.is_some()
-        && !codex_thread_resumable(
-            &codex_server,
-            provider_session_id.as_deref().expect("restored above"),
-        )?
+        && let Some(thread_id) = provider_session_id.as_deref()
+        && !codex_thread_resumable(&codex_server, thread_id).unwrap_or(true)
     {
         update_provider_session(&app, &provider_sessions, &session_id, None)?;
         provider_session_id = None;
@@ -3394,9 +3418,10 @@ async fn spawn_session(
         PtySession {
             child,
             master: pair.master,
-            writer,
+            writer: Arc::new(Mutex::new(writer)),
+            output: output.clone(),
             run_id: run_id.clone(),
-            alive: Arc::new(AtomicBool::new(true)),
+            alive: Arc::clone(&alive),
             agent_watch: Arc::new(AtomicU64::new(0)),
         },
     );
@@ -3404,26 +3429,22 @@ async fn spawn_session(
 
     let event_session_id = session_id.clone();
     let event_run_id = run_id.clone();
+    let event_alive = Arc::clone(&alive);
     let output_app = app.clone();
     thread::spawn(move || {
+        // Bytes go to the page as bytes over the session's channel; an event would spell each one
+        // out as a JSON number.
         let mut buffer = [0_u8; 8192];
         while let Ok(count) = reader.read(&mut buffer) {
             if count == 0 {
                 break;
             }
-            if output_app
-                .emit(
-                    "pty-output",
-                    PtyOutput {
-                        session_id: event_session_id.clone(),
-                        run_id: event_run_id.clone(),
-                        data: buffer[..count].to_vec(),
-                    },
-                )
-                .is_err()
-            {
+            let Ok(channel) = output.lock().map(|channel| channel.clone()) else {
                 break;
-            }
+            };
+            // A page reload drops its callback before the next page reattaches. Losing output during
+            // that gap must not turn into a process stop; spawn_session replaces this channel.
+            let _ = channel.send(InvokeResponseBody::Raw(buffer[..count].to_vec()));
         }
         let completed = output_app
             .state::<Sessions>()
@@ -3431,15 +3452,20 @@ async fn spawn_session(
             .lock()
             .ok()
             .and_then(|mut sessions| {
+                // The entry is this thread's own only while it still holds this launch's liveness
+                // flag; a restart under the same id has replaced it and is left alone.
                 if sessions
                     .get(&event_session_id)
-                    .is_some_and(|session| session.run_id == event_run_id)
+                    .is_some_and(|session| Arc::ptr_eq(&session.alive, &event_alive))
                 {
                     sessions.remove(&event_session_id)
                 } else {
                     None
                 }
             });
+        let run_id = completed
+            .as_ref()
+            .map_or(event_run_id, |session| session.run_id.clone());
         if let Some(mut session) = completed {
             let _ = stop_pty(&mut session);
         }
@@ -3447,7 +3473,7 @@ async fn spawn_session(
             "pty-exit",
             PtyExit {
                 session_id: event_session_id,
-                run_id: event_run_id,
+                run_id,
             },
         );
     });
@@ -3457,6 +3483,9 @@ async fn spawn_session(
         let discovery_session_id = session_id.clone();
         let discovery_agent = agent.clone();
         thread::spawn(move || {
+            // The id appears with the first turn, which may be minutes away, so an idle tab is asked
+            // less and less often rather than every second for as long as it stays open.
+            let mut wait = Duration::from_secs(1);
             loop {
                 let candidates = if discovery_agent == "kimi" {
                     Ok(kimi_current_session(&discovery_app, &cwd)
@@ -3488,7 +3517,8 @@ async fn spawn_session(
                 if !running {
                     break;
                 }
-                thread::sleep(Duration::from_secs(1));
+                thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_secs(10));
             }
         });
     }
@@ -3550,7 +3580,7 @@ fn watch_shell_agent(
     ) {
         return Err("Unknown agent".into());
     }
-    let (root, run_id, alive, agent_watch) = {
+    let (root, alive, agent_watch) = {
         let sessions = sessions.0.lock().map_err(|error| error.to_string())?;
         let session = sessions.get(&session_id).ok_or("Session is not running")?;
         let root = session
@@ -3559,12 +3589,24 @@ fn watch_shell_agent(
             .ok_or("Session has no process id")?;
         (
             sysinfo::Pid::from_u32(root),
-            session.run_id.clone(),
             Arc::clone(&session.alive),
             Arc::clone(&session.agent_watch),
         )
     };
     thread::spawn(move || {
+        // The run id is read when an event goes out, since a page that reattached has renamed it.
+        let run_id = |app: &AppHandle| {
+            app.state::<Sessions>()
+                .0
+                .lock()
+                .ok()
+                .and_then(|sessions| {
+                    sessions
+                        .get(&session_id)
+                        .map(|session| session.run_id.clone())
+                })
+                .unwrap_or_default()
+        };
         let discover = ProcessRefreshKind::nothing()
             .with_cmd(UpdateKind::OnlyIfNotSet)
             .without_tasks();
@@ -3589,7 +3631,7 @@ fn watch_shell_agent(
             "shell-agent",
             ShellAgent {
                 session_id: session_id.clone(),
-                run_id: run_id.clone(),
+                run_id: run_id(&app),
                 agent: Some(agent),
             },
         );
@@ -3615,8 +3657,8 @@ fn watch_shell_agent(
                 let _ = app.emit(
                     "shell-agent",
                     ShellAgent {
+                        run_id: run_id(&app),
                         session_id,
-                        run_id,
                         agent: None,
                     },
                 );
@@ -3628,20 +3670,27 @@ fn watch_shell_agent(
 }
 
 #[tauri::command]
-fn write_session(
-    sessions: State<Sessions>,
+async fn write_session(
+    sessions: State<'_, Sessions>,
     session_id: String,
     data: Vec<u8>,
 ) -> Result<(), String> {
-    let mut sessions = sessions.0.lock().map_err(|error| error.to_string())?;
-    let session = sessions
-        .get_mut(&session_id)
-        .ok_or("Session is not running")?;
-    session
-        .writer
-        .write_all(&data)
-        .map_err(|error| error.to_string())?;
-    session.writer.flush().map_err(|error| error.to_string())
+    let writer = {
+        let sessions = sessions.0.lock().map_err(|error| error.to_string())?;
+        sessions
+            .get(&session_id)
+            .ok_or("Session is not running")?
+            .writer
+            .clone()
+    };
+    // A full tty blocks the write until the child reads, so it runs off the async workers.
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut writer = writer.lock().map_err(|error| error.to_string())?;
+        writer.write_all(&data).map_err(|error| error.to_string())?;
+        writer.flush().map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -5026,23 +5075,28 @@ fn stop_runtime(app: &AppHandle) {
 // A local build names the commit it came from instead of the release version it would otherwise be
 // mistaken for. It follows main directly so fixes can be used before release assets exist.
 #[tauri::command]
-fn local_update() -> Result<Option<String>, String> {
+async fn local_update() -> Result<Option<String>, String> {
     let built = option_env!("LITE_COMMIT").ok_or("This is not a local build")?;
     let repo = option_env!("LITE_REPO").ok_or("This build did not record where it came from")?;
-    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    command_output(
-        &git,
-        Path::new(repo),
-        &["fetch", "--quiet", "origin", "main"],
-    )
-    .map_err(|_| "Could not fetch origin/main".to_string())?;
-    let head = command_output(
-        &git,
-        Path::new(repo),
-        &["rev-parse", "--short", "origin/main"],
-    )
-    .map_err(|_| format!("Could not read {repo}"))?;
-    Ok((head != built).then_some(head))
+    // The fetch goes to the network, so it runs off the async workers as well as off the UI thread.
+    tauri::async_runtime::spawn_blocking(move || {
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        command_output(
+            &git,
+            Path::new(repo),
+            &["fetch", "--quiet", "origin", "main"],
+        )
+        .map_err(|_| "Could not fetch origin/main".to_string())?;
+        let head = command_output(
+            &git,
+            Path::new(repo),
+            &["rev-parse", "--short", "origin/main"],
+        )
+        .map_err(|_| format!("Could not read {repo}"))?;
+        Ok((head != built).then_some(head))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // When this build was made, which for a release is the day it was published.
@@ -5216,6 +5270,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
             write_clipboard,
+            set_attention_badge,
             choose_directory,
             follow_directory,
             github_items,
