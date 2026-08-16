@@ -15,7 +15,7 @@
         "@tailwindcss/vite": "latest",
         "@tauri-apps/api": "latest",
         "@xterm/addon-fit": "latest",
-        "@xterm/addon-search": "^0.16.0",
+        "@xterm/addon-search": "latest",
         "@xterm/addon-web-links": "latest",
         "@xterm/xterm": "latest",
         "class-variance-authority": "latest",
