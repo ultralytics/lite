@@ -1,7 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { getVersion } from "@tauri-apps/api/app";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
@@ -29,7 +29,6 @@ import {
   Search,
   Settings as SettingsIcon,
   SlidersHorizontal,
-  SquareTerminal,
   Sun,
   TextSelect,
   Trash2,
@@ -96,9 +95,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearInspectorCache, Inspector } from "@/inspector";
+import { clearInspectorCache, Inspector, SearchInput } from "@/inspector";
 import { including, swapped, without } from "@/lib/utils";
-import { NewSessionDialog } from "@/new-session-dialog";
+import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
   appendOutput,
   clearOutput,
@@ -109,14 +108,15 @@ import {
 } from "@/output-store";
 import { SettingsDialog } from "@/settings-dialog";
 import {
-  applyTheme,
-  contentZoomStyle,
-  initialTheme,
-  storedFontSize,
-  type Theme,
-  zoomedFontSize,
-  zoomStep,
-} from "@/theme";
+  IS_MAC,
+  matchesShortcut,
+  ShortcutCaps,
+  type ShortcutId,
+  shortcutAria,
+  shortcutKeys,
+  shortcutText,
+} from "@/shortcuts";
+import { applyTheme, contentZoomStyle, initialTheme, storedFontSize, type Theme, zoomedFontSize } from "@/theme";
 import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
@@ -487,7 +487,7 @@ function AppContextMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState(EMPTY_MENU_CONTEXT);
-  const shortcut = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+";
+  const shortcut = IS_MAC ? "⌘" : "Ctrl+";
   const readonly =
     context.editable instanceof HTMLInputElement || context.editable instanceof HTMLTextAreaElement
       ? context.editable.readOnly || context.editable.disabled
@@ -551,17 +551,17 @@ function AppContextMenu({
             <ContextMenuItem onClick={() => context.zoomIn?.click()}>
               <ZoomIn />
               Zoom in
-              <ContextMenuShortcut>{shortcut}+</ContextMenuShortcut>
+              <ContextMenuShortcut>{shortcutText("zoomIn")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => context.zoomOut?.click()}>
               <ZoomOut />
               Zoom out
-              <ContextMenuShortcut>{shortcut}-</ContextMenuShortcut>
+              <ContextMenuShortcut>{shortcutText("zoomOut")}</ContextMenuShortcut>
             </ContextMenuItem>
             <ContextMenuItem onClick={() => context.zoomReset?.click()}>
               <RotateCcw />
               Zoom reset
-              <ContextMenuShortcut>{shortcut}0</ContextMenuShortcut>
+              <ContextMenuShortcut>{shortcutText("zoomReset")}</ContextMenuShortcut>
             </ContextMenuItem>
             {!session && (linkGroup || surfaceGroup) ? <ContextMenuSeparator /> : null}
           </>
@@ -930,6 +930,13 @@ function SessionBadge({
   );
 }
 
+interface Command {
+  id: string;
+  label: string;
+  shortcut?: ShortcutId;
+  run: () => void;
+}
+
 function SessionSwitcher({
   open,
   sessions,
@@ -938,6 +945,7 @@ function SessionSwitcher({
   working,
   startingIds,
   shellAgents,
+  commands,
   onOpenChange,
   onSelect,
 }: {
@@ -948,13 +956,21 @@ function SessionSwitcher({
   working: Set<string>;
   startingIds: Set<string>;
   shellAgents: Map<string, Agent>;
+  commands: Command[];
   onOpenChange: (open: boolean) => void;
   onSelect: (session: Session) => void;
 }) {
   const [query, setQuery] = useState("");
   const [activeId, setActiveId] = useState(selectedId);
+  // A leading ">" turns the switcher into a command palette over the same list, the way a terminal's
+  // palette works, so one shortcut reaches every action Lite has as well as every session.
+  const commandMode = query.trimStart().startsWith(">");
   const matches = useMemo(() => {
     const needle = query.trim().toLowerCase();
+    if (commandMode) {
+      const term = needle.slice(1).trim();
+      return commands.filter((command) => command.label.toLowerCase().includes(term));
+    }
     if (!needle) return sessions;
     return sessions.filter((session) => {
       const status = sessionStatus(session, attention.includes(session.id), working.has(session.id)).label;
@@ -962,7 +978,7 @@ function SessionSwitcher({
         value?.toLowerCase().includes(needle),
       );
     });
-  }, [attention, query, sessions, working]);
+  }, [attention, commandMode, commands, query, sessions, working]);
 
   useEffect(() => {
     if (!open) return;
@@ -971,12 +987,12 @@ function SessionSwitcher({
   }, [open, selectedId]);
 
   useEffect(() => {
-    if (open && !matches.some((session) => session.id === activeId)) setActiveId(matches[0]?.id ?? "");
+    if (open && !matches.some((item) => item.id === activeId)) setActiveId(matches[0]?.id ?? "");
   }, [activeId, matches, open]);
 
   function move(direction: -1 | 1) {
     if (!matches.length) return;
-    const index = matches.findIndex((session) => session.id === activeId);
+    const index = matches.findIndex((item) => item.id === activeId);
     const next =
       index < 0 ? (direction > 0 ? 0 : matches.length - 1) : (index + direction + matches.length) % matches.length;
     const id = matches[next].id;
@@ -984,9 +1000,10 @@ function SessionSwitcher({
     requestAnimationFrame(() => document.getElementById(`switch-session-${id}`)?.scrollIntoView({ block: "nearest" }));
   }
 
-  function select(session: Session) {
+  function select(item: Session | Command) {
     onOpenChange(false);
-    onSelect(session);
+    if ("run" in item) item.run();
+    else onSelect(item);
   }
 
   return (
@@ -994,7 +1011,9 @@ function SessionSwitcher({
       <DialogContent className="gap-2 p-2 sm:max-w-xl" showCloseButton={false}>
         <DialogHeader className="sr-only">
           <DialogTitle>Switch session</DialogTitle>
-          <DialogDescription>Search open sessions by name, folder, agent, repository, or status.</DialogDescription>
+          <DialogDescription>
+            Search open sessions by name, folder, agent, repository, or status, or type &gt; to run a command.
+          </DialogDescription>
         </DialogHeader>
         <InputGroup>
           <InputGroupAddon>
@@ -1003,9 +1022,9 @@ function SessionSwitcher({
           <InputGroupInput
             autoFocus
             value={query}
-            placeholder="Switch session…"
-            aria-label="Switch session"
-            aria-keyshortcuts={navigator.platform.includes("Mac") ? "Meta+P" : "Control+Shift+P"}
+            placeholder="Switch session, or type > for a command…"
+            aria-label="Switch session or run a command"
+            aria-keyshortcuts={shortcutAria("switchSession")}
             role="combobox"
             aria-expanded="true"
             aria-controls="session-switcher-list"
@@ -1020,15 +1039,40 @@ function SessionSwitcher({
                 event.preventDefault();
                 move(event.key === "ArrowDown" ? 1 : -1);
               } else if (event.key === "Enter") {
-                const session = matches.find((item) => item.id === activeId) ?? matches[0];
-                if (session) select(session);
+                const item = matches.find((item) => item.id === activeId) ?? matches[0];
+                if (item) select(item);
               }
             }}
           />
         </InputGroup>
         <DialogBody className="max-h-[min(28rem,60dvh)] overscroll-contain">
           <div id="session-switcher-list" role="listbox" className="space-y-0.5">
-            {matches.map((session) => {
+            {matches.map((item) => {
+              if ("run" in item)
+                return (
+                  <Item
+                    key={item.id}
+                    id={`switch-session-${item.id}`}
+                    size="xs"
+                    className={`flex-nowrap text-left ${item.id === activeId ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}
+                    render={<button type="button" role="option" aria-selected={item.id === activeId} />}
+                    onPointerMove={() => setActiveId(item.id)}
+                    onClick={() => select(item)}
+                  >
+                    <ItemMedia variant="icon">
+                      <ChevronRight />
+                    </ItemMedia>
+                    <ItemContent>
+                      <ItemTitle className="w-full text-xs">{item.label}</ItemTitle>
+                    </ItemContent>
+                    {item.shortcut ? (
+                      <ItemActions>
+                        <ShortcutCaps keys={shortcutKeys(item.shortcut)} />
+                      </ItemActions>
+                    ) : null}
+                  </Item>
+                );
+              const session = item;
               const needsAttention = attention.includes(session.id);
               return (
                 <Item
@@ -1060,12 +1104,56 @@ function SessionSwitcher({
               );
             })}
             {!matches.length ? (
-              <p className="px-2 py-4 text-center text-xs text-muted-foreground">No sessions found</p>
+              <p className="px-2 py-4 text-center text-xs text-muted-foreground">
+                {commandMode ? "No commands found" : "No sessions found"}
+              </p>
             ) : null}
           </div>
         </DialogBody>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// The first thing a new install shows: every agent Lite can run, each one click from a session, so
+// the way in is the choice itself rather than a button that leads to it.
+function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void; onSettings: () => void }) {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-8 overflow-auto p-8 text-center">
+      <div className="flex flex-col items-center gap-3">
+        <UltralyticsLogomark className="size-12" />
+        <h1 className="text-2xl font-semibold tracking-tight">Welcome to Lite</h1>
+        <p className="max-w-md text-sm text-balance text-muted-foreground">
+          Run coding agents side by side in your own folders, with files and Git alongside. Nothing is indexed and
+          nothing leaves this computer.
+        </p>
+      </div>
+      <div className="grid w-full max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
+        {SESSION_CHOICES.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            className="flex items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onChoose(option.id)}
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+              <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+            </span>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
+              <span className="block truncate text-xs text-muted-foreground">{option.label}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Sign in through each agent the first time, or paste API keys in{" "}
+        <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={onSettings}>
+          Settings
+        </button>
+        . <ShortcutCaps keys={shortcutKeys("newSession")} /> starts a session from anywhere.
+      </p>
+    </div>
   );
 }
 
@@ -1463,6 +1551,7 @@ function App() {
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
+  const [newSessionChoice, setNewSessionChoice] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
@@ -1531,6 +1620,8 @@ function App() {
   const [updateError, setUpdateError] = useState("");
   const updateDialog = useRef<HTMLDivElement>(null);
   const runs = useRef(new Map<string, string>());
+  // What a launch's output channel calls; the listener effect fills it in.
+  const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const recoveries = useRef(new Map<string, Promise<void>>());
   const recoveryFailures = useRef(new Set<string>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
@@ -1557,6 +1648,13 @@ function App() {
   const closeRef = useRef<(session: Session) => void>(() => {});
   const openRef = useRef<(session: Session) => void>(() => {});
   const recoverRef = useRef<(session: Session) => Promise<void>>(() => Promise.resolve());
+  // Stable handlers, so the inspector — which reads nothing of the per-chunk working and attention
+  // state — is not redrawn, file tree and all, on every burst of output.
+  const expandInspector = useCallback(
+    () => glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size)),
+    [],
+  );
+  const collapseInspector = useCallback(() => glide(inspectorPanel.current, RAIL), []);
   const markAttention = useCallback((sessionId: string) => {
     const current = attentionRef.current;
     if (current[current.length - 1] === sessionId) return false;
@@ -1579,7 +1677,6 @@ function App() {
   );
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
   const selectedStarting = selected ? startingIds.has(selected.id) : false;
-  const sessionShortcut = navigator.platform.includes("Mac") ? "⌘P" : "Ctrl+Shift+P";
   // A session is found by what names it: the subject it was given and the folder it works in.
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -1734,9 +1831,15 @@ function App() {
   // The shortcuts a terminal app is expected to answer. The terminal keeps every key Lite does not claim.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey)) return;
+      if (event.defaultPrevented || (!event.metaKey && !event.ctrlKey && !event.altKey)) return;
       if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
-      const step = zoomStep(event.key, event.code);
+      const step = matchesShortcut(event, "zoomIn")
+        ? 1
+        : matchesShortcut(event, "zoomOut")
+          ? -1
+          : matchesShortcut(event, "zoomReset")
+            ? 0
+            : undefined;
       const preview = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-context-zoom]") : null;
       if (preview && step !== undefined) {
         const action = step === 1 ? "zoom-in" : step === -1 ? "zoom-out" : "zoom-reset";
@@ -1753,19 +1856,25 @@ function App() {
         event.preventDefault();
         return;
       }
-      const switchSession = event.key.toLowerCase() === "p" && (event.metaKey || (event.ctrlKey && event.shiftKey));
-      if (switchSession) setSessionSwitcherOpen(true);
-      else if (event.key === "n") setNewSessionOpen(true);
-      else if (event.key === ",") setSettingsOpen(true);
-      else if (event.key === "w" && selectedRef.current) closeRef.current(selectedRef.current);
-      else if (event.shiftKey && event.key.toLowerCase() === "u") {
+      if (matchesShortcut(event, "switchSession")) setSessionSwitcherOpen(true);
+      else if (matchesShortcut(event, "newSession")) setNewSessionOpen(true);
+      else if (matchesShortcut(event, "settings")) setSettingsOpen(true);
+      else if (matchesShortcut(event, "closeSession") && selectedRef.current) closeRef.current(selectedRef.current);
+      else if (matchesShortcut(event, "nextAttention")) {
         const target = [...attentionRef.current]
           .reverse()
           .map((id) => sessionsRef.current.find((session) => session.id === id))
           .find((session) => session !== undefined);
         if (!target) return;
         openRef.current(target);
-      } else if (event.key >= "1" && event.key <= "9") {
+      } else if (matchesShortcut(event, "nextSession") || matchesShortcut(event, "previousSession")) {
+        // Cycling walks the same list the numbers count, wrapping at either end.
+        const list = visibleRef.current;
+        if (!list.length) return;
+        const at = list.findIndex((session) => session.id === selectedRef.current?.id);
+        const step = matchesShortcut(event, "nextSession") ? 1 : -1;
+        openRef.current(list[(at + step + list.length) % list.length]);
+      } else if ((IS_MAC ? event.metaKey : event.ctrlKey) && !event.altKey && event.key >= "1" && event.key <= "9") {
         // The numbers count the sessions the sidebar is showing, so a search narrows them with the list.
         const target = visibleRef.current[Number(event.key) - 1];
         if (!target) return;
@@ -1790,6 +1899,11 @@ function App() {
   useEffect(() => {
     if (updateStatus !== "installing") localStorage.setItem(WORKING_KEY, JSON.stringify([...working]));
   }, [updateStatus, working]);
+
+  // The Dock badge follows the count; zero clears it.
+  useEffect(() => {
+    void invoke("set_attention_badge", { count: attention.length }).catch(() => {});
+  }, [attention.length]);
 
   const hasActiveSessions = sessions.some((session) => session.running);
   useEffect(() => {
@@ -1924,7 +2038,6 @@ function App() {
 
   useEffect(() => {
     let disposed = false;
-    let unlistenOutput: (() => void) | undefined;
     let unlistenExit: (() => void) | undefined;
     let unlistenAgent: (() => void) | undefined;
     let unlistenNotification: (() => void) | undefined;
@@ -1933,29 +2046,31 @@ function App() {
         const session = sessionsRef.current.find((item) => item.id === sessionId);
         if (session) openRef.current(session);
       });
+    // Output reaches Lite through a channel each launch opens, as raw bytes: an event would carry every
+    // byte as a JSON number and hand back an array to copy again, on the busiest path there is.
+    receiveOutput.current = (sessionId, runId, data) => {
+      if (runs.current.get(sessionId) !== runId) return;
+      const { title, path, activity, activityChanged, backgroundActivity, notification } = appendOutput(
+        sessionId,
+        data,
+      );
+      if (title) markTitle(sessionId, title);
+      if (path) markDirectory(sessionId, path);
+      if (activity === true) clearAttention(sessionId);
+      if (
+        notification &&
+        !backgroundActivity &&
+        (selectedRef.current?.id !== sessionId || !document.hasFocus()) &&
+        markAttention(sessionId)
+      ) {
+        const session = sessionsRef.current.find((item) => item.id === sessionId);
+        if (notificationsRef.current && session)
+          void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
+      }
+      if (activity !== false) markWorking(sessionId, backgroundActivity);
+      else if (activityChanged) markWorking(sessionId);
+    };
     void Promise.all([
-      listen<{ sessionId: string; runId: string; data: number[] }>("pty-output", ({ payload }) => {
-        if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        const { title, path, activity, activityChanged, backgroundActivity, notification } = appendOutput(
-          payload.sessionId,
-          payload.data,
-        );
-        if (title) markTitle(payload.sessionId, title);
-        if (path) markDirectory(payload.sessionId, path);
-        if (activity === true) clearAttention(payload.sessionId);
-        if (
-          notification &&
-          !backgroundActivity &&
-          (selectedRef.current?.id !== payload.sessionId || !document.hasFocus()) &&
-          markAttention(payload.sessionId)
-        ) {
-          const session = sessionsRef.current.find((item) => item.id === payload.sessionId);
-          if (notificationsRef.current && session)
-            void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
-        }
-        if (activity !== false) markWorking(payload.sessionId, backgroundActivity);
-        else if (activityChanged) markWorking(payload.sessionId);
-      }),
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         runs.current.delete(payload.sessionId);
@@ -1980,15 +2095,13 @@ function App() {
         });
       }),
       listen("notification-clicked", () => void openNotification()),
-    ]).then(([output, exit, agent, notification]) => {
+    ]).then(([exit, agent, notification]) => {
       if (disposed) {
-        output();
         exit();
         agent();
         notification();
         return;
       }
-      unlistenOutput = output;
       unlistenExit = exit;
       unlistenAgent = agent;
       unlistenNotification = notification;
@@ -1997,7 +2110,7 @@ function App() {
     const timers = workTimers.current;
     return () => {
       disposed = true;
-      unlistenOutput?.();
+      receiveOutput.current = () => {};
       unlistenExit?.();
       unlistenAgent?.();
       unlistenNotification?.();
@@ -2053,7 +2166,10 @@ function App() {
           );
         }
       }
+      const output = new Channel<ArrayBuffer>();
+      output.onmessage = (data) => receiveOutput.current(session.id, runId, new Uint8Array(data));
       const providerSessionId = await invoke<string | null>("spawn_session", {
+        output,
         sessionId: session.id,
         runId,
         rootId: session.rootId,
@@ -2836,14 +2952,14 @@ function App() {
                           type="button"
                           className="min-w-0 truncate rounded-sm text-xs font-medium hover:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                           aria-label="Switch session"
-                          aria-keyshortcuts={navigator.platform.includes("Mac") ? "Meta+P" : "Control+Shift+P"}
+                          aria-keyshortcuts={shortcutAria("switchSession")}
                           onClick={() => setSessionSwitcherOpen(true)}
                         />
                       }
                     >
                       {selected.name}
                     </TooltipTrigger>
-                    <TooltipContent>Switch session · {sessionShortcut}</TooltipContent>
+                    <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
                   <button
                     type="button"
@@ -2933,13 +3049,7 @@ function App() {
                 data-zoom-panel="sidebar"
                 className="flex h-full w-full flex-col bg-sidebar text-sidebar-foreground"
                 onKeyDownCapture={(event) => {
-                  if (
-                    !shut.sidebar &&
-                    (event.metaKey || event.ctrlKey) &&
-                    !event.altKey &&
-                    !event.shiftKey &&
-                    event.key.toLowerCase() === "f"
-                  ) {
+                  if (!shut.sidebar && matchesShortcut(event.nativeEvent, "find")) {
                     event.preventDefault();
                     sessionSearch.current?.focus();
                     sessionSearch.current?.select();
@@ -3007,21 +3117,13 @@ function App() {
                   <>
                     {/* The search field names the panel and searches it, so the list keeps the row a title would cost. */}
                     <div className="flex h-11 shrink-0 items-center gap-0.5 pr-1.5 pl-2">
-                      <InputGroup>
-                        <InputGroupAddon>
-                          <Search />
-                        </InputGroupAddon>
-                        <InputGroupInput
-                          ref={sessionSearch}
-                          value={query}
-                          placeholder="Search sessions"
-                          aria-label="Search sessions"
-                          onChange={(event) => setQuery(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") setQuery("");
-                          }}
-                        />
-                      </InputGroup>
+                      <SearchInput
+                        inputRef={sessionSearch}
+                        value={query}
+                        placeholder="Search sessions"
+                        onChange={setQuery}
+                        className="min-w-0 flex-1"
+                      />
                       <ActionIconButton
                         size="icon-sm"
                         tooltip="New session"
@@ -3147,12 +3249,16 @@ function App() {
                 {selected ? (
                   <div data-terminal-surface className="relative min-h-0 flex-1">
                     <Suspense fallback={<div className="absolute inset-0 bg-background" />}>
+                      {/* A background terminal is hidden and moved off the viewport rather than shut: xterm
+                          pauses its renderer from an IntersectionObserver, which visibility alone never
+                          satisfies, and display:none would hand the fit addon a percentage height to read
+                          as pixels and shrink the child's window. Off screen, output is parsed but not drawn. */}
                       {sessions.map((session) =>
                         session.running ? (
                           <div
                             key={session.id}
                             aria-hidden={!selected.running || session.id !== selectedId}
-                            className={`absolute inset-0 ${selected.running && session.id === selectedId ? "visible" : "invisible"}`}
+                            className={`absolute inset-0 ${selected.running && session.id === selectedId ? "" : "invisible translate-x-[-200vw]"}`}
                           >
                             <TerminalView
                               sessionId={session.id}
@@ -3258,23 +3364,13 @@ function App() {
                     )}
                   </div>
                 ) : (
-                  <Empty className="h-full">
-                    <EmptyHeader>
-                      <EmptyMedia variant="icon">
-                        <SquareTerminal />
-                      </EmptyMedia>
-                      <EmptyTitle>Start a session</EmptyTitle>
-                      <EmptyDescription>
-                        Pick a project folder, then choose the agent that should work in it.
-                      </EmptyDescription>
-                    </EmptyHeader>
-                    <EmptyContent>
-                      <Button onClick={() => setNewSessionOpen(true)}>
-                        <Plus />
-                        New session
-                      </Button>
-                    </EmptyContent>
-                  </Empty>
+                  <Welcome
+                    onChoose={(choice) => {
+                      setNewSessionChoice(choice);
+                      setNewSessionOpen(true);
+                    }}
+                    onSettings={() => setSettingsOpen(true)}
+                  />
                 )}
                 {error ? (
                   <div className="flex shrink-0 items-start gap-2 border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -3315,10 +3411,8 @@ function App() {
                         fontSize={inspectorFontSize}
                         fileBrowserVersion={fileBrowserVersion}
                         collapsed={shut.inspector}
-                        onExpand={() =>
-                          glide(inspectorPanel.current, share(inspectorPanel.current, SIDES.inspector.size))
-                        }
-                        onCollapse={() => glide(inspectorPanel.current, RAIL)}
+                        onExpand={expandInspector}
+                        onCollapse={collapseInspector}
                       />
                     </PanelBoundary>
                   </aside>
@@ -3639,7 +3733,16 @@ function App() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-          <NewSessionDialog open={newSessionOpen} onOpenChange={setNewSessionOpen} onCreate={createSession} />
+          <NewSessionDialog
+            open={newSessionOpen}
+            choice={newSessionChoice}
+            onOpenChange={(open) => {
+              setNewSessionOpen(open);
+              // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
+              if (!open) setNewSessionChoice(undefined);
+            }}
+            onCreate={createSession}
+          />
           <SessionSwitcher
             open={sessionSwitcherOpen}
             sessions={switcherSessions}
@@ -3648,6 +3751,45 @@ function App() {
             working={working}
             startingIds={startingIds}
             shellAgents={shellAgents}
+            commands={[
+              { id: "new-session", label: "New session", shortcut: "newSession", run: () => setNewSessionOpen(true) },
+              {
+                id: "next-attention",
+                label: "Open the next session waiting on you",
+                shortcut: "nextAttention",
+                run: () => {
+                  const target = [...attention]
+                    .reverse()
+                    .map((id) => sessions.find((session) => session.id === id))
+                    .find((session) => session !== undefined);
+                  if (target) openRef.current(target);
+                },
+              },
+              ...(selected
+                ? [
+                    {
+                      id: "restart-session",
+                      label: `Restart ${selected.name}`,
+                      run: () => void restartSession(selected),
+                    },
+                    {
+                      id: "close-session",
+                      label: `Close ${selected.name}`,
+                      shortcut: "closeSession" as const,
+                      run: () => closeSession(selected),
+                    },
+                  ]
+                : []),
+              { id: "restart-all", label: "Restart all sessions", run: restartAllSessions },
+              { id: "close-all", label: "Close all sessions", run: () => setClosingAll(true) },
+              {
+                id: "toggle-theme",
+                label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme",
+                run: () => setTheme(theme === "dark" ? "light" : "dark"),
+              },
+              { id: "settings", label: "Open settings", shortcut: "settings", run: () => setSettingsOpen(true) },
+              { id: "check-updates", label: "Check for updates", run: () => void checkForUpdates() },
+            ]}
             onOpenChange={setSessionSwitcherOpen}
             onSelect={(session) => openRef.current(session)}
           />

@@ -57,7 +57,7 @@ export const AUTH_PROVIDERS = {
     id: "kimi",
     agent: "kimi",
     provider: undefined,
-    label: "Kimi Code",
+    label: "Moonshot AI",
     variable: "MOONSHOT_API_KEY",
     configured: "Signed in through Kimi Code",
     signIn: true,

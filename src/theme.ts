@@ -41,9 +41,3 @@ export function zoomedFontSize(key: string, from: number, step: -1 | 0 | 1): num
 export function contentZoomStyle(fontSize: number): CSSProperties {
   return { zoom: fontSize / DEFAULT_FONT_SIZE };
 }
-
-export function zoomStep(key: string, code?: string): -1 | 0 | 1 | undefined {
-  if (key === "+" || key === "=" || code === "Equal" || code === "NumpadAdd") return 1;
-  if (key === "-" || code === "Minus" || code === "NumpadSubtract") return -1;
-  if (key === "0" || code === "Digit0" || code === "Numpad0") return 0;
-}

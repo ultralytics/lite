@@ -11,7 +11,7 @@ const explicit = (output: string) => references(output).explicit;
 
 describe("output activity", () => {
   test("keeps Claude background activity authoritative across output chunks", () => {
-    const bytes = (value: string) => [...new TextEncoder().encode(value)];
+    const bytes = (value: string) => new TextEncoder().encode(value);
     expect(appendOutput("activity", bytes("\x1b]6973;lite-work"))).toMatchObject({
       activityChanged: false,
       backgroundActivity: undefined,

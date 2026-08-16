@@ -18,7 +18,8 @@ import {
   subscribeOutput,
   writeSession,
 } from "@/output-store";
-import { type Theme, zoomStep } from "@/theme";
+import { IS_MAC, matchesShortcut } from "@/shortcuts";
+import type { Theme } from "@/theme";
 import type { Agent } from "@/types";
 
 const SEARCH_HIGHLIGHT_LIMIT = 5000;
@@ -325,8 +326,13 @@ export function TerminalView({
         terminal.input(event.key);
         return false;
       }
-      if (!(event.metaKey || event.ctrlKey)) return true;
-      const step = zoomStep(event.key, event.code);
+      const step = matchesShortcut(event, "zoomIn")
+        ? 1
+        : matchesShortcut(event, "zoomOut")
+          ? -1
+          : matchesShortcut(event, "zoomReset")
+            ? 0
+            : undefined;
       if (step === undefined) return true;
       zoomRef.current(step);
       return false;
@@ -414,7 +420,15 @@ export function TerminalView({
     terminalRef.current?.focus();
   }
 
+  // Opening on a selection searches for it, as the editor's find does; the field is then selected so
+  // typing replaces it.
   function openSearch() {
+    const selection = terminalRef.current?.getSelection().trim() ?? "";
+    if (selection && !selection.includes("\n") && selection.length <= 100) {
+      searchQueryRef.current = selection;
+      setSearchQuery(selection);
+      find(selection, false, true);
+    }
     if (searchOpen) {
       searchInputRef.current?.focus();
       searchInputRef.current?.select();
@@ -448,7 +462,7 @@ export function TerminalView({
           find(searchQuery, event.shiftKey);
           return;
         }
-        if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+        if (matchesShortcut(event.nativeEvent, "find")) {
           event.preventDefault();
           event.stopPropagation();
           openSearch();
@@ -498,6 +512,7 @@ export function TerminalView({
               </span>
               <InputGroupButton
                 size="icon-xs"
+                tooltip={`Previous match · ${IS_MAC ? "⇧↩" : "Shift+Enter"}`}
                 aria-label="Previous match"
                 disabled={!searchQuery}
                 onClick={() => find(searchQuery, true)}
@@ -506,13 +521,14 @@ export function TerminalView({
               </InputGroupButton>
               <InputGroupButton
                 size="icon-xs"
+                tooltip={`Next match · ${IS_MAC ? "↩" : "Enter"}`}
                 aria-label="Next match"
                 disabled={!searchQuery}
                 onClick={() => find(searchQuery)}
               >
                 <ChevronDown />
               </InputGroupButton>
-              <InputGroupButton size="icon-xs" aria-label="Close search" onClick={closeSearch}>
+              <InputGroupButton size="icon-xs" tooltip="Close · Esc" aria-label="Close search" onClick={closeSearch}>
                 <X />
               </InputGroupButton>
             </InputGroupAddon>

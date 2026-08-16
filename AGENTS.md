@@ -2,7 +2,7 @@
 
 This file provides guidance to AI coding agents (Claude Code, etc.) when working with code in this repository. CLAUDE.md is a symlink to this file.
 
-Ultralytics Lite (AGPL-3.0) is a local-only desktop workspace for Claude Code, Codex, Kimi Code, and shell sessions. It keeps agent sessions, files, and Git context in one window without repository indexing, telemetry, or a cloud service. It is built with Tauri 2, Rust, React 19, TypeScript, Tailwind CSS 4, and shadcn's Nova style with Base UI.
+Ultralytics Lite (AGPL-3.0) is a local-only desktop workspace for Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and shell sessions. It keeps agent sessions, files, and Git context in one window without repository indexing, telemetry, or a cloud service. It is built with Tauri 2, Rust, React 19, TypeScript, Tailwind CSS 4, and shadcn's Nova style with Base UI.
 
 ## Core Principles (CRITICAL)
 
@@ -42,7 +42,7 @@ After opening a PR:
 
 ```bash
 bun install
-bun run check  # Biome lint and native TypeScript check
+bun run check  # Biome lint, native TypeScript check, and knip dead-code scan
 bun run format # Biome write
 bun run build  # type check and production bundle
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
@@ -58,7 +58,9 @@ bun run tauri build # native installer for the current operating system
 - `src/inspector.tsx` owns the lazy file browser, Git status, and provider usage surface.
 - `src/code-preview.tsx` owns syntax-highlighted source and rendered Markdown previews.
 - `src/new-session-dialog.tsx` owns harness and provider choice, availability, and the project folder.
-- `src/settings-dialog.tsx` owns API keys and provider sign-in.
+- `src/settings-dialog.tsx` owns API keys, provider sign-in, and shortcut editing.
+- `src/shortcuts.tsx` owns every app shortcut: defaults, user overrides, matching, and display; handlers ask `matchesShortcut` rather than reading keys.
+- `src/file-icons.tsx` owns file and folder icons for the tree.
 - `src-tauri/src/lib.rs` owns PTYs, provider process launch/resume, session id discovery, file access, Git commands, credential storage, and usage adapters.
 
-A harness runs a session and a model provider bills it: Claude Code, Codex, Kimi Code, and the shell are harnesses; OpenAI and DeepSeek are providers on the Codex harness. Keep provider-specific behavior behind the existing Rust commands.
+A harness runs a session and a model provider bills it: Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and the shell are harnesses; OpenAI, DeepSeek, and OpenRouter are providers on the Codex harness. Keep provider-specific behavior behind the existing Rust commands.

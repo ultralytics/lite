@@ -7,6 +7,7 @@ import type * as React from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 function InputGroup({ className, ...props }: React.ComponentProps<"div">) {
@@ -72,17 +73,20 @@ const inputGroupButtonVariants = cva("flex items-center gap-2 text-sm shadow-non
   },
 });
 
+// An icon button inside a field names itself in a tooltip, as ActionIconButton does in the chrome.
 function InputGroupButton({
   className,
   type = "button",
   variant = "ghost",
   size = "xs",
+  tooltip,
   ...props
 }: Omit<React.ComponentProps<typeof Button>, "size" | "type"> &
   VariantProps<typeof inputGroupButtonVariants> & {
     type?: "button" | "submit" | "reset";
+    tooltip?: React.ReactNode;
   }) {
-  return (
+  const button = (
     <Button
       type={type}
       data-size={size}
@@ -90,6 +94,14 @@ function InputGroupButton({
       className={cn(inputGroupButtonVariants({ size }), className)}
       {...props}
     />
+  );
+  return tooltip ? (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipContent>{tooltip}</TooltipContent>
+    </Tooltip>
+  ) : (
+    button
   );
 }
 
