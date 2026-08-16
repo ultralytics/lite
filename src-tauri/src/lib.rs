@@ -3292,8 +3292,10 @@ async fn spawn_session(
                 .map_err(|error| error.to_string())?
                 .is_none()
             {
-                // A page that reloaded while the child ran takes over its output from here.
+                // A page that reloaded while the child ran takes over its output from here, and its
+                // run id names the events that follow, the exit included.
                 *session.output.lock().map_err(|error| error.to_string())? = output;
+                session.run_id = run_id;
                 return Ok(provider_session_id);
             }
             running.remove(&session_id)
@@ -3306,6 +3308,7 @@ async fn spawn_session(
     }
 
     let output = Arc::new(Mutex::new(output));
+    let alive = Arc::new(AtomicBool::new(true));
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -3413,7 +3416,7 @@ async fn spawn_session(
             writer: Arc::new(Mutex::new(writer)),
             output: output.clone(),
             run_id: run_id.clone(),
-            alive: Arc::new(AtomicBool::new(true)),
+            alive: Arc::clone(&alive),
             agent_watch: Arc::new(AtomicU64::new(0)),
         },
     );
@@ -3421,6 +3424,7 @@ async fn spawn_session(
 
     let event_session_id = session_id.clone();
     let event_run_id = run_id.clone();
+    let event_alive = Arc::clone(&alive);
     let output_app = app.clone();
     thread::spawn(move || {
         // Bytes go to the page as bytes over the session's channel; an event would spell each one
@@ -3446,15 +3450,20 @@ async fn spawn_session(
             .lock()
             .ok()
             .and_then(|mut sessions| {
+                // The entry is this thread's own only while it still holds this launch's liveness
+                // flag; a restart under the same id has replaced it and is left alone.
                 if sessions
                     .get(&event_session_id)
-                    .is_some_and(|session| session.run_id == event_run_id)
+                    .is_some_and(|session| Arc::ptr_eq(&session.alive, &event_alive))
                 {
                     sessions.remove(&event_session_id)
                 } else {
                     None
                 }
             });
+        let run_id = completed
+            .as_ref()
+            .map_or(event_run_id, |session| session.run_id.clone());
         if let Some(mut session) = completed {
             let _ = stop_pty(&mut session);
         }
@@ -3462,7 +3471,7 @@ async fn spawn_session(
             "pty-exit",
             PtyExit {
                 session_id: event_session_id,
-                run_id: event_run_id,
+                run_id,
             },
         );
     });
