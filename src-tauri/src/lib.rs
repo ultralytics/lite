@@ -1648,6 +1648,8 @@ async fn use_ssh_directory(
         "\"$HOME\"".to_owned()
     } else if let Some(path) = path.strip_prefix("~/") {
         format!("\"$HOME\"/{}", posix_quote(path))
+    } else if path.starts_with('-') {
+        posix_quote(&format!("./{path}"))
     } else {
         posix_quote(path)
     };
@@ -1658,7 +1660,7 @@ async fn use_ssh_directory(
     let resolved = tauri::async_runtime::spawn_blocking(move || {
         ssh_text(
             &probe,
-            &format!("mkdir -p -- {requested} && cd -- {requested} && pwd -P"),
+            &format!("mkdir -p -- {requested} && cd {requested} && pwd -P"),
         )
     })
     .await
@@ -3666,7 +3668,7 @@ fn ssh_session_command(
         .collect::<Vec<_>>()
         .join(" ");
     let remote = format!(
-        "cd -- {} && exec ${{SHELL:-/bin/sh}} -lc {}",
+        "cd {} && exec ${{SHELL:-/bin/sh}} -lc {}",
         posix_quote(&root.path),
         posix_quote(&format!("exec {command}"))
     );
