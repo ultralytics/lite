@@ -1581,9 +1581,9 @@ async fn use_ssh_directory(
         return Err("Enter a folder on the SSH host".into());
     }
     let requested = if path == "~" {
-        "$HOME".to_owned()
+        "\"$HOME\"".to_owned()
     } else if let Some(path) = path.strip_prefix("~/") {
-        format!("$HOME/{}", posix_quote(path))
+        format!("\"$HOME\"/{}", posix_quote(path))
     } else {
         posix_quote(path)
     };
@@ -1627,21 +1627,10 @@ async fn follow_directory(
     if let Some(root) = ssh_root(&roots, &root_id)? {
         let target = path;
         let resolved = root.clone();
-        let path = tauri::async_runtime::spawn_blocking(move || {
-            ssh_text(
-                &resolved,
-                &format!("cd -- {} && pwd -P", posix_quote(&target)),
-            )
-        })
-        .await
-        .map_err(|error| error.to_string())??;
-        let next = SshRoot {
-            host: root.host.clone(),
-            path: path.clone(),
-        };
-        update_roots(&app, &roots, |roots| {
-            roots.insert(root_id.clone(), WorkspaceRoot::Ssh(next));
-        })?;
+        let path =
+            tauri::async_runtime::spawn_blocking(move || scoped_ssh_path(&resolved, &target))
+                .await
+                .map_err(|error| error.to_string())??;
         return Ok(DirectoryGrant {
             id: root_id,
             path,
@@ -4592,7 +4581,14 @@ fn ssh_git_diff(root: &SshRoot, path: &str) -> Result<String, String> {
     let repository = ssh_git_text(root, &root.path, &["rev-parse", "--show-toplevel"])?;
     let pathspec = path_text(relative);
     let file = format!("{}/{}", repository.trim_end_matches('/'), pathspec);
-    remote_path(root, &file).map_err(|_| {
+    let ancestor = ssh_text(
+        root,
+        &format!(
+            "path={}; while ! test -e \"$path\" && ! test -L \"$path\"; do parent=${{path%/*}}; path=${{parent:-/}}; done; realpath -- \"$path\"",
+            posix_quote(&file)
+        ),
+    )?;
+    remote_path(root, &ancestor).map_err(|_| {
         "This change is outside the selected folder; start a session from the repository root to view it"
     })?;
     let untracked = !ssh_git_output(
