@@ -617,17 +617,15 @@ export function NewSessionDialog({
                           className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
                           <span className="block truncate">{sessionLabel(option)}</span>
-                          {unsupported ? (
+                          {unsupported || remote || (state && !state.available) ? (
                             <span className="block truncate text-xs font-normal text-muted-foreground">
-                              Local workspace only
-                            </span>
-                          ) : remote ? (
-                            <span className="block truncate text-xs font-normal text-muted-foreground">
-                              Runs on {host.trim() || "SSH host"}
-                            </span>
-                          ) : state && !state.available ? (
-                            <span className="block truncate text-xs font-normal text-muted-foreground">
-                              {state.installable ? "Not installed" : "Setup required"}
+                              {unsupported
+                                ? "Local workspace only"
+                                : remote
+                                  ? `Runs on ${host.trim() || "SSH host"}`
+                                  : state?.installable
+                                    ? "Not installed"
+                                    : "Setup required"}
                             </span>
                           ) : authProvider ? (
                             <ProviderAuthDescription provider={authProvider} status={authStatus} />

@@ -733,12 +733,17 @@ interface SessionGroup {
   sessions: Session[];
 }
 
+function hostPath(session: Session, path: string) {
+  return session.host ? `${session.host}:${path}` : path;
+}
+
+function sessionGroupPath(session: Session, grouping: SessionGrouping) {
+  return grouping === "repository" ? (session.repo ?? session.cwd) : session.cwd;
+}
+
 function sessionGroupKey(session: Session, grouping: SessionGrouping, attention: Set<string>, working: Set<string>) {
-  if (grouping === "repository") {
-    const repository = session.repo ?? session.cwd;
-    return session.host ? `${session.host}:${repository}` : repository;
-  }
-  if (grouping === "directory") return session.host ? `${session.host}:${session.cwd}` : session.cwd;
+  if (grouping === "repository" || grouping === "directory")
+    return hostPath(session, sessionGroupPath(session, grouping));
   if (grouping === "state") {
     if (!session.running) return "disconnected";
     if (attention.has(session.id)) return "attention";
@@ -759,15 +764,13 @@ function groupSessions(
   const groups = new Map<string, SessionGroup>();
   for (const session of sessions) {
     const value = sessionGroupKey(session, grouping, attention, working);
-    const groupPath = grouping === "repository" ? (session.repo ?? session.cwd) : session.cwd;
+    const groupPath = sessionGroupPath(session, grouping);
     const status = grouping === "state" ? SESSION_STATUS[value as keyof typeof SESSION_STATUS] : undefined;
     const group = groups.get(value) ?? {
       name:
         grouping === "state"
           ? SESSION_STATE_LABELS[value as keyof typeof SESSION_STATE_LABELS]
-          : (grouping === "directory" || grouping === "repository") && session.host
-            ? `${session.host}:${folderName(groupPath) || groupPath}`
-            : folderName(value) || value,
+          : hostPath(session, folderName(groupPath) || groupPath),
       key: `${grouping}:${value}`,
       title: status?.label ?? value,
       sessions: [],
@@ -1436,7 +1439,7 @@ function SessionRow({
           </div>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
-            title={session.host ? `${session.host}:${session.cwd}` : session.cwd}
+            title={hostPath(session, session.cwd)}
           >
             {sessionPath(session)}
           </div>
@@ -1523,8 +1526,7 @@ function shortPath(cwd: string) {
 }
 
 function sessionPath(session: Session) {
-  const path = shortPath(session.cwd);
-  return session.host ? `${session.host}:${path}` : path;
+  return hostPath(session, shortPath(session.cwd));
 }
 
 // A tab named after its folder says nothing, and several in one folder say the same nothing, so the
@@ -2994,28 +2996,16 @@ function App() {
                     </TooltipTrigger>
                     <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
-                  {selected.host ? (
-                    <span
-                      className="block min-w-0 max-w-full truncate font-mono text-[11px] text-muted-foreground"
-                      title={`${selected.host}:${selected.cwd}`}
-                    >
-                      {selected.host}:{selected.cwd}
-                    </span>
-                  ) : (
-                    <button
-                      type="button"
-                      className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
-                      aria-label={`Open ${selected.cwd} in file browser`}
-                      onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
-                    >
-                      <Tooltip>
-                        <TooltipTrigger render={<span className="block w-fit max-w-full truncate" />}>
-                          {selected.cwd}
-                        </TooltipTrigger>
-                        <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>
-                      </Tooltip>
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground enabled:hover:text-foreground"
+                    aria-label={selected.host ? undefined : `Open ${selected.cwd} in file browser`}
+                    disabled={Boolean(selected.host)}
+                    title={hostPath(selected, selected.cwd)}
+                    onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
+                  >
+                    <span className="block w-fit max-w-full truncate">{hostPath(selected, selected.cwd)}</span>
+                  </button>
                 </>
               ) : (
                 <span className="text-sm font-semibold">Lite</span>
