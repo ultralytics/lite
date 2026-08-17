@@ -169,7 +169,7 @@ export function NewSessionDialog({
       return;
     }
     if (remote) {
-      setFolder("directory");
+      setFolder("checking");
       setRepo(null);
       setWorktree("");
       return;

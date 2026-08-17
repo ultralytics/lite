@@ -698,35 +698,18 @@ fn ssh_stream(
     let started = Instant::now();
     let mut status = None;
     let mut output_open = true;
-    loop {
+    let status = loop {
         if started.elapsed() >= SSH_COMMAND_TIMEOUT {
-            let _ = child.kill();
-            let _ = child.wait();
-            drop(receiver);
-            let _ = output.join();
-            let _ = errors.join();
-            return Err("SSH command timed out after 30 seconds".into());
+            break Err("SSH command timed out after 30 seconds".into());
         }
         if output_open {
             match receiver.recv_timeout(Duration::from_millis(25)) {
                 Ok(Ok(chunk)) => {
                     if let Err(error) = receive(&chunk) {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                        drop(receiver);
-                        let _ = output.join();
-                        let _ = errors.join();
-                        return Err(error);
+                        break Err(error);
                     }
                 }
-                Ok(Err(error)) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    drop(receiver);
-                    let _ = output.join();
-                    let _ = errors.join();
-                    return Err(error);
-                }
+                Ok(Err(error)) => break Err(error),
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => output_open = false,
             }
@@ -737,23 +720,21 @@ fn ssh_stream(
             match child.try_wait() {
                 Ok(Some(exit)) => status = Some(exit),
                 Ok(None) => {}
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    drop(receiver);
-                    let _ = output.join();
-                    let _ = errors.join();
-                    return Err(error.to_string());
-                }
+                Err(error) => break Err(error.to_string()),
             }
         }
-        if !output_open && status.is_some() {
-            break;
+        if !output_open && let Some(status) = status {
+            break Ok(status);
         }
+    };
+    if status.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
+    drop(receiver);
     let _ = output.join();
     let errors = errors.join().unwrap_or_default();
-    let status = status.expect("SSH status is set before the loop exits");
+    let status = status?;
     if status.success() {
         Ok(())
     } else {
@@ -3686,32 +3667,29 @@ fn ssh_session_command(
     launch: &SessionCommand<'_>,
     initial_prompt: Option<&str>,
 ) -> Result<CommandBuilder, String> {
-    if launch.agent == "shell" {
-        let remote = ssh_script(&format!(
+    let remote = if launch.agent == "shell" {
+        ssh_script(&format!(
             "cd {} && exec \"${{SHELL:-/bin/sh}}\" -l",
             posix_quote(&root.path)
-        ));
-        let ssh = resolve_executable("ssh").ok_or("Could not find SSH in your PATH")?;
-        let mut builder = CommandBuilder::new(ssh);
-        builder.args(["-tt", "-o", "ConnectTimeout=10", "--", &root.host, &remote]);
-        return Ok(builder);
-    }
-    let mut args = ssh_agent_args(launch)?;
-    if launch.agent == "claude"
-        && let Some(prompt) = initial_prompt
-    {
-        args.push(prompt.into());
-    }
-    let command = args
-        .iter()
-        .map(|argument| posix_quote(argument))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let remote = ssh_script(&format!(
-        "cd {} && exec ${{SHELL:-/bin/sh}} -lc {}",
-        posix_quote(&root.path),
-        posix_quote(&format!("exec {command}"))
-    ));
+        ))
+    } else {
+        let mut args = ssh_agent_args(launch)?;
+        if launch.agent == "claude"
+            && let Some(prompt) = initial_prompt
+        {
+            args.push(prompt.into());
+        }
+        let command = args
+            .iter()
+            .map(|argument| posix_quote(argument))
+            .collect::<Vec<_>>()
+            .join(" ");
+        ssh_script(&format!(
+            "cd {} && exec ${{SHELL:-/bin/sh}} -lc {}",
+            posix_quote(&root.path),
+            posix_quote(&format!("exec {command}"))
+        ))
+    };
     let ssh = resolve_executable("ssh").ok_or("Could not find SSH in your PATH")?;
     let mut builder = CommandBuilder::new(ssh);
     builder.args(["-tt", "-o", "ConnectTimeout=10", "--", &root.host, &remote]);
