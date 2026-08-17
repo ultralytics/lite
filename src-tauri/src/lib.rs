@@ -1216,9 +1216,9 @@ fn ssh_provider_session_ids(root: &SshRoot, agent: &str) -> Result<HashSet<Strin
                 "-printf '%f\\n'"
             };
             format!(
-                "home=${{{variable}:-$HOME/{fallback}}}; index=\"$home/workspaces.json\"; test -f \"$index\" || exit 0; workspace=$(tr -d '\\n' < \"$index\" | sed 's/}},[[:space:]]*\"/}}\\n\"/g; s/\"root\"[[:space:]]*:[[:space:]]*/\"root\":/g' | grep -F -- {} | sed -n {} | head -n 1); sessions=\"$home/sessions/$workspace\"; test -n \"$workspace\" && test -d \"$sessions\" || exit 0; find \"$sessions\" -mindepth 1 -maxdepth 1 -type d {newest}",
+                "home=${{{variable}:-$HOME/{fallback}}}; index=\"$home/workspaces.json\"; test -f \"$index\" || exit 0; workspace=$(tr -d '\\n' < \"$index\" | sed 's/\"\\(wd_[a-z0-9._-]*_[0-9a-f]\\{{12\\}}\\)\"[[:space:]]*:/\\n\"\\1\":/g; s/\"root\"[[:space:]]*:[[:space:]]*/\"root\":/g' | grep -F -- {} | sed -n {} | head -n 1); sessions=\"$home/sessions/$workspace\"; test -n \"$workspace\" && test -d \"$sessions\" || exit 0; find \"$sessions\" -mindepth 1 -maxdepth 1 -type d {newest}",
                 posix_quote(&format!("\"root\":{cwd}")),
-                posix_quote(r#"s/.*"\([A-Za-z0-9_-]*\)"[[:space:]]*:[[:space:]]*{.*/\1/p"#),
+                posix_quote(r#"s/^"\(wd_[a-z0-9._-]*_[0-9a-f]\{12\}\)"[[:space:]]*:.*/\1/p"#),
             )
         }
         _ => return Ok(HashSet::new()),
@@ -1237,7 +1237,7 @@ fn ssh_native_session_exists(root: &SshRoot, agent: &str, id: &str) -> Result<bo
     let (variable, fallback) = provider_home_parts(agent).ok_or("Unknown session type")?;
     let script = match agent {
         "claude" => format!(
-            "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/projects\" -type f -name {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
+            "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/projects\" -type f -name {} -exec grep -m 1 -E -q -- '\"type\"[[:space:]]*:[[:space:]]*\"(user|assistant|system)\"' {{}} \\; -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
             posix_quote(&format!("{id}.jsonl")),
         ),
         "gemini" => format!(
@@ -4705,8 +4705,6 @@ fn bounded_git_output(
 }
 
 fn ssh_git_diff(root: &SshRoot, path: &str) -> Result<String, String> {
-    let relative = Path::new(path);
-    let pathspec = path_text(relative);
     let scope = ssh_scope_guard(
         &root.path,
         "ancestor",
@@ -4718,7 +4716,7 @@ fn ssh_git_diff(root: &SshRoot, path: &str) -> Result<String, String> {
         &format!(
             "root={}; pathspec={}; repository=$(git -C \"$root\" rev-parse --show-toplevel) || exit; file=\"${{repository%/}}/$pathspec\"; ancestor=\"$file\"; while ! test -e \"$ancestor\" && ! test -L \"$ancestor\"; do parent=${{ancestor%/*}}; ancestor=${{parent:-/}}; done; ancestor=$(realpath -- \"$ancestor\") || exit; {scope}if git -C \"$repository\" --literal-pathspecs ls-files --others --exclude-standard -- \"$pathspec\" | grep -q .; then git -C \"$repository\" diff --no-index --no-ext-diff --no-textconv --no-renames --no-color -- /dev/null \"$file\" || test $? -eq 1; else {SSH_GIT_BASE} git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --no-color \"$base\" -- \"$pathspec\"; fi",
             posix_quote(&root.path),
-            posix_quote(&pathspec),
+            posix_quote(path),
         ),
         None,
         |chunk| {

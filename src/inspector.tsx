@@ -391,7 +391,7 @@ function FileTree({
   const [children, setChildren] = useState<Record<string, DirectoryListing & { after: DirectoryCursor | null }>>({});
   // The root is the folder the session works in; showing it shut asks for a click to say what the
   // panel is already for, so it opens with the tree it was asked to show.
-  const [expanded, setExpanded] = useState(() => new Set<string>([root]));
+  const [expanded, setExpanded] = useState(() => new Set<string>());
   const loading = useRef(new Set<string>());
   const [loadingPaths, setLoadingPaths] = useState(() => new Set<string>());
   const [expandingAll, setExpandingAll] = useState(false);

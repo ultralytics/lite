@@ -2996,16 +2996,23 @@ function App() {
                     </TooltipTrigger>
                     <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
-                  <button
-                    type="button"
-                    className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground enabled:hover:text-foreground"
-                    aria-label={selected.host ? undefined : `Open ${selected.cwd} in file browser`}
-                    disabled={Boolean(selected.host)}
-                    title={hostPath(selected, selected.cwd)}
-                    onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
-                  >
-                    <span className="block w-fit max-w-full truncate">{hostPath(selected, selected.cwd)}</span>
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground enabled:hover:text-foreground"
+                          aria-label={selected.host ? undefined : `Open ${selected.cwd} in file browser`}
+                          disabled={Boolean(selected.host)}
+                          title={hostPath(selected, selected.cwd)}
+                          onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
+                        />
+                      }
+                    >
+                      <span className="block w-fit max-w-full truncate">{hostPath(selected, selected.cwd)}</span>
+                    </TooltipTrigger>
+                    {selected.host ? null : <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>}
+                  </Tooltip>
                 </>
               ) : (
                 <span className="text-sm font-semibold">Lite</span>
