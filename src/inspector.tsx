@@ -968,6 +968,7 @@ function FileViewer({
 
 interface FileEditorState {
   rootId: string;
+  root: string;
   selected: FileEntry;
   source: string;
   draft: string;
@@ -994,7 +995,7 @@ function FilesPanel({
 }) {
   const [cached] = useState(() => {
     const current = fileEditorsBySession.get(sessionId);
-    if (current?.rootId === rootId) return current;
+    if (current?.rootId === rootId && current.root === root) return current;
     fileEditorsBySession.delete(sessionId);
   });
   const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
@@ -1027,7 +1028,7 @@ function FilesPanel({
       if (request.current === id) {
         setSource(contents);
         setDraft(contents);
-        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents });
+        fileEditorsBySession.set(sessionId, { rootId, root, selected: entry, source: contents, draft: contents });
       }
     } catch (reason) {
       if (request.current === id) {
@@ -1046,14 +1047,14 @@ function FilesPanel({
     await invoke("write_text_file", { rootId, path: entry.path, contents });
     if (request.current !== id) return;
     const current = fileEditorsBySession.get(sessionId);
-    if (current?.rootId === rootId && current.selected.path === entry.path)
+    if (current?.rootId === rootId && current.root === root && current.selected.path === entry.path)
       fileEditorsBySession.set(sessionId, { ...current, source: contents });
     if (selectedRef.current?.path === entry.path) setSource(contents);
   }
 
   function changeDraft(contents: string) {
     setDraft(contents);
-    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents });
+    if (selected) fileEditorsBySession.set(sessionId, { rootId, root, selected, source, draft: contents });
   }
 
   function closeFile() {
@@ -1716,7 +1717,7 @@ export const Inspector = memo(function Inspector({
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
               <FilesPanel
-                key={`${session.rootId}:${reload.files}`}
+                key={`${session.rootId}:${session.cwd}:${reload.files}`}
                 root={session.cwd}
                 rootId={session.rootId}
                 sessionId={session.id}

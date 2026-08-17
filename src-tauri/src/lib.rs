@@ -5202,9 +5202,14 @@ fn browse_url(remote: &str) -> Option<String> {
 // The repository a folder was cloned from, asked for on its own: naming it costs one git call, where
 // the full status reads the whole worktree.
 #[tauri::command]
-async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<String>, String> {
-    if let Some(root) = ssh_root(&roots, &root_id)? {
+async fn git_remote(
+    roots: State<'_, Roots>,
+    root_id: String,
+    directory: String,
+) -> Result<Option<String>, String> {
+    if let Some(mut root) = ssh_root(&roots, &root_id)? {
         return tauri::async_runtime::spawn_blocking(move || {
+            root.path = scoped_ssh_path(&root, &directory)?;
             Ok(
                 ssh_git_text(&root, &root.path, &["remote", "get-url", "origin"])
                     .ok()

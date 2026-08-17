@@ -2315,11 +2315,12 @@ function App() {
   // Which repository a folder was cloned from is a fact about the folder, so it is asked for once when
   // the selection changes and never watched.
   const rootId = selected?.rootId ?? "";
+  const directory = selected?.cwd ?? "";
   useEffect(() => {
     setRemote("");
     if (!rootId) return;
     let cancelled = false;
-    void invoke<string | null>("git_remote", { rootId })
+    void invoke<string | null>("git_remote", { rootId, directory })
       .then((url) => {
         if (!cancelled) setRemote(url ?? "");
       })
@@ -2327,7 +2328,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [rootId]);
+  }, [directory, rootId]);
 
   async function signIn(agent: Session["agent"]) {
     setSettingsOpen(false);
