@@ -405,6 +405,7 @@ export function NewSessionDialog({
               <Switch
                 id="remote-workspace"
                 checked={remote}
+                disabled={creating}
                 onCheckedChange={(checked) => {
                   localStorage.setItem(REMOTE_KEY, String(checked));
                   if (directory) void invoke("revoke_directory", { rootId: directory.id });
