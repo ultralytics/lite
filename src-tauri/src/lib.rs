@@ -4745,26 +4745,6 @@ fn bounded_git_output(
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
-fn ssh_git_command(directory: &str, args: &[&str]) -> String {
-    std::iter::once("git".to_owned())
-        .chain(std::iter::once("-C".to_owned()))
-        .chain(std::iter::once(directory.to_owned()))
-        .chain(args.iter().map(|argument| (*argument).to_owned()))
-        .map(|argument| posix_quote(&argument))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn ssh_git_output(root: &SshRoot, directory: &str, args: &[&str]) -> Result<Vec<u8>, String> {
-    ssh_output(root, &ssh_git_command(directory, args))
-}
-
-fn ssh_git_text(root: &SshRoot, directory: &str, args: &[&str]) -> Result<String, String> {
-    String::from_utf8(ssh_git_output(root, directory, args)?)
-        .map(|output| output.strip_suffix('\n').unwrap_or(&output).to_owned())
-        .map_err(|_| "Git returned non-UTF-8 text".into())
-}
-
 fn ssh_git_diff(root: &SshRoot, path: &str) -> Result<String, String> {
     let relative = Path::new(path);
     if relative.is_absolute()
@@ -5147,11 +5127,12 @@ fn browse_url(remote: &str) -> Option<String> {
 async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<String>, String> {
     if let Some(root) = ssh_root(&roots, &root_id)? {
         return tauri::async_runtime::spawn_blocking(move || {
-            Ok(
-                ssh_git_text(&root, &root.path, &["remote", "get-url", "origin"])
-                    .ok()
-                    .and_then(|remote| browse_url(&remote)),
+            Ok(ssh_text(
+                &root,
+                &format!("git -C {} remote get-url origin", posix_quote(&root.path)),
             )
+            .ok()
+            .and_then(|remote| browse_url(&remote)))
         })
         .await
         .map_err(|error| error.to_string())?;

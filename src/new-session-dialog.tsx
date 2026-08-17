@@ -442,7 +442,9 @@ export function NewSessionDialog({
                     localStorage.setItem(SSH_HOST_KEY, event.target.value);
                   }}
                 />
-                <p className="text-xs text-muted-foreground">Uses your SSH config and agent sign-in on the server.</p>
+                <p className="text-xs text-muted-foreground">
+                  Uses your SSH config and agent sign-in on the Linux server.
+                </p>
               </div>
             ) : null}
             <div className="space-y-1.5">
