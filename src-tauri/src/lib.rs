@@ -1204,9 +1204,9 @@ fn ssh_provider_session_ids(root: &SshRoot, agent: &str) -> Result<HashSet<Strin
                 "-printf '%f\\n'"
             };
             format!(
-                "home=${{KIMI_CODE_HOME:-$HOME/.kimi-code}}; index=\"$home/workspaces.json\"; test -f \"$index\" || exit 0; workspace=$(tr -d '\\n' < \"$index\" | sed 's/}},[[:space:]]*\"/}}\\n\"/g' | grep -F -- {} | sed -n {} | head -n 1); sessions=\"$home/sessions/$workspace\"; test -n \"$workspace\" && test -d \"$sessions\" || exit 0; find \"$sessions\" -mindepth 1 -maxdepth 1 -type d {newest}",
+                "home=${{KIMI_CODE_HOME:-$HOME/.kimi-code}}; index=\"$home/workspaces.json\"; test -f \"$index\" || exit 0; workspace=$(tr -d '\\n' < \"$index\" | sed 's/}},[[:space:]]*\"/}}\\n\"/g; s/\"root\"[[:space:]]*:[[:space:]]*/\"root\":/g' | grep -F -- {} | sed -n {} | head -n 1); sessions=\"$home/sessions/$workspace\"; test -n \"$workspace\" && test -d \"$sessions\" || exit 0; find \"$sessions\" -mindepth 1 -maxdepth 1 -type d {newest}",
                 posix_quote(&format!("\"root\":{cwd}")),
-                posix_quote(r#"s/.*"\(wd_[^"]*\)":{.*/\1/p"#),
+                posix_quote(r#"s/.*"\(wd_[^"]*\)"[[:space:]]*:[[:space:]]*{.*/\1/p"#),
             )
         }
         _ => return Ok(HashSet::new()),
@@ -4791,18 +4791,22 @@ fn ssh_git_diff(root: &SshRoot, path: &str) -> Result<String, String> {
             "case \"$ancestor\" in {boundary}|{boundary}/*) ;; *) printf '%s\\n' 'This change is outside the selected folder; start a session from the repository root to view it' >&2; exit 1;; esac; "
         )
     };
-    let output = ssh_output(
+    let mut output = Vec::new();
+    ssh_stream(
         root,
         &format!(
-            "root={}; pathspec={}; repository=$(git -C \"$root\" rev-parse --show-toplevel) || exit; file=\"${{repository%/}}/$pathspec\"; ancestor=\"$file\"; while ! test -e \"$ancestor\" && ! test -L \"$ancestor\"; do parent=${{ancestor%/*}}; ancestor=${{parent:-/}}; done; ancestor=$(realpath -- \"$ancestor\") || exit; {scope}if git -C \"$repository\" --literal-pathspecs ls-files --others --exclude-standard -- \"$pathspec\" | grep -q .; then git -C \"$repository\" diff --no-index --no-ext-diff --no-textconv --no-renames --no-color -- /dev/null \"$file\" || test $? -eq 1; else if git -C \"$repository\" rev-parse --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=$(git hash-object -t tree /dev/null) || exit; fi; git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --no-color \"$base\" -- \"$pathspec\"; fi | head -c {}",
+            "root={}; pathspec={}; repository=$(git -C \"$root\" rev-parse --show-toplevel) || exit; file=\"${{repository%/}}/$pathspec\"; ancestor=\"$file\"; while ! test -e \"$ancestor\" && ! test -L \"$ancestor\"; do parent=${{ancestor%/*}}; ancestor=${{parent:-/}}; done; ancestor=$(realpath -- \"$ancestor\") || exit; {scope}if git -C \"$repository\" --literal-pathspecs ls-files --others --exclude-standard -- \"$pathspec\" | grep -q .; then git -C \"$repository\" diff --no-index --no-ext-diff --no-textconv --no-renames --no-color -- /dev/null \"$file\" || test $? -eq 1; else if git -C \"$repository\" rev-parse --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=$(git hash-object -t tree /dev/null) || exit; fi; git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --no-color \"$base\" -- \"$pathspec\"; fi",
             posix_quote(&root.path),
             posix_quote(&pathspec),
-            MAX_GIT_DIFF_BYTES + 1,
         ),
+        |chunk| {
+            if output.len() + chunk.len() > MAX_GIT_DIFF_BYTES as usize {
+                return Err("Diff is larger than 1 MB; inspect it with Git in the terminal".into());
+            }
+            output.extend_from_slice(chunk);
+            Ok(())
+        },
     )?;
-    if output.len() > MAX_GIT_DIFF_BYTES as usize {
-        return Err("Diff is larger than 1 MB; inspect it with Git in the terminal".into());
-    }
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
@@ -4929,11 +4933,10 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         return tauri::async_runtime::spawn_blocking(move || {
             let marker = format!("lite-git-{}", uuid::Uuid::new_v4());
             let separator = format!("\0{marker}\0");
-            let status_limit = MAX_SSH_OUTPUT_BYTES - MAX_GIT_DIFF_BYTES - 8192;
             let output = ssh_output(
                 &root,
                 &format!(
-                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; if git -C \"$repository\" rev-parse --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=$(git hash-object -t tree /dev/null) || exit; fi; printf '%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\"; git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\" | head -c {status_limit}; printf '\\0%s\\0' {}; git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\" | head -c {MAX_GIT_DIFF_BYTES}",
+                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; if git -C \"$repository\" rev-parse --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=$(git hash-object -t tree /dev/null) || exit; fi; printf '%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\"; git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\" || exit; printf '\\0%s\\0' {}; git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\"",
                     posix_quote(&root.path),
                     posix_quote(&marker),
                     posix_quote(&marker),
@@ -4957,16 +4960,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                 .windows(separator.len())
                 .position(|window| window == separator)
                 .ok_or("Could not read remote Git status")?;
-            let mut status = body[..split].to_vec();
-            let byte_truncated = status.len() == status_limit as usize;
-            if byte_truncated {
-                status.truncate(
-                    status
-                        .iter()
-                        .rposition(|byte| *byte == 0)
-                        .map_or(0, |position| position + 1),
-                );
-            }
+            let status = &body[..split];
             let mut changes = Vec::new();
             let mut records = status.split(|byte| *byte == 0);
             while let Some(record) = records.next() {
@@ -4985,7 +4979,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     break;
                 }
             }
-            let changes_truncated = byte_truncated || changes.len() > MAX_GIT_CHANGES;
+            let changes_truncated = changes.len() > MAX_GIT_CHANGES;
             changes.truncate(MAX_GIT_CHANGES);
             let scope = root
                 .path
