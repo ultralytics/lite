@@ -3673,7 +3673,7 @@ fn ssh_session_command(
     );
     let ssh = resolve_executable("ssh").ok_or("Could not find SSH in your PATH")?;
     let mut builder = CommandBuilder::new(ssh);
-    builder.args(["-tt", "--", &root.host, &remote]);
+    builder.args(["-tt", "-o", "ConnectTimeout=10", "--", &root.host, &remote]);
     Ok(builder)
 }
 
