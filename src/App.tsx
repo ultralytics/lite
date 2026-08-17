@@ -123,6 +123,7 @@ import "./App.css";
 const STORAGE_KEY = "lite.sessions.v1";
 const WORKING_KEY = "lite.working.v1";
 const SESSION_VIEW_KEY = "lite.sessionView.v1";
+const REMOTE_SSH_KEY = "lite.remoteSsh.v1";
 type SessionGrouping = "none" | "repository" | "directory" | "state";
 type SessionSort = "newest" | "oldest" | "name-asc" | "name-desc" | "manual";
 const SESSION_GROUPINGS: { value: SessionGrouping; label: string }[] = [
@@ -1566,6 +1567,7 @@ function App() {
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
+  const [remoteSsh, setRemoteSsh] = useState(() => localStorage.getItem(REMOTE_SSH_KEY) === "true");
   const [closeWarningCount, setCloseWarningCount] = useState(0);
   const [closingApp, setClosingApp] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
@@ -2169,6 +2171,11 @@ function App() {
   const changeKeepAwake = useCallback((enabled: boolean) => {
     localStorage.setItem(KEEP_AWAKE_KEY, String(enabled));
     setKeepAwake(enabled);
+  }, []);
+
+  const changeRemoteSsh = useCallback((enabled: boolean) => {
+    localStorage.setItem(REMOTE_SSH_KEY, String(enabled));
+    setRemoteSsh(enabled);
   }, []);
 
   const launch = useCallback(async (session: Session, resume: boolean, initialPrompt?: string) => {
@@ -3774,6 +3781,7 @@ function App() {
           <NewSessionDialog
             open={newSessionOpen}
             choice={newSessionChoice}
+            remoteSsh={remoteSsh}
             onOpenChange={(open) => {
               setNewSessionOpen(open);
               // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
@@ -3839,6 +3847,8 @@ function App() {
             onNotificationsChange={changeNotifications}
             keepAwake={keepAwake}
             onKeepAwakeChange={changeKeepAwake}
+            remoteSsh={remoteSsh}
+            onRemoteSshChange={changeRemoteSsh}
             theme={theme}
             onThemeChange={setTheme}
             versionBadge={

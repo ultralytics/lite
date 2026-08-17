@@ -91,12 +91,14 @@ interface Availability {
 export function NewSessionDialog({
   open: isOpen,
   choice: chosen,
+  remoteSsh,
   onOpenChange,
   onCreate,
 }: {
   open: boolean;
   // A choice made outside the dialog — a welcome tile — which the dialog opens on.
   choice?: string;
+  remoteSsh: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
 }) {
@@ -114,7 +116,8 @@ export function NewSessionDialog({
   });
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
-  const [remote, setRemote] = useState(() => localStorage.getItem(REMOTE_KEY) === "true");
+  const [remoteSelected, setRemoteSelected] = useState(() => localStorage.getItem(REMOTE_KEY) === "true");
+  const remote = remoteSsh && remoteSelected;
   const [host, setHost] = useState(() => localStorage.getItem(SSH_HOST_KEY) ?? "");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
@@ -402,23 +405,25 @@ export function NewSessionDialog({
             <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
           </DialogHeader>
           <DialogBody className="min-w-0 space-y-4">
-            <div className="flex items-center gap-2">
-              <Label htmlFor="remote-workspace" className={SECTION}>
-                Remote SSH
-              </Label>
-              <Switch
-                id="remote-workspace"
-                checked={remote}
-                disabled={creating}
-                onCheckedChange={(checked) => {
-                  localStorage.setItem(REMOTE_KEY, String(checked));
-                  if (directory) void invoke("revoke_directory", { rootId: directory.id });
-                  setDirectory(undefined);
-                  setPath("");
-                  setRemote(checked);
-                }}
-              />
-            </div>
+            {remoteSsh ? (
+              <div className="flex items-center gap-2">
+                <Label htmlFor="remote-workspace" className={SECTION}>
+                  Remote SSH
+                </Label>
+                <Switch
+                  id="remote-workspace"
+                  checked={remote}
+                  disabled={creating}
+                  onCheckedChange={(checked) => {
+                    localStorage.setItem(REMOTE_KEY, String(checked));
+                    if (directory) void invoke("revoke_directory", { rootId: directory.id });
+                    setDirectory(undefined);
+                    setPath("");
+                    setRemoteSelected(checked);
+                  }}
+                />
+              </div>
+            ) : null}
             {remote ? (
               <div className="space-y-1.5">
                 <Label htmlFor="ssh-host" className={SECTION}>
