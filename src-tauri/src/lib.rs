@@ -3649,7 +3649,7 @@ fn configure_session_command(
     );
 }
 
-fn ssh_agent_args(launch: &SessionCommand<'_>, signing_in: bool) -> Result<Vec<String>, String> {
+fn ssh_agent_args(launch: &SessionCommand<'_>) -> Result<Vec<String>, String> {
     let agent = launch.agent;
     let provider = launch.provider;
     let resume = launch.resume;
@@ -3657,10 +3657,6 @@ fn ssh_agent_args(launch: &SessionCommand<'_>, signing_in: bool) -> Result<Vec<S
     let provider_session_id = launch.provider_session_id;
     let executable = agent_executable(agent).ok_or("Unknown session type")?;
     let mut args = vec![executable.to_owned()];
-    if signing_in {
-        args.extend(login_arguments(agent)?);
-        return Ok(args);
-    }
     if agent != "codex" {
         args.extend(session_arguments(
             agent,
@@ -3688,7 +3684,6 @@ fn ssh_agent_args(launch: &SessionCommand<'_>, signing_in: bool) -> Result<Vec<S
 fn ssh_session_command(
     root: &SshRoot,
     launch: &SessionCommand<'_>,
-    signing_in: bool,
     initial_prompt: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     if launch.agent == "shell" {
@@ -3701,9 +3696,8 @@ fn ssh_session_command(
         builder.args(["-tt", "-o", "ConnectTimeout=10", "--", &root.host, &remote]);
         return Ok(builder);
     }
-    let mut args = ssh_agent_args(launch, signing_in)?;
-    if !signing_in
-        && launch.agent == "claude"
+    let mut args = ssh_agent_args(launch)?;
+    if launch.agent == "claude"
         && let Some(prompt) = initial_prompt
     {
         args.push(prompt.into());
@@ -3800,7 +3794,6 @@ async fn spawn_session(
             _ => true,
         };
     if resume
-        && !signing_in
         && let Some(root) = ssh.clone()
         && matches!(agent.as_str(), "claude" | "gemini" | "qwen")
     {
@@ -3877,8 +3870,7 @@ async fn spawn_session(
         stop_pty(&mut session)?;
     }
 
-    let ssh_known_sessions = if !signing_in
-        && (agent == "codex" || agent == "kimi")
+    let ssh_known_sessions = if (agent == "codex" || agent == "kimi")
         && let Some(root) = ssh.clone()
     {
         let discovery_agent = agent.clone();
@@ -3944,7 +3936,7 @@ async fn spawn_session(
         provider_session_id: provider_session_id.as_deref(),
     };
     let mut command = if let Some(root) = ssh.as_ref() {
-        ssh_session_command(root, &launch, signing_in, initial_prompt.as_deref())?
+        ssh_session_command(root, &launch, initial_prompt.as_deref())?
     } else if signing_in {
         login_command(&agent)?
     } else {
@@ -4933,12 +4925,14 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         return tauri::async_runtime::spawn_blocking(move || {
             let marker = format!("lite-git-{}", uuid::Uuid::new_v4());
             let separator = format!("\0{marker}\0");
+            let status_limit = 900_000;
             let output = ssh_output(
                 &root,
                 &format!(
-                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; if git -C \"$repository\" rev-parse --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=$(git hash-object -t tree /dev/null) || exit; fi; printf '%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\"; git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\" || exit; printf '\\0%s\\0' {}; git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\"",
+                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; if git -C \"$repository\" rev-parse --verify HEAD >/dev/null 2>&1; then base=HEAD; else base=$(git hash-object -t tree /dev/null) || exit; fi; code=$(mktemp) || exit; trap 'rm -f -- \"$code\"' EXIT; printf '%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\"; {{ git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -z -n {} | head -c {status_limit}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; printf '\\0%s\\0' {}; {{ git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -c {MAX_GIT_DIFF_BYTES}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; rm -f -- \"$code\"; trap - EXIT",
                     posix_quote(&root.path),
                     posix_quote(&marker),
+                    MAX_GIT_CHANGES + 1,
                     posix_quote(&marker),
                     posix_quote(&marker),
                 ),
@@ -4960,7 +4954,16 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                 .windows(separator.len())
                 .position(|window| window == separator)
                 .ok_or("Could not read remote Git status")?;
-            let status = &body[..split];
+            let mut status = body[..split].to_vec();
+            let byte_truncated = status.len() == status_limit;
+            if byte_truncated && !status.ends_with(&[0]) {
+                status.truncate(
+                    status
+                        .iter()
+                        .rposition(|byte| *byte == 0)
+                        .map_or(0, |position| position + 1),
+                );
+            }
             let mut changes = Vec::new();
             let mut records = status.split(|byte| *byte == 0);
             while let Some(record) = records.next() {
@@ -4979,7 +4982,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     break;
                 }
             }
-            let changes_truncated = changes.len() > MAX_GIT_CHANGES;
+            let changes_truncated = byte_truncated || changes.len() > MAX_GIT_CHANGES;
             changes.truncate(MAX_GIT_CHANGES);
             let scope = root
                 .path
