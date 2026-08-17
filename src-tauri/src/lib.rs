@@ -645,7 +645,11 @@ fn ssh_command(host: &str) -> Result<Command, String> {
     Ok(command)
 }
 
-fn ssh_output(root: &SshRoot, script: &str) -> Result<Vec<u8>, String> {
+fn ssh_stream(
+    root: &SshRoot,
+    script: &str,
+    mut receive: impl FnMut(&[u8]) -> Result<(), String>,
+) -> Result<(), String> {
     let mut child = ssh_command(&root.host)?
         .arg(script)
         .stdout(Stdio::piped())
@@ -654,22 +658,23 @@ fn ssh_output(root: &SshRoot, script: &str) -> Result<Vec<u8>, String> {
         .map_err(|error| error.to_string())?;
     let mut stdout = child.stdout.take().ok_or("Could not read SSH output")?;
     let mut stderr = child.stderr.take().ok_or("Could not read SSH errors")?;
-    let oversized = Arc::new(AtomicBool::new(false));
-    let output_oversized = Arc::clone(&oversized);
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
     let output = thread::spawn(move || {
-        let mut output = Vec::new();
         let mut buffer = [0_u8; 8192];
-        while let Ok(count) = stdout.read(&mut buffer) {
-            if count == 0 {
-                break;
-            }
-            let remaining = MAX_SSH_OUTPUT_BYTES as usize - output.len();
-            output.extend_from_slice(&buffer[..count.min(remaining)]);
-            if count > remaining {
-                output_oversized.store(true, Ordering::Relaxed);
+        loop {
+            match stdout.read(&mut buffer) {
+                Ok(0) => return,
+                Ok(count) => {
+                    if sender.send(Ok(buffer[..count].to_vec())).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error.to_string()));
+                    return;
+                }
             }
         }
-        output
     });
     let errors = thread::spawn(move || {
         let mut output = Vec::new();
@@ -686,41 +691,66 @@ fn ssh_output(root: &SshRoot, script: &str) -> Result<Vec<u8>, String> {
         output
     });
     let started = Instant::now();
-    let status = loop {
-        if oversized.load(Ordering::Relaxed) {
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = output.join();
-            let _ = errors.join();
-            return Err("SSH output is too large; inspect it in the terminal".into());
-        }
+    let mut status = None;
+    let mut output_open = true;
+    loop {
         if started.elapsed() >= SSH_COMMAND_TIMEOUT {
             let _ = child.kill();
             let _ = child.wait();
+            drop(receiver);
             let _ = output.join();
             let _ = errors.join();
             return Err("SSH command timed out after 30 seconds".into());
         }
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = output.join();
-                let _ = errors.join();
-                return Err(error.to_string());
+        if output_open {
+            match receiver.recv_timeout(Duration::from_millis(25)) {
+                Ok(Ok(chunk)) => {
+                    if let Err(error) = receive(&chunk) {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        drop(receiver);
+                        let _ = output.join();
+                        let _ = errors.join();
+                        return Err(error);
+                    }
+                }
+                Ok(Err(error)) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    drop(receiver);
+                    let _ = output.join();
+                    let _ = errors.join();
+                    return Err(error);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => output_open = false,
+            }
+        } else {
+            thread::sleep(Duration::from_millis(25));
+        }
+        if status.is_none() {
+            match child.try_wait() {
+                Ok(Some(exit)) => status = Some(exit),
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    drop(receiver);
+                    let _ = output.join();
+                    let _ = errors.join();
+                    return Err(error.to_string());
+                }
             }
         }
-        thread::sleep(Duration::from_millis(25));
-    };
-    let output = output.join().unwrap_or_default();
-    let errors = errors.join().unwrap_or_default();
-    if oversized.load(Ordering::Relaxed) {
-        return Err("SSH output is too large; inspect it in the terminal".into());
+        if !output_open && status.is_some() {
+            break;
+        }
     }
+    let _ = output.join();
+    let errors = errors.join().unwrap_or_default();
+    let status = status.expect("SSH status is set before the loop exits");
     if status.success() {
-        Ok(output)
+        Ok(())
     } else {
         let detail = String::from_utf8_lossy(&errors).trim().to_owned();
         Err(if detail.is_empty() {
@@ -729,6 +759,18 @@ fn ssh_output(root: &SshRoot, script: &str) -> Result<Vec<u8>, String> {
             detail
         })
     }
+}
+
+fn ssh_output(root: &SshRoot, script: &str) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    ssh_stream(root, script, |chunk| {
+        if output.len() + chunk.len() > MAX_SSH_OUTPUT_BYTES as usize {
+            return Err("SSH output is too large; inspect it in the terminal".into());
+        }
+        output.extend_from_slice(chunk);
+        Ok(())
+    })?;
+    Ok(output)
 }
 
 fn ssh_text(root: &SshRoot, script: &str) -> Result<String, String> {
@@ -1139,6 +1181,11 @@ fn ssh_provider_session_ids(root: &SshRoot, agent: &str) -> Result<HashSet<Strin
             posix_quote(r"s/.*-\([0-9a-fA-F-]\{36\}\)\.jsonl$/\1/p"),
         ),
         "kimi" => format!(
+            "home=${{KIMI_CODE_HOME:-$HOME/.kimi-code}}; test -f \"$home/session_index.jsonl\" || exit 0; grep -F -- {} \"$home/session_index.jsonl\" | sed -n {}",
+            posix_quote(&cwd),
+            posix_quote(r#"s/.*"sessionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p"#),
+        ),
+        "kimi-current" => format!(
             "home=${{KIMI_CODE_HOME:-$HOME/.kimi-code}}; test -f \"$home/session_index.jsonl\" || exit 0; grep -F -- {} \"$home/session_index.jsonl\" | tail -n 1 | sed -n {}",
             posix_quote(&cwd),
             posix_quote(r#"s/.*"sessionId"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p"#),
@@ -1150,6 +1197,24 @@ fn ssh_provider_session_ids(root: &SshRoot, agent: &str) -> Result<HashSet<Strin
         .filter(|id| is_provider_session_id(id))
         .map(str::to_owned)
         .collect())
+}
+
+fn ssh_provider_session_exists(root: &SshRoot, agent: &str, id: &str) -> Result<bool, String> {
+    if !is_provider_session_id(id) {
+        return Ok(false);
+    }
+    let script = match agent {
+        "codex" => format!(
+            "home=${{CODEX_HOME:-$HOME/.codex}}; find \"$home/sessions\" -type f -name {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
+            posix_quote(&format!("rollout-*-{id}.jsonl")),
+        ),
+        "kimi" => format!(
+            "home=${{KIMI_CODE_HOME:-$HOME/.kimi-code}}; grep -F -- {} \"$home/session_index.jsonl\" 2>/dev/null | grep -q '\"sessionId\"' && printf 1 || printf 0",
+            posix_quote(id),
+        ),
+        _ => return Ok(false),
+    };
+    Ok(ssh_text(root, &script)? == "1")
 }
 
 fn load_codex_server(app: &AppHandle) -> Result<CodexServer, String> {
@@ -3637,7 +3702,7 @@ async fn spawn_session(
     cols: u16,
     rows: u16,
 ) -> Result<Option<String>, String> {
-    let ssh = ssh_root(&roots, &root_id)?;
+    let mut ssh = ssh_root(&roots, &root_id)?;
     match (ssh.as_ref(), host.as_deref()) {
         (Some(root), Some(host)) if root.host == host => {}
         (None, None) => {}
@@ -3651,15 +3716,22 @@ async fn spawn_session(
             .contains_key(&root_id)
     {
         uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid folder permission")?;
-        let path = fs::canonicalize(cwd).map_err(|_| MISSING_DIRECTORY)?;
+        let path = fs::canonicalize(&cwd).map_err(|_| MISSING_DIRECTORY)?;
         update_roots(&app, &roots, |roots| {
             roots
                 .entry(root_id.clone())
                 .or_insert(WorkspaceRoot::Local(path));
         })?;
     }
-    let cwd = if let Some(root) = ssh.as_ref() {
-        PathBuf::from(&root.path)
+    let cwd = if let Some(root) = ssh.as_mut() {
+        let boundary = root.clone();
+        let target = cwd.clone();
+        let path =
+            tauri::async_runtime::spawn_blocking(move || scoped_ssh_path(&boundary, &target))
+                .await
+                .map_err(|error| error.to_string())??;
+        root.path = path.clone();
+        PathBuf::from(path)
     } else {
         root_path(&roots, &root_id)?
     };
@@ -3736,12 +3808,25 @@ async fn spawn_session(
         stop_pty(&mut session)?;
     }
 
-    let ssh_known_sessions =
-        if !signing_in && provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
-            if let Some(root) = ssh.clone() {
-                if agent == "kimi" {
-                    Some(HashSet::new())
-                } else {
+    if !signing_in
+        && (agent == "codex" || agent == "kimi")
+        && let (Some(root), Some(known)) = (ssh.clone(), provider_session_id.clone())
+    {
+        let discovery_agent = agent.clone();
+        let exists = tauri::async_runtime::spawn_blocking(move || {
+            ssh_provider_session_exists(&root, &discovery_agent, &known)
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        if !exists {
+            update_provider_session(&app, &provider_sessions, &session_id, None)?;
+            provider_session_id = None;
+        }
+    }
+    let ssh_known_sessions = if provider_session_id.is_none() {
+        match agent.as_str() {
+            "codex" => {
+                if let Some(root) = ssh.clone() {
                     let discovery_agent = agent.clone();
                     Some(
                         tauri::async_runtime::spawn_blocking(move || {
@@ -3750,13 +3835,16 @@ async fn spawn_session(
                         .await
                         .map_err(|error| error.to_string())??,
                     )
+                } else {
+                    None
                 }
-            } else {
-                None
             }
-        } else {
-            None
-        };
+            "kimi" if ssh.is_some() => Some(HashSet::new()),
+            _ => None,
+        }
+    } else {
+        None
+    };
 
     let output = Arc::new(Mutex::new(output));
     let alive = Arc::new(AtomicBool::new(true));
@@ -3948,7 +4036,12 @@ async fn spawn_session(
             let mut wait = Duration::from_secs(1);
             loop {
                 let candidates = if let Some(root) = discovery_ssh.as_ref() {
-                    ssh_provider_session_ids(root, &discovery_agent).map(|current| {
+                    let remote_agent = if discovery_agent == "kimi" {
+                        "kimi-current"
+                    } else {
+                        discovery_agent.as_str()
+                    };
+                    ssh_provider_session_ids(root, remote_agent).map(|current| {
                         if discovery_agent == "kimi" {
                             current
                         } else {
@@ -4232,38 +4325,55 @@ async fn list_directory(
         let hide_hidden = settings.hide_hidden.load(Ordering::Relaxed);
         return tauri::async_runtime::spawn_blocking(move || {
             let path = scoped_ssh_path(&root, &path)?;
-            let output = ssh_output(
+            let after =
+                after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
+            let mut page = BTreeMap::new();
+            let mut has_more = false;
+            let mut pending = Vec::new();
+            let mut fields = Vec::new();
+            ssh_stream(
                 &root,
                 &format!(
                     "find {} -mindepth 1 -maxdepth 1 -printf '%f\\0%p\\0%y\\0'",
                     posix_quote(&path)
                 ),
+                |chunk| {
+                    pending.extend_from_slice(chunk);
+                    let mut consumed = 0;
+                    while let Some(end) = pending[consumed..].iter().position(|byte| *byte == 0) {
+                        let end = consumed + end;
+                        fields.push(pending[consumed..end].to_vec());
+                        consumed = end + 1;
+                        if fields.len() != 3 {
+                            continue;
+                        }
+                        let record = std::mem::take(&mut fields);
+                        let name = String::from_utf8_lossy(&record[0]).into_owned();
+                        if hide_hidden && name.starts_with('.') {
+                            continue;
+                        }
+                        let entry = FileEntry {
+                            name,
+                            path: String::from_utf8_lossy(&record[1]).into_owned(),
+                            is_directory: record[2] == b"d",
+                            is_symlink: record[2] == b"l",
+                        };
+                        let key = directory_key(&entry.name, &entry.path, entry.is_directory);
+                        if after.as_ref().is_some_and(|after| key <= *after) {
+                            continue;
+                        }
+                        page.insert(key, entry);
+                        if page.len() > DIRECTORY_PAGE_SIZE {
+                            page.pop_last();
+                            has_more = true;
+                        }
+                    }
+                    pending.drain(..consumed);
+                    Ok(())
+                },
             )?;
-            let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
-            let after =
-                after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
-            let mut page = BTreeMap::new();
-            let mut has_more = false;
-            for record in fields.chunks_exact(3) {
-                let name = String::from_utf8_lossy(record[0]).into_owned();
-                if hide_hidden && name.starts_with('.') {
-                    continue;
-                }
-                let entry = FileEntry {
-                    name,
-                    path: String::from_utf8_lossy(record[1]).into_owned(),
-                    is_directory: record[2] == b"d",
-                    is_symlink: record[2] == b"l",
-                };
-                let key = directory_key(&entry.name, &entry.path, entry.is_directory);
-                if after.as_ref().is_some_and(|after| key <= *after) {
-                    continue;
-                }
-                page.insert(key, entry);
-                if page.len() > DIRECTORY_PAGE_SIZE {
-                    page.pop_last();
-                    has_more = true;
-                }
+            if !pending.is_empty() || !fields.is_empty() {
+                return Err("Could not read remote directory".into());
             }
             let entries = page.into_values().collect::<Vec<_>>();
             let next_cursor = has_more.then(|| {
@@ -4855,11 +4965,19 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     scope_text,
                 ],
             );
-            let diffs = ssh_bounded_git_output(
+            let mut diffs = ssh_bounded_git_output(
                 &root,
                 &diff_command,
                 &format!("head -c {}", MAX_GIT_DIFF_BYTES),
             )?;
+            if !diffs.is_empty() && !diffs.ends_with(&[0]) {
+                diffs.truncate(
+                    diffs
+                        .iter()
+                        .rposition(|byte| *byte == 0)
+                        .map_or(0, |end| end + 1),
+                );
+            }
             let mut line_diffs = BTreeMap::new();
             for record in diffs
                 .split(|byte| *byte == 0)
