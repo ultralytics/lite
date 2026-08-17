@@ -1730,7 +1730,7 @@ export const Inspector = memo(function Inspector({
           {visited.has("git") ? (
             <TabsContent value="git" keepMounted className="min-h-0 overflow-hidden">
               <GitPanel
-                key={`${session.rootId}:${reload.git}`}
+                key={`${session.rootId}:${session.cwd}:${reload.git}`}
                 rootId={session.rootId}
                 directory={session.cwd}
                 sessionId={session.id}
