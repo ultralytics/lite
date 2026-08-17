@@ -131,6 +131,7 @@ export function NewSessionDialog({
     localStorage.getItem(NAME_KEY) === "true" ? "" : undefined,
   );
   const choice = SESSION_CHOICES.find((option) => option.id === choiceId) ?? SESSION_CHOICES[0];
+  const remoteUnsupported = remote && choice.agent === "codex" && choice.provider !== "openai";
   const status = availability[choice.id];
   useEffect(() => {
     if (isOpen && chosen) setChoiceId(chosen);
@@ -373,7 +374,7 @@ export function NewSessionDialog({
   const folderReady = remote
     ? host.trim() && path.trim()
     : path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim());
-  const ready = !installing && !creating && Boolean(missing || folderReady);
+  const ready = !remoteUnsupported && !installing && !creating && Boolean(missing || folderReady);
   function start() {
     if (missing?.installable) void install();
     else if (missing)
@@ -568,6 +569,7 @@ export function NewSessionDialog({
               <div className="grid min-w-0 grid-cols-2 gap-2">
                 {SESSION_CHOICES.map((option) => {
                   const active = choiceId === option.id;
+                  const unsupported = remote && option.agent === "codex" && option.provider !== "openai";
                   const deepseek = option.id === "deepseek";
                   const state = availability[option.id];
                   const update = updates[option.agent];
@@ -595,7 +597,7 @@ export function NewSessionDialog({
                         variant={active && !deepseek ? "secondary" : active ? "ghost" : "outline"}
                         className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && deepseek ? "rounded-b-none" : ""}`}
                         aria-pressed={active}
-                        disabled={Boolean(installing)}
+                        disabled={Boolean(installing) || unsupported}
                         title={"note" in option ? option.note : sessionLabel(option)}
                         onClick={() => {
                           if (active && ready) start();
@@ -610,7 +612,11 @@ export function NewSessionDialog({
                           className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
                           <span className="block truncate">{sessionLabel(option)}</span>
-                          {remote ? (
+                          {unsupported ? (
+                            <span className="block truncate text-xs font-normal text-muted-foreground">
+                              Local workspace only
+                            </span>
+                          ) : remote ? (
                             <span className="block truncate text-xs font-normal text-muted-foreground">
                               Runs on {host.trim() || "SSH host"}
                             </span>
