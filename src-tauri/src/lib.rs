@@ -4796,12 +4796,16 @@ fn git_diff_base(git: &Path, repository: &Path) -> Result<String, String> {
 async fn git_diff(
     roots: State<'_, Roots>,
     root_id: String,
+    directory: String,
     path: String,
 ) -> Result<String, String> {
-    if let Some(root) = ssh_root(&roots, &root_id)? {
-        return tauri::async_runtime::spawn_blocking(move || ssh_git_diff(&root, &path))
-            .await
-            .map_err(|error| error.to_string())?;
+    if let Some(mut root) = ssh_root(&roots, &root_id)? {
+        return tauri::async_runtime::spawn_blocking(move || {
+            root.path = scoped_ssh_path(&root, &directory)?;
+            ssh_git_diff(&root, &path)
+        })
+        .await
+        .map_err(|error| error.to_string())?;
     }
     let granted = root_path(&roots, &root_id)?;
     let relative = Path::new(&path);
@@ -4894,9 +4898,14 @@ async fn git_diff(
 }
 
 #[tauri::command]
-async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<GitStatus>, String> {
-    if let Some(root) = ssh_root(&roots, &root_id)? {
+async fn git_status(
+    roots: State<'_, Roots>,
+    root_id: String,
+    directory: String,
+) -> Result<Option<GitStatus>, String> {
+    if let Some(mut root) = ssh_root(&roots, &root_id)? {
         return tauri::async_runtime::spawn_blocking(move || {
+            root.path = scoped_ssh_path(&root, &directory)?;
             let repository =
                 match ssh_git_text(&root, &root.path, &["rev-parse", "--show-toplevel"]) {
                     Ok(repository) => repository,
@@ -4982,7 +4991,9 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                 &diff_command,
                 &format!("head -c {}", MAX_GIT_DIFF_BYTES),
             )?;
-            if !diffs.is_empty() && !diffs.ends_with(&[0]) {
+            if diffs.len() == MAX_GIT_DIFF_BYTES as usize {
+                diffs.clear();
+            } else if !diffs.is_empty() && !diffs.ends_with(&[0]) {
                 diffs.truncate(
                     diffs
                         .iter()

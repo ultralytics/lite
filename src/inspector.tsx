@@ -1264,6 +1264,7 @@ export function clearInspectorCache(sessionId: string) {
 
 function GitPanel({
   rootId,
+  directory,
   sessionId,
   remote,
   active,
@@ -1272,6 +1273,7 @@ function GitPanel({
   onLoad,
 }: {
   rootId: string;
+  directory: string;
   sessionId: string;
   remote: string;
   active: boolean;
@@ -1350,11 +1352,11 @@ function GitPanel({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      setStatus(await invoke<GitStatus | null>("git_status", { rootId }));
+      setStatus(await invoke<GitStatus | null>("git_status", { rootId, directory }));
     } catch (reason) {
       setError(String(reason));
     }
-  }, [rootId]);
+  }, [directory, rootId]);
 
   async function openDiff(path: string) {
     const request = ++diffRequest.current;
@@ -1363,7 +1365,7 @@ function GitPanel({
     setDiffError("");
     setDiffLoading(true);
     try {
-      const source = await invoke<string>("git_diff", { rootId, path });
+      const source = await invoke<string>("git_diff", { rootId, directory, path });
       if (diffRequest.current === request) setDiffSource(source);
     } catch (reason) {
       if (diffRequest.current === request) setDiffError(String(reason));
@@ -1730,6 +1732,7 @@ export const Inspector = memo(function Inspector({
               <GitPanel
                 key={`${session.rootId}:${reload.git}`}
                 rootId={session.rootId}
+                directory={session.cwd}
                 sessionId={session.id}
                 remote={remote}
                 active={tab === "git" && !collapsed}
