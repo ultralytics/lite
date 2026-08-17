@@ -3197,8 +3197,10 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
     let session_id = launch.session_id;
     let provider_session_id = launch.provider_session_id;
     let mut command = match agent {
-        "claude" => {
+        "claude" | "gemini" | "kimi" | "qwen" => {
             let mut command = agent_builder(agent)?;
+            // Kimi only resumes an exact id: `--continue` would make two tabs in one directory share
+            // its latest session and leave neither able to discover which session it is showing.
             command.args(session_arguments(
                 agent,
                 resume,
@@ -3285,29 +3287,6 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
             if let Some(provider_session_id) = provider_session_id {
                 command.args(["resume", provider_session_id]);
             }
-            command
-        }
-        "gemini" => {
-            let mut command = agent_builder(agent)?;
-            command.args(session_arguments(agent, resume, session_id, None)?);
-            command
-        }
-        "kimi" => {
-            // Only an exact id resumes. `--continue` would reopen whatever ran last in the directory,
-            // which two tabs there would both land on, and it creates no entry for discovery to record,
-            // so the tab could never learn which session it is showing.
-            let mut command = agent_builder(agent)?;
-            command.args(session_arguments(
-                agent,
-                resume,
-                session_id,
-                provider_session_id,
-            )?);
-            command
-        }
-        "qwen" => {
-            let mut command = agent_builder(agent)?;
-            command.args(session_arguments(agent, resume, session_id, None)?);
             command
         }
         "shell" => {
@@ -3727,7 +3706,7 @@ fn ssh_session_command(
             .collect::<Vec<_>>()
             .join(" ");
         ssh_script(&format!(
-            "cd {} && exec ${{SHELL:-/bin/sh}} -lc {}",
+            "cd {} && exec \"${{SHELL:-/bin/sh}}\" -lc {}",
             posix_quote(&root.path),
             posix_quote(&format!("exec {command}"))
         ))

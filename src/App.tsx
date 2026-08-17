@@ -2995,7 +2995,10 @@ function App() {
                     <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
                   {selected.host ? (
-                    <span className="block min-w-0 max-w-full truncate font-mono text-[11px] text-muted-foreground">
+                    <span
+                      className="block min-w-0 max-w-full truncate font-mono text-[11px] text-muted-foreground"
+                      title={`${selected.host}:${selected.cwd}`}
+                    >
                       {selected.host}:{selected.cwd}
                     </span>
                   ) : (
