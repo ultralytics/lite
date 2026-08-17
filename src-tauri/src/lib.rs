@@ -1203,14 +1203,13 @@ fn ssh_provider_session_exists(root: &SshRoot, agent: &str, id: &str) -> Result<
     if !is_provider_session_id(id) {
         return Ok(false);
     }
+    if agent == "kimi" {
+        return ssh_provider_session_ids(root, agent).map(|ids| ids.contains(id));
+    }
     let script = match agent {
         "codex" => format!(
             "home=${{CODEX_HOME:-$HOME/.codex}}; find \"$home/sessions\" -type f -name {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
             posix_quote(&format!("rollout-*-{id}.jsonl")),
-        ),
-        "kimi" => format!(
-            "home=${{KIMI_CODE_HOME:-$HOME/.kimi-code}}; grep -F -- {} \"$home/session_index.jsonl\" 2>/dev/null | grep -q '\"sessionId\"' && printf 1 || printf 0",
-            posix_quote(id),
         ),
         _ => return Ok(false),
     };

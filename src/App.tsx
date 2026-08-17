@@ -2027,11 +2027,14 @@ function App() {
 
   const markDirectory = useCallback((sessionId: string, path: string) => {
     const session = sessionsRef.current.find((item) => item.id === sessionId);
-    if (session?.agent !== "shell" || session.cwd === path) return;
-    const update = (directoryUpdates.current.get(sessionId) ?? Promise.resolve())
+    if (session?.agent !== "shell") return;
+    const pending = directoryUpdates.current.get(sessionId);
+    // A return to the current cwd still belongs behind an in-flight change.
+    if (!pending && session.cwd === path) return;
+    const update = (pending ?? Promise.resolve())
       .then(async () => {
         const current = sessionsRef.current.find((item) => item.id === sessionId);
-        if (!current || current.cwd === path) return;
+        if (!current) return;
         const grant = await invoke<{ id: string; path: string }>("follow_directory", {
           rootId: current.rootId,
           path,
