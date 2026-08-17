@@ -20,6 +20,8 @@ export interface Session {
   // A name the user typed is theirs, so nothing the session says about itself overwrites it again.
   renamed?: boolean;
   cwd: string;
+  // Present when the root lives on an SSH host while Lite's interface stays local.
+  host?: string;
   rootId: string;
   running: boolean;
   providerSessionId?: string;

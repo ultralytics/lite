@@ -14,6 +14,7 @@ import {
   Moon,
   RefreshCw,
   RotateCcw,
+  Server,
   SlidersHorizontal,
   Sun,
   Trash2,
@@ -149,6 +150,8 @@ export function SettingsDialog({
   onNotificationsChange,
   keepAwake,
   onKeepAwakeChange,
+  remoteSsh,
+  onRemoteSshChange,
   theme,
   onThemeChange,
   versionBadge,
@@ -165,6 +168,8 @@ export function SettingsDialog({
   onNotificationsChange: (enabled: boolean) => Promise<void>;
   keepAwake: boolean;
   onKeepAwakeChange: (enabled: boolean) => void;
+  remoteSsh: boolean;
+  onRemoteSshChange: (enabled: boolean) => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   versionBadge: ReactNode;
@@ -330,6 +335,18 @@ export function SettingsDialog({
                   </ItemContent>
                   <ItemActions>
                     <Switch aria-label="Keep system awake" checked={keepAwake} onCheckedChange={onKeepAwakeChange} />
+                  </ItemActions>
+                </Item>
+                <Item variant="outline">
+                  <ItemMedia variant="icon">
+                    <Server />
+                  </ItemMedia>
+                  <ItemContent>
+                    <ItemTitle>Remote SSH</ItemTitle>
+                    <ItemDescription>Show Remote SSH workspaces when creating a session.</ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Switch aria-label="Remote SSH" checked={remoteSsh} onCheckedChange={onRemoteSshChange} />
                   </ItemActions>
                 </Item>
                 {notificationsSupported ? (
