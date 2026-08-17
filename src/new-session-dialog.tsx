@@ -725,7 +725,7 @@ export function NewSessionDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!ready}>
-              {!status || (installing && missing?.installable) ? <Spinner /> : null}
+              {(!remote && !status) || (installing && missing?.installable) ? <Spinner /> : null}
               {installing && missing?.installable
                 ? `Installing ${sessionLabel(choice)}…`
                 : missing?.installable

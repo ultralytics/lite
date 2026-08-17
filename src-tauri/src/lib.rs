@@ -733,7 +733,7 @@ fn ssh_output(root: &SshRoot, script: &str) -> Result<Vec<u8>, String> {
 
 fn ssh_text(root: &SshRoot, script: &str) -> Result<String, String> {
     String::from_utf8(ssh_output(root, script)?)
-        .map(|output| output.trim().to_owned())
+        .map(|output| output.strip_suffix('\n').unwrap_or(&output).to_owned())
         .map_err(|_| "SSH command returned non-UTF-8 text".into())
 }
 
@@ -3743,12 +3743,13 @@ async fn spawn_session(
                     Some(HashSet::new())
                 } else {
                     let discovery_agent = agent.clone();
-                    tauri::async_runtime::spawn_blocking(move || {
-                        ssh_provider_session_ids(&root, &discovery_agent)
-                    })
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
+                    Some(
+                        tauri::async_runtime::spawn_blocking(move || {
+                            ssh_provider_session_ids(&root, &discovery_agent)
+                        })
+                        .await
+                        .map_err(|error| error.to_string())??,
+                    )
                 }
             } else {
                 None
@@ -4336,6 +4337,7 @@ async fn read_text_file(
         return tauri::async_runtime::spawn_blocking(move || {
             let path = scoped_ssh_path(&root, &path)?;
             let size = ssh_text(&root, &format!("wc -c < {}", posix_quote(&path)))?
+                .trim()
                 .parse::<u64>()
                 .map_err(|_| "Could not read remote file size")?;
             if size > MAX_FILE_BYTES {
@@ -4555,9 +4557,35 @@ fn ssh_git_output(root: &SshRoot, directory: &str, args: &[&str]) -> Result<Vec<
     ssh_output(root, &ssh_git_command(directory, args))
 }
 
+fn ssh_bounded_git_output(root: &SshRoot, command: &str, limit: &str) -> Result<Vec<u8>, String> {
+    let marker = format!("lite-git-{}:", uuid::Uuid::new_v4());
+    let mut output = ssh_output(
+        root,
+        &format!(
+            "{{ {command}; code=$?; printf '%s%s\\0' {} \"$code\"; }} | {limit}",
+            posix_quote(&marker)
+        ),
+    )?;
+    let Some(position) = output
+        .windows(marker.len())
+        .rposition(|window| window == marker.as_bytes())
+    else {
+        return Ok(output);
+    };
+    let status = output[position + marker.len()..]
+        .split(|byte| *byte == 0)
+        .next()
+        .unwrap_or_default();
+    if status != b"0" {
+        return Err("Could not read Git status; refresh Git and try again".into());
+    }
+    output.truncate(position);
+    Ok(output)
+}
+
 fn ssh_git_text(root: &SshRoot, directory: &str, args: &[&str]) -> Result<String, String> {
     String::from_utf8(ssh_git_output(root, directory, args)?)
-        .map(|output| output.trim().to_owned())
+        .map(|output| output.strip_suffix('\n').unwrap_or(&output).to_owned())
         .map_err(|_| "Git returned non-UTF-8 text".into())
 }
 
@@ -4784,9 +4812,10 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     scope_text,
                 ],
             );
-            let output = ssh_output(
+            let output = ssh_bounded_git_output(
                 &root,
-                &format!("{status_command} | head -z -n {}", MAX_GIT_CHANGES + 1),
+                &status_command,
+                &format!("head -z -n {}", MAX_GIT_CHANGES + 1),
             )?;
             let mut changes = Vec::new();
             let mut records = output.split(|byte| *byte == 0);
@@ -4826,9 +4855,10 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     scope_text,
                 ],
             );
-            let diffs = ssh_output(
+            let diffs = ssh_bounded_git_output(
                 &root,
-                &format!("{diff_command} | head -c {}", MAX_GIT_DIFF_BYTES),
+                &diff_command,
+                &format!("head -c {}", MAX_GIT_DIFF_BYTES),
             )?;
             let mut line_diffs = BTreeMap::new();
             for record in diffs
