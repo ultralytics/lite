@@ -2979,7 +2979,11 @@ function App() {
                   </Tooltip>
                   {selected.host ? (
                     <Tooltip>
-                      <TooltipTrigger render={<span className="block w-fit max-w-full truncate" />}>
+                      <TooltipTrigger
+                        render={
+                          <span className="block min-w-0 max-w-full truncate font-mono text-[11px] text-muted-foreground" />
+                        }
+                      >
                         {selected.host}:{selected.cwd}
                       </TooltipTrigger>
                       <TooltipContent>Remote workspace</TooltipContent>
