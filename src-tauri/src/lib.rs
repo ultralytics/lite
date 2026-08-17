@@ -547,6 +547,42 @@ fn directory_key(name: &str, path: &str, is_directory: bool) -> (u8, String, Str
     )
 }
 
+fn page_directory_entry(
+    page: &mut BTreeMap<(u8, String, String), FileEntry>,
+    has_more: &mut bool,
+    after: &Option<(u8, String, String)>,
+    entry: FileEntry,
+) {
+    let key = directory_key(&entry.name, &entry.path, entry.is_directory);
+    if after.as_ref().is_some_and(|after| key <= *after) {
+        return;
+    }
+    page.insert(key, entry);
+    if page.len() > DIRECTORY_PAGE_SIZE {
+        page.pop_last();
+        *has_more = true;
+    }
+}
+
+fn directory_listing(
+    page: BTreeMap<(u8, String, String), FileEntry>,
+    has_more: bool,
+) -> DirectoryListing {
+    let entries = page.into_values().collect::<Vec<_>>();
+    let next_cursor = has_more.then(|| {
+        let entry = entries.last().expect("a truncated page is not empty");
+        DirectoryCursor {
+            name: entry.name.clone(),
+            path: entry.path.clone(),
+            is_directory: entry.is_directory,
+        }
+    });
+    DirectoryListing {
+        entries,
+        next_cursor,
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitStatus {
@@ -3645,6 +3681,12 @@ fn ssh_agent_args(launch: &SessionCommand<'_>) -> Result<Vec<String>, String> {
             session_id,
             provider_session_id,
         )?);
+        if agent == "claude" {
+            args.extend([
+                "--settings".into(),
+                r#"{"preferredNotifChannel":"iterm2"}"#.into(),
+            ]);
+        }
         return Ok(args);
     }
     args.extend([
@@ -3721,12 +3763,17 @@ async fn spawn_session(
     cols: u16,
     rows: u16,
 ) -> Result<Option<String>, String> {
-    let mut ssh = ssh_root(&roots, &root_id)?;
-    let root_exists = roots
+    let root = roots
         .0
         .lock()
         .map_err(|error| error.to_string())?
-        .contains_key(&root_id);
+        .get(&root_id)
+        .cloned();
+    let root_exists = root.is_some();
+    let mut ssh = match root {
+        Some(WorkspaceRoot::Ssh(root)) => Some(root),
+        _ => None,
+    };
     match (ssh.as_ref(), host.as_deref(), root_exists) {
         (Some(root), Some(host), _) if root.host == host => {}
         (None, None, _) => {}
@@ -4386,15 +4433,7 @@ async fn list_directory(
                             is_directory: record[2] == b"d",
                             is_symlink: record[2] == b"l",
                         };
-                        let key = directory_key(&entry.name, &entry.path, entry.is_directory);
-                        if after.as_ref().is_some_and(|after| key <= *after) {
-                            continue;
-                        }
-                        page.insert(key, entry);
-                        if page.len() > DIRECTORY_PAGE_SIZE {
-                            page.pop_last();
-                            has_more = true;
-                        }
+                        page_directory_entry(&mut page, &mut has_more, &after, entry);
                     }
                     pending.drain(..consumed);
                     Ok(())
@@ -4403,19 +4442,7 @@ async fn list_directory(
             if !pending.is_empty() || !fields.is_empty() {
                 return Err("Could not read remote directory".into());
             }
-            let entries = page.into_values().collect::<Vec<_>>();
-            let next_cursor = has_more.then(|| {
-                let entry = entries.last().expect("a truncated page is not empty");
-                DirectoryCursor {
-                    name: entry.name.clone(),
-                    path: entry.path.clone(),
-                    is_directory: entry.is_directory,
-                }
-            });
-            Ok(DirectoryListing {
-                entries,
-                next_cursor,
-            })
+            Ok(directory_listing(page, has_more))
         })
         .await
         .map_err(|error| error.to_string())?;
@@ -4440,29 +4467,9 @@ async fn list_directory(
             is_directory: file_type.is_dir(),
             is_symlink: file_type.is_symlink(),
         };
-        let key = directory_key(&entry.name, &entry.path, entry.is_directory);
-        if after.as_ref().is_some_and(|after| key <= *after) {
-            continue;
-        }
-        page.insert(key, entry);
-        if page.len() > DIRECTORY_PAGE_SIZE {
-            page.pop_last();
-            has_more = true;
-        }
+        page_directory_entry(&mut page, &mut has_more, &after, entry);
     }
-    let entries = page.into_values().collect::<Vec<_>>();
-    let next_cursor = has_more.then(|| {
-        let entry = entries.last().expect("a truncated page is not empty");
-        DirectoryCursor {
-            name: entry.name.clone(),
-            path: entry.path.clone(),
-            is_directory: entry.is_directory,
-        }
-    });
-    Ok(DirectoryListing {
-        entries,
-        next_cursor,
-    })
+    Ok(directory_listing(page, has_more))
 }
 
 #[tauri::command]

@@ -162,15 +162,9 @@ export function NewSessionDialog({
   // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
   // would name.
   useEffect(() => {
-    if (!isOpen || !path.trim()) {
+    if (!isOpen || remote || !path.trim()) {
       setRepo(null);
       setFolder("checking");
-      setWorktree("");
-      return;
-    }
-    if (remote) {
-      setFolder("checking");
-      setRepo(null);
       setWorktree("");
       return;
     }
@@ -206,7 +200,7 @@ export function NewSessionDialog({
     setError("");
     setAvailability({});
     setAuth(undefined);
-    if (!remote)
+    if (!remote) {
       void invoke<DirectoryGrant | null>("default_directory")
         .then((selected) => {
           if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
@@ -218,7 +212,6 @@ export function NewSessionDialog({
         .catch((reason) => {
           if (!disposed) setError(String(reason));
         });
-    if (!remote) {
       void invoke<ProviderAuth[]>("provider_auth")
         .then((result) => {
           if (!disposed) setAuth(result);

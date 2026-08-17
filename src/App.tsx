@@ -759,13 +759,14 @@ function groupSessions(
   const groups = new Map<string, SessionGroup>();
   for (const session of sessions) {
     const value = sessionGroupKey(session, grouping, attention, working);
+    const groupPath = grouping === "repository" ? (session.repo ?? session.cwd) : session.cwd;
     const status = grouping === "state" ? SESSION_STATUS[value as keyof typeof SESSION_STATUS] : undefined;
     const group = groups.get(value) ?? {
       name:
         grouping === "state"
           ? SESSION_STATE_LABELS[value as keyof typeof SESSION_STATE_LABELS]
           : (grouping === "directory" || grouping === "repository") && session.host
-            ? `${session.host}:${folderName(session.repo ?? session.cwd) || session.repo || session.cwd}`
+            ? `${session.host}:${folderName(groupPath) || groupPath}`
             : folderName(value) || value,
       key: `${grouping}:${value}`,
       title: status?.label ?? value,
@@ -2994,16 +2995,9 @@ function App() {
                     <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
                   {selected.host ? (
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <span className="block min-w-0 max-w-full truncate font-mono text-[11px] text-muted-foreground" />
-                        }
-                      >
-                        {selected.host}:{selected.cwd}
-                      </TooltipTrigger>
-                      <TooltipContent>Remote workspace</TooltipContent>
-                    </Tooltip>
+                    <span className="block min-w-0 max-w-full truncate font-mono text-[11px] text-muted-foreground">
+                      {selected.host}:{selected.cwd}
+                    </span>
                   ) : (
                     <button
                       type="button"
