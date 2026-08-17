@@ -4925,7 +4925,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             let output = ssh_bounded_git_output(
                 &root,
                 &status_command,
-                &format!("head -z -n {}", MAX_GIT_CHANGES + 1),
+                &format!("head -z -n {}", 2 * (MAX_GIT_CHANGES + 1)),
             )?;
             let mut changes = Vec::new();
             let mut records = output.split(|byte| *byte == 0);
