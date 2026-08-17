@@ -436,7 +436,8 @@ export function NewSessionDialog({
                   }}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Uses your SSH config and agent sign-in on the Linux server.
+                  Uses your SSH config and agent sign-in on the Linux server. Connect once from a terminal first; key
+                  authentication must be non-interactive.
                 </p>
               </div>
             ) : null}

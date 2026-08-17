@@ -1230,14 +1230,24 @@ fn ssh_provider_session_ids(root: &SshRoot, agent: &str) -> Result<HashSet<Strin
         .collect())
 }
 
-fn ssh_native_session_exists(root: &SshRoot, agent: &str, id: &str) -> Result<bool, String> {
+enum RemoteSessionState {
+    Missing,
+    Marker,
+    Ready,
+}
+
+fn ssh_native_session_state(
+    root: &SshRoot,
+    agent: &str,
+    id: &str,
+) -> Result<RemoteSessionState, String> {
     if !is_provider_session_id(id) {
-        return Ok(false);
+        return Ok(RemoteSessionState::Missing);
     }
     let (variable, fallback) = provider_home_parts(agent).ok_or("Unknown session type")?;
     let script = match agent {
         "claude" => format!(
-            "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/projects\" -type f -name {} -exec grep -m 1 -E -q -- '\"type\"[[:space:]]*:[[:space:]]*\"(user|assistant|system)\"' {{}} \\; -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
+            "home=${{{variable}:-$HOME/{fallback}}}; file=$(find \"$home/projects\" -type f -name {} -print -quit 2>/dev/null); if test -z \"$file\"; then printf 0; elif grep -m 1 -E -q -- '\"type\"[[:space:]]*:[[:space:]]*\"(user|assistant|system)\"' \"$file\"; then printf 2; else printf 1; fi",
             posix_quote(&format!("{id}.jsonl")),
         ),
         "gemini" => format!(
@@ -1252,9 +1262,14 @@ fn ssh_native_session_exists(root: &SshRoot, agent: &str, id: &str) -> Result<bo
             "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/projects\" -type f -path {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
             posix_quote(&format!("*/chats/{id}.jsonl")),
         ),
-        _ => return Ok(false),
+        _ => return Ok(RemoteSessionState::Missing),
     };
-    Ok(ssh_text(root, &script)? == "1")
+    match ssh_text(root, &script)?.as_str() {
+        "0" => Ok(RemoteSessionState::Missing),
+        "1" if agent == "claude" => Ok(RemoteSessionState::Marker),
+        "1" | "2" => Ok(RemoteSessionState::Ready),
+        _ => Err("Could not inspect the remote session".into()),
+    }
 }
 
 fn load_codex_server(app: &AppHandle) -> Result<CodexServer, String> {
@@ -3796,12 +3811,26 @@ async fn spawn_session(
             .as_deref()
             .unwrap_or(&session_id)
             .to_owned();
-        if let Ok(Ok(exists)) = tauri::async_runtime::spawn_blocking(move || {
-            ssh_native_session_exists(&root, &remote_agent, &remote_id)
+        if let Ok(Ok(state)) = tauri::async_runtime::spawn_blocking(move || {
+            ssh_native_session_state(&root, &remote_agent, &remote_id)
         })
         .await
         {
-            resume = exists;
+            match state {
+                RemoteSessionState::Ready => {}
+                RemoteSessionState::Missing => resume = false,
+                RemoteSessionState::Marker => {
+                    resume = false;
+                    let fresh = uuid::Uuid::new_v4().to_string();
+                    update_provider_session(
+                        &app,
+                        &provider_sessions,
+                        &session_id,
+                        Some(fresh.clone()),
+                    )?;
+                    provider_session_id = Some(fresh);
+                }
+            }
         }
     }
     // The tab keeps the id it was given so the next launch reopens the same conversation, and a
@@ -3864,7 +3893,8 @@ async fn spawn_session(
         stop_pty(&mut session)?;
     }
 
-    let remote_sessions = if (agent == "codex" || agent == "kimi")
+    let remote_sessions = if (agent == "codex"
+        || (agent == "kimi" && provider_session_id.is_some()))
         && let Some(root) = ssh.clone()
     {
         let discovery_agent = agent.clone();

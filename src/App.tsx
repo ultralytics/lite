@@ -3004,7 +3004,7 @@ function App() {
                           className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground enabled:hover:text-foreground"
                           aria-label={selected.host ? undefined : `Open ${selected.cwd} in file browser`}
                           disabled={Boolean(selected.host)}
-                          title={hostPath(selected, selected.cwd)}
+                          title={selected.host ? hostPath(selected, selected.cwd) : undefined}
                           onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
                         />
                       }
