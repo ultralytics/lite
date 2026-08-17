@@ -1641,10 +1641,10 @@ async fn use_ssh_directory(
     path: String,
 ) -> Result<DirectoryGrant, String> {
     let host = host.trim().to_owned();
-    let path = path.trim();
-    if path.is_empty() {
+    if path.trim().is_empty() {
         return Err("Enter a folder on the SSH host".into());
     }
+    let path = path.as_str();
     let requested = if path == "~" {
         "\"$HOME\"".to_owned()
     } else if let Some(path) = path.strip_prefix("~/") {
@@ -4922,11 +4922,23 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     scope_text,
                 ],
             );
-            let output = ssh_bounded_git_output(
+            let mut output = ssh_bounded_git_output(
                 &root,
                 &status_command,
-                &format!("head -z -n {}", 2 * (MAX_GIT_CHANGES + 1)),
+                &format!(
+                    "head -z -n {} | head -c {MAX_SSH_OUTPUT_BYTES}",
+                    2 * (MAX_GIT_CHANGES + 1)
+                ),
             )?;
+            let byte_truncated = output.len() == MAX_SSH_OUTPUT_BYTES as usize;
+            if byte_truncated {
+                output.truncate(
+                    output
+                        .iter()
+                        .rposition(|byte| *byte == 0)
+                        .map_or(0, |position| position + 1),
+                );
+            }
             let mut changes = Vec::new();
             let mut records = output.split(|byte| *byte == 0);
             while let Some(record) = records.next() {
@@ -4946,7 +4958,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     break;
                 }
             }
-            let changes_truncated = changes.len() > MAX_GIT_CHANGES;
+            let changes_truncated = byte_truncated || changes.len() > MAX_GIT_CHANGES;
             changes.truncate(MAX_GIT_CHANGES);
             changes.retain(|change| Path::new(&change.path).starts_with(scope));
             let base = ssh_git_base(&root, &repository)?;

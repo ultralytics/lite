@@ -1624,6 +1624,7 @@ function App() {
   const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const recoveries = useRef(new Map<string, Promise<void>>());
   const recoveryFailures = useRef(new Set<string>());
+  const directoryUpdates = useRef(new Map<string, Promise<void>>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
   // covered real changes (true) or only ignored files and submodules (false); read at cleanup.
   const forceWorktree = useRef(new Map<string, boolean>());
@@ -2027,13 +2028,23 @@ function App() {
   const markDirectory = useCallback((sessionId: string, path: string) => {
     const session = sessionsRef.current.find((item) => item.id === sessionId);
     if (session?.agent !== "shell" || session.cwd === path) return;
-    void invoke<{ id: string; path: string }>("follow_directory", { rootId: session.rootId, path })
-      .then((grant) => {
+    const update = (directoryUpdates.current.get(sessionId) ?? Promise.resolve())
+      .then(async () => {
+        const current = sessionsRef.current.find((item) => item.id === sessionId);
+        if (!current || current.cwd === path) return;
+        const grant = await invoke<{ id: string; path: string }>("follow_directory", {
+          rootId: current.rootId,
+          path,
+        });
         setSessions((current) =>
           current.map((item) => (item.id === sessionId ? { ...item, cwd: grant.path, rootId: grant.id } : item)),
         );
       })
       .catch((reason) => setError(String(reason)));
+    directoryUpdates.current.set(sessionId, update);
+    void update.then(() => {
+      if (directoryUpdates.current.get(sessionId) === update) directoryUpdates.current.delete(sessionId);
+    });
   }, []);
 
   useEffect(() => {
