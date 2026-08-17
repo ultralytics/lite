@@ -123,6 +123,7 @@ import "./App.css";
 const STORAGE_KEY = "lite.sessions.v1";
 const WORKING_KEY = "lite.working.v1";
 const SESSION_VIEW_KEY = "lite.sessionView.v1";
+const REMOTE_SSH_KEY = "lite.remoteSsh.v1";
 type SessionGrouping = "none" | "repository" | "directory" | "state";
 type SessionSort = "newest" | "oldest" | "name-asc" | "name-desc" | "manual";
 const SESSION_GROUPINGS: { value: SessionGrouping; label: string }[] = [
@@ -732,9 +733,17 @@ interface SessionGroup {
   sessions: Session[];
 }
 
+function hostPath(session: Session, path: string) {
+  return session.host ? `${session.host}:${path}` : path;
+}
+
+function sessionGroupPath(session: Session, grouping: SessionGrouping) {
+  return grouping === "repository" ? (session.repo ?? session.cwd) : session.cwd;
+}
+
 function sessionGroupKey(session: Session, grouping: SessionGrouping, attention: Set<string>, working: Set<string>) {
-  if (grouping === "repository") return session.repo ?? session.cwd;
-  if (grouping === "directory") return session.cwd;
+  if (grouping === "repository" || grouping === "directory")
+    return hostPath(session, sessionGroupPath(session, grouping));
   if (grouping === "state") {
     if (!session.running) return "disconnected";
     if (attention.has(session.id)) return "attention";
@@ -755,12 +764,13 @@ function groupSessions(
   const groups = new Map<string, SessionGroup>();
   for (const session of sessions) {
     const value = sessionGroupKey(session, grouping, attention, working);
+    const groupPath = sessionGroupPath(session, grouping);
     const status = grouping === "state" ? SESSION_STATUS[value as keyof typeof SESSION_STATUS] : undefined;
     const group = groups.get(value) ?? {
       name:
         grouping === "state"
           ? SESSION_STATE_LABELS[value as keyof typeof SESSION_STATE_LABELS]
-          : folderName(value) || value,
+          : hostPath(session, folderName(groupPath) || groupPath),
       key: `${grouping}:${value}`,
       title: status?.label ?? value,
       sessions: [],
@@ -1097,7 +1107,7 @@ function SessionSwitcher({
                   <ItemContent>
                     <ItemTitle className="w-full text-xs">{session.name}</ItemTitle>
                     <ItemDescription className="truncate font-mono text-[10px]">
-                      {shortPath(session.cwd)} · {sessionLabel(session)}
+                      {sessionPath(session)} · {sessionLabel(session)}
                     </ItemDescription>
                   </ItemContent>
                 </Item>
@@ -1429,9 +1439,9 @@ function SessionRow({
           </div>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
-            title={session.cwd}
+            title={hostPath(session, session.cwd)}
           >
-            {shortPath(session.cwd)}
+            {sessionPath(session)}
           </div>
         </div>
       )}
@@ -1515,6 +1525,10 @@ function shortPath(cwd: string) {
   return parts.slice(-2).join("/");
 }
 
+function sessionPath(session: Session) {
+  return hostPath(session, shortPath(session.cwd));
+}
+
 // A tab named after its folder says nothing, and several in one folder say the same nothing, so the
 // session says what it is about: the window title its program sets, or the first thing asked of a
 // program that sets none. A leading glyph is a spinner or a status mark rather than part of the
@@ -1556,6 +1570,7 @@ function App() {
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
+  const [remoteSsh, setRemoteSsh] = useState(() => localStorage.getItem(REMOTE_SSH_KEY) === "true");
   const [closeWarningCount, setCloseWarningCount] = useState(0);
   const [closingApp, setClosingApp] = useState(false);
   const [closingAll, setClosingAll] = useState(false);
@@ -1624,6 +1639,7 @@ function App() {
   const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const recoveries = useRef(new Map<string, Promise<void>>());
   const recoveryFailures = useRef(new Set<string>());
+  const directoryUpdates = useRef(new Map<string, Promise<void>>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
   // covered real changes (true) or only ignored files and submodules (false); read at cleanup.
   const forceWorktree = useRef(new Map<string, boolean>());
@@ -2026,14 +2042,27 @@ function App() {
 
   const markDirectory = useCallback((sessionId: string, path: string) => {
     const session = sessionsRef.current.find((item) => item.id === sessionId);
-    if (session?.agent !== "shell" || session.cwd === path) return;
-    void invoke<{ id: string; path: string }>("follow_directory", { rootId: session.rootId, path })
-      .then((grant) => {
+    if (session?.agent !== "shell") return;
+    const pending = directoryUpdates.current.get(sessionId);
+    // A return to the current cwd still belongs behind an in-flight change.
+    if (!pending && session.cwd === path) return;
+    const update = (pending ?? Promise.resolve())
+      .then(async () => {
+        const current = sessionsRef.current.find((item) => item.id === sessionId);
+        if (!current) return;
+        const grant = await invoke<{ id: string; path: string }>("follow_directory", {
+          rootId: current.rootId,
+          path,
+        });
         setSessions((current) =>
           current.map((item) => (item.id === sessionId ? { ...item, cwd: grant.path, rootId: grant.id } : item)),
         );
       })
       .catch((reason) => setError(String(reason)));
+    directoryUpdates.current.set(sessionId, update);
+    void update.then(() => {
+      if (directoryUpdates.current.get(sessionId) === update) directoryUpdates.current.delete(sessionId);
+    });
   }, []);
 
   useEffect(() => {
@@ -2147,6 +2176,11 @@ function App() {
     setKeepAwake(enabled);
   }, []);
 
+  const changeRemoteSsh = useCallback((enabled: boolean) => {
+    localStorage.setItem(REMOTE_SSH_KEY, String(enabled));
+    setRemoteSsh(enabled);
+  }, []);
+
   const launch = useCallback(async (session: Session, resume: boolean, initialPrompt?: string) => {
     if (runs.current.has(session.id)) return true;
     recoveryFailures.current.delete(session.id);
@@ -2174,6 +2208,7 @@ function App() {
         runId,
         rootId: session.rootId,
         cwd: session.cwd,
+        host: session.host ?? null,
         providerSessionId: session.providerSessionId,
         agent: session.agent,
         provider: session.provider,
@@ -2961,19 +2996,23 @@ function App() {
                     </TooltipTrigger>
                     <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
-                  <button
-                    type="button"
-                    className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
-                    aria-label={`Open ${selected.cwd} in file browser`}
-                    onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
-                  >
-                    <Tooltip>
-                      <TooltipTrigger render={<span className="block w-fit max-w-full truncate" />}>
-                        {selected.cwd}
-                      </TooltipTrigger>
-                      <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>
-                    </Tooltip>
-                  </button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground enabled:hover:text-foreground"
+                          aria-label={selected.host ? undefined : `Open ${selected.cwd} in file browser`}
+                          disabled={Boolean(selected.host)}
+                          title={selected.host ? hostPath(selected, selected.cwd) : undefined}
+                          onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
+                        />
+                      }
+                    >
+                      <span className="block w-fit max-w-full truncate">{hostPath(selected, selected.cwd)}</span>
+                    </TooltipTrigger>
+                    {selected.host ? null : <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>}
+                  </Tooltip>
                 </>
               ) : (
                 <span className="text-sm font-semibold">Lite</span>
@@ -3272,7 +3311,7 @@ function App() {
                               onRecover={() => recoverSession(session)}
                               onPrompt={(text) => {
                                 const agent = session.agent === "shell" ? commandAgent(text) : undefined;
-                                if (agent)
+                                if (agent && !session.host)
                                   void invoke("watch_shell_agent", { sessionId: session.id, agent }).catch((reason) =>
                                     console.error(`Lite could not follow the agent in session ${session.id}:`, reason),
                                   );
@@ -3736,6 +3775,7 @@ function App() {
           <NewSessionDialog
             open={newSessionOpen}
             choice={newSessionChoice}
+            remoteSsh={remoteSsh}
             onOpenChange={(open) => {
               setNewSessionOpen(open);
               // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
@@ -3801,6 +3841,8 @@ function App() {
             onNotificationsChange={changeNotifications}
             keepAwake={keepAwake}
             onKeepAwakeChange={changeKeepAwake}
+            remoteSsh={remoteSsh}
+            onRemoteSshChange={changeRemoteSsh}
             theme={theme}
             onThemeChange={setTheme}
             versionBadge={

@@ -391,7 +391,7 @@ function FileTree({
   const [children, setChildren] = useState<Record<string, DirectoryListing & { after: DirectoryCursor | null }>>({});
   // The root is the folder the session works in; showing it shut asks for a click to say what the
   // panel is already for, so it opens with the tree it was asked to show.
-  const [expanded, setExpanded] = useState(() => new Set<string>([root]));
+  const [expanded, setExpanded] = useState(() => new Set<string>());
   const loading = useRef(new Set<string>());
   const [loadingPaths, setLoadingPaths] = useState(() => new Set<string>());
   const [expandingAll, setExpandingAll] = useState(false);
@@ -423,6 +423,7 @@ function FileTree({
 
   useEffect(() => {
     let mounted = true;
+    setExpanded((current) => including(current, root));
     void load(root).finally(() => {
       if (mounted) onLoad("files");
     });
@@ -1450,6 +1451,7 @@ function GitPanel({
 
 // Each harness and provider reports what it reports; Lite never fills the gap with a number of its own.
 function missingUsage(session: Session): string {
+  if (session.host) return "Remote sessions report no provider usage.";
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
     return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
@@ -1476,6 +1478,7 @@ function UsagePanel({
       agent: session.agent,
       provider: session.provider,
       sessionId: session.id,
+      host: session.host,
     })
       .then((next) => {
         if (!disposed) {
@@ -1492,7 +1495,7 @@ function UsagePanel({
     return () => {
       disposed = true;
     };
-  }, [onLoad, session.agent, session.provider, session.id]);
+  }, [onLoad, session.agent, session.provider, session.id, session.host]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">

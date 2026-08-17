@@ -32,6 +32,8 @@ const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
 const DEEPSEEK_REASONING_KEY = "lite.newSession.deepseekReasoning.v1";
 const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
+const REMOTE_KEY = "lite.newSession.remote.v1";
+const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
 const DEEPSEEK_MODELS = [
   { value: "deepseek-v4-flash", label: "Flash" },
   { value: "deepseek-v4-pro", label: "Pro" },
@@ -39,6 +41,10 @@ const DEEPSEEK_MODELS = [
 type DeepSeekModel = (typeof DEEPSEEK_MODELS)[number]["value"];
 const DEEPSEEK_REASONING = ["low", "high", "max"] as const;
 type DeepSeekReasoning = (typeof DEEPSEEK_REASONING)[number];
+
+function remoteUnsupported(remote: boolean, choice: (typeof SESSION_CHOICES)[number]) {
+  return remote && choice.agent === "codex" && choice.provider !== "openai";
+}
 
 let updateChecks: Promise<Record<string, boolean | null>> | undefined;
 
@@ -61,6 +67,7 @@ const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground upp
 interface DirectoryGrant {
   id: string;
   path: string;
+  host: string | null;
 }
 
 interface Repository {
@@ -84,12 +91,14 @@ interface Availability {
 export function NewSessionDialog({
   open: isOpen,
   choice: chosen,
+  remoteSsh,
   onOpenChange,
   onCreate,
 }: {
   open: boolean;
   // A choice made outside the dialog — a welcome tile — which the dialog opens on.
   choice?: string;
+  remoteSsh: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
 }) {
@@ -107,6 +116,9 @@ export function NewSessionDialog({
   });
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
+  const [remoteSelected, setRemoteSelected] = useState(() => localStorage.getItem(REMOTE_KEY) === "true");
+  const remote = remoteSsh && remoteSelected;
+  const [host, setHost] = useState(() => localStorage.getItem(SSH_HOST_KEY) ?? "");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
@@ -126,16 +138,17 @@ export function NewSessionDialog({
     localStorage.getItem(NAME_KEY) === "true" ? "" : undefined,
   );
   const choice = SESSION_CHOICES.find((option) => option.id === choiceId) ?? SESSION_CHOICES[0];
+  const unsupported = remoteUnsupported(remote, choice);
   const status = availability[choice.id];
   useEffect(() => {
     if (isOpen && chosen) setChoiceId(chosen);
   }, [isOpen, chosen]);
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
-  const missing = status && !status.available ? status : undefined;
+  const missing = !remote && status && !status.available ? status : undefined;
   // The first explicit open asks every harness in parallel. The answer is kept for this app run, so
   // reopening the dialog does not repeat five version processes and five network requests.
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || remote) return;
     let disposed = false;
     void checkAgentUpdates().then((result) => {
       if (!disposed) setUpdates(result);
@@ -143,13 +156,13 @@ export function NewSessionDialog({
     return () => {
       disposed = true;
     };
-  }, [isOpen]);
+  }, [isOpen, remote]);
 
   // A typed path settles for a moment before it is probed, so a folder is never looked up once per
   // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
   // would name.
   useEffect(() => {
-    if (!isOpen || !path.trim()) {
+    if (!isOpen || remote || !path.trim()) {
       setRepo(null);
       setFolder("checking");
       setWorktree("");
@@ -179,7 +192,7 @@ export function NewSessionDialog({
       disposed = true;
       window.clearTimeout(probe);
     };
-  }, [isOpen, path]);
+  }, [isOpen, path, remote]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -187,36 +200,38 @@ export function NewSessionDialog({
     setError("");
     setAvailability({});
     setAuth(undefined);
-    void invoke<DirectoryGrant | null>("default_directory")
-      .then((selected) => {
-        if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
-        else if (selected) {
-          setDirectory(selected);
-          setPath(selected.path);
-        }
-      })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
-      });
-    void invoke<ProviderAuth[]>("provider_auth")
-      .then((result) => {
-        if (!disposed) setAuth(result);
-      })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
-      });
-    // Installation and provider setup can change while the app runs, so refresh them on each open.
-    for (const option of SESSION_CHOICES) {
-      void invoke<Availability>("agent_availability", { agent: option.agent, provider: option.provider })
-        .then((result) => {
-          if (!disposed) setAvailability((current) => ({ ...current, [option.id]: result }));
+    if (!remote) {
+      void invoke<DirectoryGrant | null>("default_directory")
+        .then((selected) => {
+          if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
+          else if (selected) {
+            setDirectory(selected);
+            setPath(selected.path);
+          }
         })
-        .catch(() => {});
+        .catch((reason) => {
+          if (!disposed) setError(String(reason));
+        });
+      void invoke<ProviderAuth[]>("provider_auth")
+        .then((result) => {
+          if (!disposed) setAuth(result);
+        })
+        .catch((reason) => {
+          if (!disposed) setError(String(reason));
+        });
+      // Installation and provider setup can change while the app runs, so refresh them on each open.
+      for (const option of SESSION_CHOICES) {
+        void invoke<Availability>("agent_availability", { agent: option.agent, provider: option.provider })
+          .then((result) => {
+            if (!disposed) setAvailability((current) => ({ ...current, [option.id]: result }));
+          })
+          .catch(() => {});
+      }
     }
     return () => {
       disposed = true;
     };
-  }, [isOpen]);
+  }, [isOpen, remote]);
 
   async function chooseFolder() {
     setError("");
@@ -236,9 +251,13 @@ export function NewSessionDialog({
   }
 
   async function grant(): Promise<DirectoryGrant | undefined> {
-    if (directory && directory.path === path.trim()) return directory;
+    if (directory && directory.path === path.trim() && directory.host === (remote ? host.trim() : null))
+      return directory;
     try {
-      const selected = await invoke<DirectoryGrant>("use_directory", { path });
+      const selected = await invoke<DirectoryGrant>(remote ? "use_ssh_directory" : "use_directory", {
+        path,
+        ...(remote ? { host: host.trim() } : {}),
+      });
       if (directory) void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(selected);
       setPath(selected.path);
@@ -269,13 +288,14 @@ export function NewSessionDialog({
       let worktree = false;
       // The probe's answer can lag the folder field, so the granted folder is asked directly:
       // the worktree and the recorded repository always describe where the session will run.
-      let root: string | null;
-      try {
-        root = (await invoke<DirectoryProbe>("directory_probe", { path: folder.path })).repository?.root ?? null;
-      } catch (reason) {
-        setError(String(reason));
-        return;
-      }
+      let root: string | null = null;
+      if (!remote)
+        try {
+          root = (await invoke<DirectoryProbe>("directory_probe", { path: folder.path })).repository?.root ?? null;
+        } catch (reason) {
+          setError(String(reason));
+          return;
+        }
       // The toggle must still describe this folder: root === repo fails when the folder changed
       // after the probe that enabled the option, and a worktree is never made on a stale answer.
       if (root && root === repo && worktreeOn) {
@@ -298,6 +318,7 @@ export function NewSessionDialog({
         model: choice.provider === "deepseek" ? deepseekModel : undefined,
         reasoningEffort: choice.provider === "deepseek" ? deepseekReasoning : undefined,
         cwd: folder.path,
+        host: folder.host ?? undefined,
         rootId: folder.id,
         name: name || defaultSessionName(folder.path),
         running: false,
@@ -350,9 +371,10 @@ export function NewSessionDialog({
   // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
   // and a second click on the agent already chosen. An agent that is not installed reads them all as a
   // request to install it, which is the only one of the two it can answer.
-  const folderReady =
-    path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim());
-  const ready = !installing && !creating && Boolean(missing || folderReady);
+  const folderReady = remote
+    ? host.trim() && path.trim()
+    : path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim());
+  const ready = !unsupported && !installing && !creating && Boolean(missing || folderReady);
   function start() {
     if (missing?.installable) void install();
     else if (missing)
@@ -376,6 +398,49 @@ export function NewSessionDialog({
             <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
           </DialogHeader>
           <DialogBody className="min-w-0 space-y-4">
+            {remoteSsh ? (
+              <div className="flex items-center gap-2">
+                <Label htmlFor="remote-workspace" className={SECTION}>
+                  Remote SSH
+                </Label>
+                <Switch
+                  id="remote-workspace"
+                  checked={remote}
+                  disabled={creating}
+                  onCheckedChange={(checked) => {
+                    localStorage.setItem(REMOTE_KEY, String(checked));
+                    if (directory) void invoke("revoke_directory", { rootId: directory.id });
+                    setDirectory(undefined);
+                    setPath("");
+                    setRemoteSelected(checked);
+                  }}
+                />
+              </div>
+            ) : null}
+            {remote ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="ssh-host" className={SECTION}>
+                  SSH host
+                </Label>
+                <Input
+                  id="ssh-host"
+                  value={host}
+                  className="font-mono"
+                  placeholder="user@server or SSH config name"
+                  name="ssh-host"
+                  autoComplete="off"
+                  spellCheck={false}
+                  onChange={(event) => {
+                    setHost(event.target.value);
+                    localStorage.setItem(SSH_HOST_KEY, event.target.value);
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Uses your SSH config and agent sign-in on the Linux server. Connect once from a terminal first; key
+                  authentication must be non-interactive.
+                </p>
+              </div>
+            ) : null}
             <div className="space-y-1.5">
               <Label htmlFor="project-folder" className={SECTION}>
                 Project folder
@@ -386,7 +451,7 @@ export function NewSessionDialog({
                     id="project-folder"
                     value={path}
                     className={`pr-8 font-mono ${folder === "directory" ? "border-success focus-visible:border-success focus-visible:ring-success/20" : folder === "missing" ? "border-amber-500 focus-visible:border-amber-500 focus-visible:ring-amber-500/20" : ""}`}
-                    placeholder="Type or choose a project folder…"
+                    placeholder={remote ? "/home/user/project" : "Type or choose a project folder…"}
                     name="project-folder"
                     autoComplete="off"
                     aria-invalid={folder === "other" || undefined}
@@ -422,6 +487,7 @@ export function NewSessionDialog({
                   size="icon"
                   tooltip="Browse"
                   aria-label="Browse for a folder"
+                  disabled={remote}
                   onClick={() => void chooseFolder()}
                 >
                   <FolderOpen />
@@ -509,6 +575,7 @@ export function NewSessionDialog({
               <div className="grid min-w-0 grid-cols-2 gap-2">
                 {SESSION_CHOICES.map((option) => {
                   const active = choiceId === option.id;
+                  const unsupported = remoteUnsupported(remote, option);
                   const deepseek = option.id === "deepseek";
                   const state = availability[option.id];
                   const update = updates[option.agent];
@@ -536,7 +603,7 @@ export function NewSessionDialog({
                         variant={active && !deepseek ? "secondary" : active ? "ghost" : "outline"}
                         className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && deepseek ? "rounded-b-none" : ""}`}
                         aria-pressed={active}
-                        disabled={Boolean(installing)}
+                        disabled={Boolean(installing) || unsupported}
                         title={"note" in option ? option.note : sessionLabel(option)}
                         onClick={() => {
                           if (active && ready) start();
@@ -551,9 +618,15 @@ export function NewSessionDialog({
                           className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
                           <span className="block truncate">{sessionLabel(option)}</span>
-                          {state && !state.available ? (
+                          {unsupported || remote || (state && !state.available) ? (
                             <span className="block truncate text-xs font-normal text-muted-foreground">
-                              {state.installable ? "Not installed" : "Setup required"}
+                              {unsupported
+                                ? "Local workspace only"
+                                : remote
+                                  ? `Runs on ${host.trim() || "SSH host"}`
+                                  : state?.installable
+                                    ? "Not installed"
+                                    : "Setup required"}
                             </span>
                           ) : authProvider ? (
                             <ProviderAuthDescription provider={authProvider} status={authStatus} />
@@ -656,7 +729,7 @@ export function NewSessionDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!ready}>
-              {!status || (installing && missing?.installable) ? <Spinner /> : null}
+              {(!remote && !status) || (installing && missing?.installable) ? <Spinner /> : null}
               {installing && missing?.installable
                 ? `Installing ${sessionLabel(choice)}…`
                 : missing?.installable
