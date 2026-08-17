@@ -1218,7 +1218,7 @@ fn ssh_provider_session_ids(root: &SshRoot, agent: &str) -> Result<HashSet<Strin
             format!(
                 "home=${{{variable}:-$HOME/{fallback}}}; index=\"$home/workspaces.json\"; test -f \"$index\" || exit 0; workspace=$(tr -d '\\n' < \"$index\" | sed 's/}},[[:space:]]*\"/}}\\n\"/g; s/\"root\"[[:space:]]*:[[:space:]]*/\"root\":/g' | grep -F -- {} | sed -n {} | head -n 1); sessions=\"$home/sessions/$workspace\"; test -n \"$workspace\" && test -d \"$sessions\" || exit 0; find \"$sessions\" -mindepth 1 -maxdepth 1 -type d {newest}",
                 posix_quote(&format!("\"root\":{cwd}")),
-                posix_quote(r#"s/.*"\(wd_[^"]*\)"[[:space:]]*:[[:space:]]*{.*/\1/p"#),
+                posix_quote(r#"s/.*"\([A-Za-z0-9_-]*\)"[[:space:]]*:[[:space:]]*{.*/\1/p"#),
             )
         }
         _ => return Ok(HashSet::new()),
@@ -4487,7 +4487,7 @@ async fn write_text_file(
             let script = scoped_ssh_script(
                 &root,
                 &path,
-                "set -e; test -f \"$path\"; parent=${path%/*}; test -n \"$parent\" || parent=/; tmp=$(mktemp \"$parent\"/.lite.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT; cat > \"$tmp\"; chmod --reference=\"$path\" \"$tmp\"; mv -- \"$tmp\" \"$path\"; trap - EXIT",
+                "set -e; test -f \"$path\" || { printf '%s\\n' 'Only files can be edited' >&2; exit 1; }; parent=${path%/*}; test -n \"$parent\" || parent=/; tmp=$(mktemp \"$parent\"/.lite.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT; cat > \"$tmp\"; chmod --reference=\"$path\" \"$tmp\"; mv -- \"$tmp\" \"$path\"; trap - EXIT",
             )?;
             ssh_stream(&root, &script, Some(contents.as_bytes()), |_| Ok(()))
         })
