@@ -37,6 +37,7 @@ const MAX_FILE_BYTES: u64 = 500_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
 const MAX_GIT_DIFF_BYTES: u64 = 1_000_000;
+const MAX_SSH_OUTPUT_BYTES: u64 = 2_000_000;
 const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
@@ -451,8 +452,21 @@ fn set_keep_awake(wake_lock: State<WakeLock>, enabled: bool) -> Result<(), Strin
     update_keep_awake(&wake_lock, enabled, generation)
 }
 
+#[derive(Clone, Deserialize, Serialize)]
+struct SshRoot {
+    host: String,
+    path: String,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(untagged)]
+enum WorkspaceRoot {
+    Local(PathBuf),
+    Ssh(SshRoot),
+}
+
 #[derive(Default)]
-struct Roots(Mutex<HashMap<String, PathBuf>>);
+struct Roots(Mutex<HashMap<String, WorkspaceRoot>>);
 
 #[derive(Default)]
 struct FileBrowserSettings {
@@ -489,6 +503,7 @@ struct ShellAgent {
 struct DirectoryGrant {
     id: String,
     path: String,
+    host: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -589,10 +604,157 @@ fn path_text(path: &Path) -> String {
 
 fn root_path(roots: &Roots, root_id: &str) -> Result<PathBuf, String> {
     let roots = roots.0.lock().map_err(|error| error.to_string())?;
-    let root = roots
+    let WorkspaceRoot::Local(root) = roots
         .get(root_id)
-        .ok_or("Folder permission is no longer available")?;
+        .ok_or("Folder permission is no longer available")?
+    else {
+        return Err("This workspace is on an SSH host".into());
+    };
     fs::canonicalize(root).map_err(|_| MISSING_DIRECTORY.to_owned())
+}
+
+fn ssh_root(roots: &Roots, root_id: &str) -> Result<Option<SshRoot>, String> {
+    Ok(roots
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(root_id)
+        .and_then(|root| match root {
+            WorkspaceRoot::Ssh(root) => Some(root.clone()),
+            WorkspaceRoot::Local(_) => None,
+        }))
+}
+
+fn posix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn ssh_command(host: &str) -> Result<Command, String> {
+    if host.is_empty()
+        || host.starts_with('-')
+        || host
+            .chars()
+            .any(|character| character.is_whitespace() || character.is_control())
+    {
+        return Err("Enter an SSH host or user@host from your SSH config".into());
+    }
+    let ssh = resolve_executable("ssh").ok_or("Could not find SSH in your PATH")?;
+    let mut command = Command::new(ssh);
+    command.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "--", host]);
+    Ok(command)
+}
+
+fn ssh_output(root: &SshRoot, script: &str) -> Result<Vec<u8>, String> {
+    let mut child = ssh_command(&root.host)?
+        .arg(script)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let stdout = child.stdout.take().ok_or("Could not read SSH output")?;
+    let mut stderr = child.stderr.take().ok_or("Could not read SSH errors")?;
+    let errors = thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        while let Ok(count) = stderr.read(&mut buffer) {
+            if count == 0 {
+                break;
+            }
+            output.extend_from_slice(&buffer[..count]);
+            if output.len() > 16_384 {
+                output.drain(..output.len() - 16_384);
+            }
+        }
+        output
+    });
+    let mut output = Vec::new();
+    if let Err(error) = stdout
+        .take(MAX_SSH_OUTPUT_BYTES + 1)
+        .read_to_end(&mut output)
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = errors.join();
+        return Err(error.to_string());
+    }
+    if output.len() > MAX_SSH_OUTPUT_BYTES as usize {
+        let _ = child.kill();
+        let _ = child.wait();
+        let _ = errors.join();
+        return Err("SSH output is too large; inspect it in the terminal".into());
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    let errors = errors.join().unwrap_or_default();
+    if status.success() {
+        Ok(output)
+    } else {
+        let detail = String::from_utf8_lossy(&errors).trim().to_owned();
+        Err(if detail.is_empty() {
+            format!("SSH command exited with {status}")
+        } else {
+            detail
+        })
+    }
+}
+
+fn ssh_text(root: &SshRoot, script: &str) -> Result<String, String> {
+    String::from_utf8(ssh_output(root, script)?)
+        .map(|output| output.trim().to_owned())
+        .map_err(|_| "SSH command returned non-UTF-8 text".into())
+}
+
+fn ssh_input(root: &SshRoot, script: &str, input: &[u8]) -> Result<(), String> {
+    let mut child = ssh_command(&root.host)?
+        .arg(script)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let write = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Could not write to SSH".to_owned())
+        .and_then(|mut stdin| stdin.write_all(input).map_err(|error| error.to_string()));
+    if let Err(error) = write {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    let status = child.wait().map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("SSH command exited with {status}"))
+    }
+}
+
+fn remote_path(root: &SshRoot, path: &str) -> Result<String, String> {
+    let root_path = root.path.trim_end_matches('/');
+    let path = path.trim_end_matches('/');
+    if path == root_path || path.starts_with(&format!("{root_path}/")) {
+        Ok(path.to_owned())
+    } else {
+        Err("Path is outside the selected folder".into())
+    }
+}
+
+fn scoped_ssh_path(root: &SshRoot, path: &str) -> Result<String, String> {
+    remote_path(root, path)?;
+    let path = ssh_text(root, &format!("realpath -- {}", posix_quote(path)))?;
+    remote_path(root, &path)
+}
+
+fn scoped_ssh_entry(root: &SshRoot, path: &str) -> Result<String, String> {
+    let path = remote_path(root, path)?;
+    let (parent, name) = path
+        .rsplit_once('/')
+        .ok_or("Path is outside the selected folder")?;
+    if name.is_empty() || matches!(name, "." | "..") {
+        return Err("Path is outside the selected folder".into());
+    }
+    let parent = scoped_ssh_path(root, parent)?;
+    Ok(format!("{parent}/{name}"))
 }
 
 fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
@@ -684,7 +846,7 @@ fn load_file_browser_settings(app: &AppHandle) -> FileBrowserSettings {
     }
 }
 
-fn read_roots(path: &Path) -> HashMap<String, PathBuf> {
+fn read_roots(path: &Path) -> HashMap<String, WorkspaceRoot> {
     fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -940,7 +1102,7 @@ fn write_atomic(path: &Path, contents: &[u8]) -> Result<(), String> {
 fn update_roots(
     app: &AppHandle,
     roots: &Roots,
-    update: impl FnOnce(&mut HashMap<String, PathBuf>),
+    update: impl FnOnce(&mut HashMap<String, WorkspaceRoot>),
 ) -> Result<(), String> {
     let path = roots_path(app)?;
     let mut roots = roots.0.lock().map_err(|error| error.to_string())?;
@@ -1008,11 +1170,12 @@ fn grant_directory(
     let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
     let id = root_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     update_roots(app, roots, |roots| {
-        roots.insert(id.clone(), path.clone());
+        roots.insert(id.clone(), WorkspaceRoot::Local(path.clone()));
     })?;
     Ok(DirectoryGrant {
         id,
         path: path_text(&path),
+        host: None,
     })
 }
 
@@ -1318,12 +1481,72 @@ async fn use_directory(
 }
 
 #[tauri::command]
+async fn use_ssh_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    host: String,
+    path: String,
+) -> Result<DirectoryGrant, String> {
+    let host = host.trim().to_owned();
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Enter a folder on the SSH host".into());
+    }
+    let requested = if path == "~" {
+        "$HOME".to_owned()
+    } else if let Some(path) = path.strip_prefix("~/") {
+        format!("$HOME/{}", posix_quote(path))
+    } else {
+        posix_quote(path)
+    };
+    let probe = SshRoot {
+        host: host.clone(),
+        path: String::new(),
+    };
+    let resolved = ssh_text(
+        &probe,
+        &format!("mkdir -p -- {requested} && cd -- {requested} && pwd -P"),
+    )?;
+    if !resolved.starts_with('/') {
+        return Err("The SSH server did not return an absolute folder path".into());
+    }
+    let id = uuid::Uuid::new_v4().to_string();
+    let root = SshRoot {
+        host: host.clone(),
+        path: resolved.clone(),
+    };
+    update_roots(&app, &roots, |roots| {
+        roots.insert(id.clone(), WorkspaceRoot::Ssh(root));
+    })?;
+    Ok(DirectoryGrant {
+        id,
+        path: resolved,
+        host: Some(host),
+    })
+}
+
+#[tauri::command]
 async fn follow_directory(
     app: AppHandle,
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
 ) -> Result<DirectoryGrant, String> {
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        let path = ssh_text(&root, &format!("cd -- {} && pwd -P", posix_quote(&path)))?;
+        let next = SshRoot {
+            host: root.host.clone(),
+            path: path.clone(),
+        };
+        update_roots(&app, &roots, |roots| {
+            roots.insert(root_id.clone(), WorkspaceRoot::Ssh(next));
+        })?;
+        return Ok(DirectoryGrant {
+            id: root_id,
+            path,
+            host: Some(root.host),
+        });
+    }
     root_path(&roots, &root_id)?;
     grant_directory(&app, &roots, PathBuf::from(path), Some(root_id))
 }
@@ -2504,6 +2727,38 @@ fn agent_builder(agent: &str) -> Result<CommandBuilder, String> {
     Ok(CommandBuilder::new(path))
 }
 
+fn session_arguments(
+    agent: &str,
+    resume: bool,
+    session_id: &str,
+    provider_session_id: Option<&str>,
+) -> Result<Vec<String>, String> {
+    match agent {
+        "claude" => Ok(vec![
+            if resume { "--resume" } else { "--session-id" }.into(),
+            provider_session_id.unwrap_or(session_id).into(),
+        ]),
+        "gemini" | "qwen" => Ok(vec![
+            if resume { "--resume" } else { "--session-id" }.into(),
+            session_id.into(),
+        ]),
+        "kimi" => Ok(provider_session_id
+            .map(|id| vec!["--session".into(), id.into()])
+            .unwrap_or_default()),
+        "shell" => Ok(Vec::new()),
+        _ => Err("Unknown session type".into()),
+    }
+}
+
+fn login_arguments(agent: &str) -> Result<Vec<String>, String> {
+    match agent {
+        "claude" => Ok(vec!["auth".into(), "login".into()]),
+        "codex" | "kimi" => Ok(vec!["login".into()]),
+        "gemini" | "qwen" => Ok(Vec::new()),
+        _ => Err("This provider signs in with an API key".into()),
+    }
+}
+
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "CODEX_HOME", ".codex")
 }
@@ -2705,27 +2960,35 @@ fn kimi_session_ids(app: &AppHandle, cwd: &Path) -> HashSet<String> {
     ids
 }
 
-fn agent_command(
-    app: &AppHandle,
-    agent: &str,
-    provider: Option<&str>,
-    model: Option<&str>,
-    reasoning_effort: Option<&str>,
+struct SessionCommand<'a> {
+    agent: &'a str,
+    provider: Option<&'a str>,
+    model: Option<&'a str>,
+    reasoning_effort: Option<&'a str>,
     resume: bool,
-    session_id: &str,
-    provider_session_id: Option<&str>,
-) -> Result<CommandBuilder, String> {
+    session_id: &'a str,
+    provider_session_id: Option<&'a str>,
+}
+
+fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<CommandBuilder, String> {
+    let SessionCommand {
+        agent,
+        provider,
+        model,
+        reasoning_effort,
+        resume,
+        session_id,
+        provider_session_id,
+    } = *launch;
     let mut command = match agent {
         "claude" => {
             let mut command = agent_builder(agent)?;
-            let session_id = provider_session_id.unwrap_or(session_id);
-            if resume {
-                command.args(["--resume", session_id]);
-            } else {
-                // Naming the session after its folder is the one thing that stops Claude Code from
-                // naming it after what it is doing, and that name is what the tab is titled with.
-                command.args(["--session-id", session_id]);
-            }
+            command.args(session_arguments(
+                agent,
+                resume,
+                session_id,
+                provider_session_id,
+            )?);
             command
         }
         "codex" => {
@@ -2810,11 +3073,7 @@ fn agent_command(
         }
         "gemini" => {
             let mut command = agent_builder(agent)?;
-            command.args(if resume {
-                ["--resume", session_id]
-            } else {
-                ["--session-id", session_id]
-            });
+            command.args(session_arguments(agent, resume, session_id, None)?);
             command
         }
         "kimi" => {
@@ -2822,18 +3081,17 @@ fn agent_command(
             // which two tabs there would both land on, and it creates no entry for discovery to record,
             // so the tab could never learn which session it is showing.
             let mut command = agent_builder(agent)?;
-            if let Some(provider_session_id) = provider_session_id {
-                command.args(["--session", provider_session_id]);
-            }
+            command.args(session_arguments(
+                agent,
+                resume,
+                session_id,
+                provider_session_id,
+            )?);
             command
         }
         "qwen" => {
             let mut command = agent_builder(agent)?;
-            command.args(if resume {
-                ["--resume", session_id]
-            } else {
-                ["--session-id", session_id]
-            });
+            command.args(session_arguments(agent, resume, session_id, None)?);
             command
         }
         "shell" => {
@@ -2863,26 +3121,8 @@ fn agent_command(
 
 // Each CLI owns its sign-in and opens the browser itself, so Lite only runs the command and shows it.
 fn login_command(agent: &str) -> Result<CommandBuilder, String> {
-    let mut command = match agent {
-        "claude" => {
-            let mut command = agent_builder(agent)?;
-            command.args(["auth", "login"]);
-            command
-        }
-        "codex" => {
-            let mut command = agent_builder(agent)?;
-            command.arg("login");
-            command
-        }
-        "gemini" => agent_builder(agent)?,
-        "kimi" => {
-            let mut command = agent_builder(agent)?;
-            command.arg("login");
-            command
-        }
-        "qwen" => agent_builder(agent)?,
-        _ => return Err("This provider signs in with an API key".into()),
-    };
+    let mut command = agent_builder(agent)?;
+    command.args(login_arguments(agent)?);
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
@@ -3187,8 +3427,14 @@ fn open_external(url: &str) -> Result<(), String> {
         .map_err(|error| format!("Could not open the link: {error}"))
 }
 
-fn configure_session_command(command: &mut CommandBuilder, cwd: &Path, theme: Option<&str>) {
-    command.cwd(path_text(cwd));
+fn configure_session_command(
+    command: &mut CommandBuilder,
+    cwd: Option<&Path>,
+    theme: Option<&str>,
+) {
+    if let Some(cwd) = cwd {
+        command.cwd(path_text(cwd));
+    }
     command.env("TERM", "xterm-256color");
     // A launched app inherits no locale, so a session copies its own UTF-8 as Mac Roman: `─` as `‚îÄ`.
     #[cfg(target_os = "macos")]
@@ -3202,6 +3448,92 @@ fn configure_session_command(command: &mut CommandBuilder, cwd: &Path, theme: Op
             "15;0"
         },
     );
+}
+
+fn ssh_agent_args(launch: &SessionCommand<'_>, signing_in: bool) -> Result<Vec<String>, String> {
+    let SessionCommand {
+        agent,
+        provider,
+        model,
+        reasoning_effort,
+        resume,
+        session_id,
+        provider_session_id,
+    } = *launch;
+    if agent == "shell" {
+        return Ok(vec!["${SHELL:-/bin/sh}".into(), "-l".into()]);
+    }
+    let executable = agent_executable(agent).ok_or("Unknown session type")?;
+    let mut args = vec![executable.to_owned()];
+    if signing_in {
+        args.extend(login_arguments(agent)?);
+        return Ok(args);
+    }
+    if agent != "codex" {
+        args.extend(session_arguments(
+            agent,
+            resume,
+            session_id,
+            provider_session_id,
+        )?);
+        return Ok(args);
+    }
+    args.extend([
+        "-c".into(),
+        r#"tui.notification_method="osc9""#.into(),
+        "-c".into(),
+        r#"tui.notification_condition="always""#.into(),
+    ]);
+    if let Some(provider) = codex_provider(provider) {
+        args.extend(["--profile".into(), provider.id.into()]);
+        if provider.id == "deepseek" {
+            if let Some(model) = model {
+                args.extend(["-c".into(), format!("model=\"{model}\"")]);
+            }
+            if let Some(effort) = reasoning_effort {
+                args.extend(["-c".into(), format!("model_reasoning_effort=\"{effort}\"")]);
+            }
+        }
+    }
+    if let Some(id) = provider_session_id {
+        args.extend(["resume".into(), id.into()]);
+    }
+    Ok(args)
+}
+
+fn ssh_session_command(
+    root: &SshRoot,
+    launch: &SessionCommand<'_>,
+    signing_in: bool,
+    initial_prompt: Option<&str>,
+) -> Result<CommandBuilder, String> {
+    let mut args = ssh_agent_args(launch, signing_in)?;
+    if !signing_in
+        && launch.agent == "claude"
+        && let Some(prompt) = initial_prompt
+    {
+        args.push(prompt.into());
+    }
+    let command = args
+        .iter()
+        .map(|argument| {
+            if argument == "${SHELL:-/bin/sh}" {
+                argument.clone()
+            } else {
+                posix_quote(argument)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let remote = format!(
+        "cd -- {} && exec ${{SHELL:-/bin/sh}} -lc {}",
+        posix_quote(&root.path),
+        posix_quote(&format!("exec {command}"))
+    );
+    let ssh = resolve_executable("ssh").ok_or("Could not find SSH in your PATH")?;
+    let mut builder = CommandBuilder::new(ssh);
+    builder.args(["-tt", "--", &root.host, &remote]);
+    Ok(builder)
 }
 
 #[tauri::command]
@@ -3228,28 +3560,38 @@ async fn spawn_session(
     cols: u16,
     rows: u16,
 ) -> Result<Option<String>, String> {
-    if !roots
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .contains_key(&root_id)
+    let ssh = ssh_root(&roots, &root_id)?;
+    if ssh.is_none()
+        && !roots
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .contains_key(&root_id)
     {
         uuid::Uuid::parse_str(&root_id).map_err(|_| "Invalid folder permission")?;
         let path = fs::canonicalize(cwd).map_err(|_| MISSING_DIRECTORY)?;
         update_roots(&app, &roots, |roots| {
-            roots.entry(root_id.clone()).or_insert(path);
+            roots
+                .entry(root_id.clone())
+                .or_insert(WorkspaceRoot::Local(path));
         })?;
     }
-    let cwd = root_path(&roots, &root_id)?;
+    let cwd = if let Some(root) = ssh.as_ref() {
+        PathBuf::from(&root.path)
+    } else {
+        root_path(&roots, &root_id)?
+    };
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
     // A tab whose provider history was removed starts again instead of becoming permanently unusable.
-    let claude_launch = (resume && !signing_in && agent == "claude")
+    let claude_launch = (resume && !signing_in && agent == "claude" && ssh.is_none())
         .then(|| claude_launch_id(&app, provider_session_id.as_deref().unwrap_or(&session_id)));
     let mut resume = resume
         && match agent.as_str() {
-            "claude" => claude_launch.as_ref().is_some_and(|(_, resume)| *resume),
-            "gemini" | "qwen" => native_session_path(&app, &agent, &session_id).is_some(),
+            "claude" if ssh.is_none() => claude_launch.as_ref().is_some_and(|(_, resume)| *resume),
+            "gemini" | "qwen" if ssh.is_none() => {
+                native_session_path(&app, &agent, &session_id).is_some()
+            }
             _ => true,
         };
     // The tab keeps the id it was given so the next launch reopens the same conversation, and a
@@ -3268,7 +3610,8 @@ async fn spawn_session(
             uuid::Uuid::new_v4().to_string()
         });
     }
-    if !signing_in
+    if ssh.is_none()
+        && !signing_in
         && (agent == "codex" || agent == "kimi")
         && let Some(saved_provider_session_id) = provider_sessions
             .0
@@ -3324,7 +3667,8 @@ async fn spawn_session(
         .map_err(|error| error.to_string())?;
     // An app server that cannot answer costs the check, not the session: the tab opens on the recorded
     // thread and Codex itself says whether it can resume, as the discovery below already assumes.
-    if !signing_in
+    if ssh.is_none()
+        && !signing_in
         && agent == "codex"
         && let Some(thread_id) = provider_session_id.as_deref()
         && !codex_thread_resumable(&codex_server, thread_id).unwrap_or(true)
@@ -3333,7 +3677,8 @@ async fn spawn_session(
         provider_session_id = None;
     }
     // A Kimi session the user deleted should start a new one instead of failing the terminal.
-    if !signing_in
+    if ssh.is_none()
+        && !signing_in
         && agent == "kimi"
         && let Some(known) = provider_session_id.as_deref()
         && !kimi_session_ids(&app, &cwd).contains(known)
@@ -3341,41 +3686,50 @@ async fn spawn_session(
         update_provider_session(&app, &provider_sessions, &session_id, None)?;
         provider_session_id = None;
     }
-    let mut command = if signing_in {
+    let launch = SessionCommand {
+        agent: &agent,
+        provider: provider.as_deref(),
+        model: model.as_deref(),
+        reasoning_effort: reasoning_effort.as_deref(),
+        resume,
+        session_id: &session_id,
+        provider_session_id: provider_session_id.as_deref(),
+    };
+    let mut command = if let Some(root) = ssh.as_ref() {
+        ssh_session_command(root, &launch, signing_in, initial_prompt.as_deref())?
+    } else if signing_in {
         login_command(&agent)?
     } else {
-        agent_command(
-            &app,
-            &agent,
-            provider.as_deref(),
-            model.as_deref(),
-            reasoning_effort.as_deref(),
-            resume,
-            &session_id,
-            provider_session_id.as_deref(),
-        )?
+        agent_command(&app, &launch)?
     };
-    if !signing_in && agent == "claude" {
+    if ssh.is_none() && !signing_in && agent == "claude" {
         let settings = claude_settings(&app, &session_id, &run_id)?;
         command.args(["--settings", &path_text(&settings)]);
         if let Some(prompt) = initial_prompt {
             command.arg(prompt);
         }
     }
-    configure_session_command(&mut command, &cwd, theme.as_deref());
+    configure_session_command(
+        &mut command,
+        ssh.is_none().then_some(cwd.as_path()),
+        theme.as_deref(),
+    );
     // Codex records a new thread per launch, so its discovery watches for one the tab did not start with.
     // Kimi attaches to the directory's session instead, so its discovery reads that session directly.
-    let known_sessions =
-        if !signing_in && provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
-            if agent == "kimi" {
-                Some(HashSet::new())
-            } else {
-                // Losing discovery costs exact resume, not the session, so a failure still opens the terminal.
-                codex_thread_ids(&codex_server, &cwd).ok()
-            }
+    let known_sessions = if ssh.is_none()
+        && !signing_in
+        && provider_session_id.is_none()
+        && (agent == "codex" || agent == "kimi")
+    {
+        if agent == "kimi" {
+            Some(HashSet::new())
         } else {
-            None
-        };
+            // Losing discovery costs exact resume, not the session, so a failure still opens the terminal.
+            codex_thread_ids(&codex_server, &cwd).ok()
+        }
+    } else {
+        None
+    };
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
@@ -3760,6 +4114,55 @@ async fn list_directory(
     path: String,
     after: Option<DirectoryCursor>,
 ) -> Result<DirectoryListing, String> {
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        let path = scoped_ssh_path(&root, &path)?;
+        let output = ssh_output(
+            &root,
+            &format!(
+                "find {} -mindepth 1 -maxdepth 1 -printf '%f\\0%p\\0%y\\0'",
+                posix_quote(&path)
+            ),
+        )?;
+        let fields = output.split(|byte| *byte == 0).collect::<Vec<_>>();
+        let after =
+            after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
+        let mut page = BTreeMap::new();
+        let mut has_more = false;
+        for record in fields.chunks_exact(3) {
+            let name = String::from_utf8_lossy(record[0]).into_owned();
+            if settings.hide_hidden.load(Ordering::Relaxed) && name.starts_with('.') {
+                continue;
+            }
+            let entry = FileEntry {
+                name,
+                path: String::from_utf8_lossy(record[1]).into_owned(),
+                is_directory: record[2] == b"d",
+                is_symlink: record[2] == b"l",
+            };
+            let key = directory_key(&entry.name, &entry.path, entry.is_directory);
+            if after.as_ref().is_some_and(|after| key <= *after) {
+                continue;
+            }
+            page.insert(key, entry);
+            if page.len() > DIRECTORY_PAGE_SIZE {
+                page.pop_last();
+                has_more = true;
+            }
+        }
+        let entries = page.into_values().collect::<Vec<_>>();
+        let next_cursor = has_more.then(|| {
+            let entry = entries.last().expect("a truncated page is not empty");
+            DirectoryCursor {
+                name: entry.name.clone(),
+                path: entry.path.clone(),
+                is_directory: entry.is_directory,
+            }
+        });
+        return Ok(DirectoryListing {
+            entries,
+            next_cursor,
+        });
+    }
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
     let after = after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
@@ -3811,6 +4214,20 @@ async fn read_text_file(
     root_id: String,
     path: String,
 ) -> Result<String, String> {
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        let path = scoped_ssh_path(&root, &path)?;
+        let size = ssh_text(&root, &format!("wc -c < {}", posix_quote(&path)))?
+            .parse::<u64>()
+            .map_err(|_| "Could not read remote file size")?;
+        if size > MAX_FILE_BYTES {
+            return Err("File is larger than 500 KB".into());
+        }
+        let bytes = ssh_output(&root, &format!("cat -- {}", posix_quote(&path)))?;
+        if bytes.contains(&0) {
+            return Err("Binary files cannot be previewed".into());
+        }
+        return String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text".into());
+    }
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
     let metadata = fs::metadata(&path).map_err(|error| error.to_string())?;
@@ -3834,6 +4251,16 @@ async fn write_text_file(
     if contents.len() > MAX_FILE_BYTES as usize {
         return Err("File is larger than 500 KB".into());
     }
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        let path = scoped_ssh_path(&root, &path)?;
+        let parent = path.rsplit_once('/').map_or("/", |(parent, _)| parent);
+        let script = format!(
+            "set -e; test -f {file}; tmp=$(mktemp {parent}/.lite.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT; cat > \"$tmp\"; chmod --reference={file} \"$tmp\"; mv -- \"$tmp\" {file}; trap - EXIT",
+            file = posix_quote(&path),
+            parent = posix_quote(parent),
+        );
+        return ssh_input(&root, &script, contents.as_bytes());
+    }
     let root = root_path(&roots, &root_id)?;
     let path = scoped_path(&root, &path)?;
     if !path.is_file() {
@@ -3852,6 +4279,13 @@ async fn delete_entry(
     root_id: String,
     path: String,
 ) -> Result<(), String> {
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        let path = scoped_ssh_entry(&root, &path)?;
+        if path == root.path.trim_end_matches('/') {
+            return Err("The selected folder cannot be deleted".into());
+        }
+        return ssh_text(&root, &format!("rm -rf -- {}", posix_quote(&path))).map(|_| ());
+    }
     let root = root_path(&roots, &root_id)?;
     let path = scoped_entry(&root, &path)?;
     remove_entry(&path)
@@ -3975,6 +4409,31 @@ fn bounded_git_output(
     Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
+fn ssh_git_output(root: &SshRoot, directory: &str, args: &[&str]) -> Result<Vec<u8>, String> {
+    let command = std::iter::once("git".to_owned())
+        .chain(std::iter::once("-C".to_owned()))
+        .chain(std::iter::once(directory.to_owned()))
+        .chain(args.iter().map(|argument| (*argument).to_owned()))
+        .map(|argument| posix_quote(&argument))
+        .collect::<Vec<_>>()
+        .join(" ");
+    ssh_output(root, &command)
+}
+
+fn ssh_git_text(root: &SshRoot, directory: &str, args: &[&str]) -> Result<String, String> {
+    String::from_utf8(ssh_git_output(root, directory, args)?)
+        .map(|output| output.trim().to_owned())
+        .map_err(|_| "Git returned non-UTF-8 text".into())
+}
+
+fn ssh_git_base(root: &SshRoot, repository: &str) -> Result<String, String> {
+    if ssh_git_output(root, repository, &["rev-parse", "--verify", "HEAD"]).is_ok() {
+        Ok("HEAD".into())
+    } else {
+        ssh_text(root, "git hash-object -t tree /dev/null")
+    }
+}
+
 fn git_diff_base(git: &Path, repository: &Path) -> Result<String, String> {
     if command_output(git, repository, &["rev-parse", "--verify", "HEAD"]).is_ok() {
         return Ok("HEAD".into());
@@ -3997,6 +4456,67 @@ async fn git_diff(
     root_id: String,
     path: String,
 ) -> Result<String, String> {
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        let relative = Path::new(&path);
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err("This change is outside the selected folder".into());
+        }
+        let repository = ssh_git_text(&root, &root.path, &["rev-parse", "--show-toplevel"])?;
+        let pathspec = path_text(relative);
+        let file = format!("{}/{}", repository.trim_end_matches('/'), pathspec);
+        remote_path(&root, &file).map_err(|_| {
+            "This change is outside the selected folder; start a session from the repository root to view it"
+        })?;
+        let untracked = !ssh_git_output(
+            &root,
+            &repository,
+            &[
+                "--literal-pathspecs",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+                "--",
+                &pathspec,
+            ],
+        )?
+        .is_empty();
+        let output = if untracked {
+            ssh_output(
+                &root,
+                &format!(
+                    "git -C {} diff --no-index --no-ext-diff --no-textconv --no-renames --no-color -- /dev/null {} || test $? -eq 1",
+                    posix_quote(&repository),
+                    posix_quote(&file)
+                ),
+            )?
+        } else {
+            let base = ssh_git_base(&root, &repository)?;
+            ssh_git_output(
+                &root,
+                &repository,
+                &[
+                    "--literal-pathspecs",
+                    "diff",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-renames",
+                    "--no-color",
+                    &base,
+                    "--",
+                    &pathspec,
+                ],
+            )?
+        };
+        if output.len() > MAX_GIT_DIFF_BYTES as usize {
+            return Err("Diff is larger than 1 MB; inspect it with Git in the terminal".into());
+        }
+        return Ok(String::from_utf8_lossy(&output).into_owned());
+    }
     let granted = root_path(&roots, &root_id)?;
     let relative = Path::new(&path);
     if relative.is_absolute()
@@ -4089,6 +4609,109 @@ async fn git_diff(
 
 #[tauri::command]
 async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<GitStatus>, String> {
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        let repository = match ssh_git_text(&root, &root.path, &["rev-parse", "--show-toplevel"]) {
+            Ok(repository) => repository,
+            Err(_) => return Ok(None),
+        };
+        let scope = root
+            .path
+            .strip_prefix(&repository)
+            .ok_or("The selected folder is outside the Git repository")?
+            .trim_start_matches('/');
+        let scope_text = if scope.is_empty() { "." } else { scope };
+        let branch = ssh_git_text(&root, &root.path, &["branch", "--show-current"])?;
+        let output = ssh_git_output(
+            &root,
+            &repository,
+            &[
+                "--literal-pathspecs",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--no-renames",
+                "--untracked-files=all",
+                "--",
+                scope_text,
+            ],
+        )?;
+        let mut changes = Vec::new();
+        let mut records = output.split(|byte| *byte == 0);
+        while let Some(record) = records.next() {
+            if record.len() < 4 || record[2] != b' ' {
+                continue;
+            }
+            let status = String::from_utf8_lossy(&record[..2]).into_owned();
+            if status.bytes().any(|byte| matches!(byte, b'R' | b'C')) {
+                let _ = records.next();
+            }
+            changes.push(GitChange {
+                status,
+                path: String::from_utf8(record[3..].to_vec())
+                    .map_err(|_| "Git status contains a non-UTF-8 path")?,
+            });
+            if changes.len() > MAX_GIT_CHANGES {
+                break;
+            }
+        }
+        let changes_truncated = changes.len() > MAX_GIT_CHANGES;
+        changes.truncate(MAX_GIT_CHANGES);
+        changes.retain(|change| Path::new(&change.path).starts_with(scope));
+        let base = ssh_git_base(&root, &repository)?;
+        let diffs = ssh_git_output(
+            &root,
+            &repository,
+            &[
+                "--literal-pathspecs",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--numstat",
+                "-z",
+                &base,
+                "--",
+                scope_text,
+            ],
+        )?;
+        let mut line_diffs = BTreeMap::new();
+        for record in diffs
+            .split(|byte| *byte == 0)
+            .filter(|record| !record.is_empty())
+        {
+            let mut fields = record.splitn(3, |byte| *byte == b'\t');
+            let (Some(additions), Some(deletions), Some(path)) = (
+                fields
+                    .next()
+                    .and_then(|value| String::from_utf8_lossy(value).parse().ok()),
+                fields
+                    .next()
+                    .and_then(|value| String::from_utf8_lossy(value).parse().ok()),
+                fields.next(),
+            ) else {
+                continue;
+            };
+            line_diffs.insert(
+                String::from_utf8_lossy(path).into_owned(),
+                LineDiff {
+                    additions,
+                    deletions,
+                },
+            );
+        }
+        line_diffs.retain(|path, _| Path::new(path).starts_with(scope));
+        return Ok(Some(GitStatus {
+            branch: if branch.is_empty() {
+                "Detached HEAD".into()
+            } else {
+                branch
+            },
+            worktree: repository,
+            changes,
+            line_diffs,
+            changes_truncated,
+        }));
+    }
     let path = root_path(&roots, &root_id)?;
     // Locating Git runs a login shell, so one refresh resolves it once rather than once per command.
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
@@ -4250,6 +4873,13 @@ fn browse_url(remote: &str) -> Option<String> {
 // the full status reads the whole worktree.
 #[tauri::command]
 async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<String>, String> {
+    if let Some(root) = ssh_root(&roots, &root_id)? {
+        return Ok(
+            ssh_git_text(&root, &root.path, &["remote", "get-url", "origin"])
+                .ok()
+                .and_then(|remote| browse_url(&remote)),
+        );
+    }
     let path = root_path(&roots, &root_id)?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     Ok(
@@ -5275,6 +5905,7 @@ pub fn run() {
             follow_directory,
             github_items,
             use_directory,
+            use_ssh_directory,
             default_directory,
             revoke_directory,
             spawn_session,
@@ -5341,7 +5972,7 @@ mod tests {
         let mut command = CommandBuilder::new("test");
         command.env_clear();
 
-        configure_session_command(&mut command, Path::new("."), None);
+        configure_session_command(&mut command, Some(Path::new(".")), None);
 
         assert_eq!(
             command.get_env("LC_CTYPE"),

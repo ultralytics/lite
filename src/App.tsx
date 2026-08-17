@@ -2961,19 +2961,28 @@ function App() {
                     </TooltipTrigger>
                     <TooltipContent>Switch session · {shortcutText("switchSession")}</TooltipContent>
                   </Tooltip>
-                  <button
-                    type="button"
-                    className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
-                    aria-label={`Open ${selected.cwd} in file browser`}
-                    onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
-                  >
+                  {selected.host ? (
                     <Tooltip>
                       <TooltipTrigger render={<span className="block w-fit max-w-full truncate" />}>
-                        {selected.cwd}
+                        {selected.host}:{selected.cwd}
                       </TooltipTrigger>
-                      <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>
+                      <TooltipContent>Remote workspace</TooltipContent>
                     </Tooltip>
-                  </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="min-w-0 max-w-full overflow-hidden text-left font-mono text-[11px] text-muted-foreground hover:text-foreground"
+                      aria-label={`Open ${selected.cwd} in file browser`}
+                      onClick={() => void invoke("open_directory", { rootId: selected.rootId })}
+                    >
+                      <Tooltip>
+                        <TooltipTrigger render={<span className="block w-fit max-w-full truncate" />}>
+                          {selected.cwd}
+                        </TooltipTrigger>
+                        <TooltipContent>Open {selected.cwd} in file browser</TooltipContent>
+                      </Tooltip>
+                    </button>
+                  )}
                 </>
               ) : (
                 <span className="text-sm font-semibold">Lite</span>
