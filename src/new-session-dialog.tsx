@@ -42,6 +42,10 @@ type DeepSeekModel = (typeof DEEPSEEK_MODELS)[number]["value"];
 const DEEPSEEK_REASONING = ["low", "high", "max"] as const;
 type DeepSeekReasoning = (typeof DEEPSEEK_REASONING)[number];
 
+function remoteUnsupported(remote: boolean, choice: (typeof SESSION_CHOICES)[number]) {
+  return remote && choice.agent === "codex" && choice.provider !== "openai";
+}
+
 let updateChecks: Promise<Record<string, boolean | null>> | undefined;
 
 function checkAgentUpdates() {
@@ -131,7 +135,7 @@ export function NewSessionDialog({
     localStorage.getItem(NAME_KEY) === "true" ? "" : undefined,
   );
   const choice = SESSION_CHOICES.find((option) => option.id === choiceId) ?? SESSION_CHOICES[0];
-  const remoteUnsupported = remote && choice.agent === "codex" && choice.provider !== "openai";
+  const unsupported = remoteUnsupported(remote, choice);
   const status = availability[choice.id];
   useEffect(() => {
     if (isOpen && chosen) setChoiceId(chosen);
@@ -374,7 +378,7 @@ export function NewSessionDialog({
   const folderReady = remote
     ? host.trim() && path.trim()
     : path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim());
-  const ready = !remoteUnsupported && !installing && !creating && Boolean(missing || folderReady);
+  const ready = !unsupported && !installing && !creating && Boolean(missing || folderReady);
   function start() {
     if (missing?.installable) void install();
     else if (missing)
@@ -570,7 +574,7 @@ export function NewSessionDialog({
               <div className="grid min-w-0 grid-cols-2 gap-2">
                 {SESSION_CHOICES.map((option) => {
                   const active = choiceId === option.id;
-                  const unsupported = remote && option.agent === "codex" && option.provider !== "openai";
+                  const unsupported = remoteUnsupported(remote, option);
                   const deepseek = option.id === "deepseek";
                   const state = availability[option.id];
                   const update = updates[option.agent];

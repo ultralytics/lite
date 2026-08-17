@@ -733,8 +733,11 @@ interface SessionGroup {
 }
 
 function sessionGroupKey(session: Session, grouping: SessionGrouping, attention: Set<string>, working: Set<string>) {
-  if (grouping === "repository") return session.repo ?? session.cwd;
-  if (grouping === "directory") return session.cwd;
+  if (grouping === "repository") {
+    const repository = session.repo ?? session.cwd;
+    return session.host ? `${session.host}:${repository}` : repository;
+  }
+  if (grouping === "directory") return session.host ? `${session.host}:${session.cwd}` : session.cwd;
   if (grouping === "state") {
     if (!session.running) return "disconnected";
     if (attention.has(session.id)) return "attention";
@@ -760,7 +763,9 @@ function groupSessions(
       name:
         grouping === "state"
           ? SESSION_STATE_LABELS[value as keyof typeof SESSION_STATE_LABELS]
-          : folderName(value) || value,
+          : (grouping === "directory" || grouping === "repository") && session.host
+            ? `${session.host}:${folderName(session.repo ?? session.cwd) || session.repo || session.cwd}`
+            : folderName(value) || value,
       key: `${grouping}:${value}`,
       title: status?.label ?? value,
       sessions: [],
@@ -1097,7 +1102,7 @@ function SessionSwitcher({
                   <ItemContent>
                     <ItemTitle className="w-full text-xs">{session.name}</ItemTitle>
                     <ItemDescription className="truncate font-mono text-[10px]">
-                      {shortPath(session.cwd)} · {sessionLabel(session)}
+                      {sessionPath(session)} · {sessionLabel(session)}
                     </ItemDescription>
                   </ItemContent>
                 </Item>
@@ -1429,9 +1434,9 @@ function SessionRow({
           </div>
           <div
             className="mt-0.5 block w-fit max-w-full truncate font-mono text-[10px] text-muted-foreground"
-            title={session.cwd}
+            title={session.host ? `${session.host}:${session.cwd}` : session.cwd}
           >
-            {shortPath(session.cwd)}
+            {sessionPath(session)}
           </div>
         </div>
       )}
@@ -1513,6 +1518,11 @@ function runOnStart(sessionId: string, command: string) {
 function shortPath(cwd: string) {
   const parts = cwd.split(/[\\/]/).filter(Boolean);
   return parts.slice(-2).join("/");
+}
+
+function sessionPath(session: Session) {
+  const path = shortPath(session.cwd);
+  return session.host ? `${session.host}:${path}` : path;
 }
 
 // A tab named after its folder says nothing, and several in one folder say the same nothing, so the
@@ -2318,12 +2328,11 @@ function App() {
   // Which repository a folder was cloned from is a fact about the folder, so it is asked for once when
   // the selection changes and never watched.
   const rootId = selected?.rootId ?? "";
-  const directory = selected?.cwd ?? "";
   useEffect(() => {
     setRemote("");
     if (!rootId) return;
     let cancelled = false;
-    void invoke<string | null>("git_remote", { rootId, directory })
+    void invoke<string | null>("git_remote", { rootId })
       .then((url) => {
         if (!cancelled) setRemote(url ?? "");
       })
@@ -2331,7 +2340,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [directory, rootId]);
+  }, [rootId]);
 
   async function signIn(agent: Session["agent"]) {
     setSettingsOpen(false);
@@ -3301,7 +3310,7 @@ function App() {
                               onRecover={() => recoverSession(session)}
                               onPrompt={(text) => {
                                 const agent = session.agent === "shell" ? commandAgent(text) : undefined;
-                                if (agent)
+                                if (agent && !session.host)
                                   void invoke("watch_shell_agent", { sessionId: session.id, agent }).catch((reason) =>
                                     console.error(`Lite could not follow the agent in session ${session.id}:`, reason),
                                   );

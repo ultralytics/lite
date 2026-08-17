@@ -423,6 +423,7 @@ function FileTree({
 
   useEffect(() => {
     let mounted = true;
+    setExpanded((current) => including(current, root));
     void load(root).finally(() => {
       if (mounted) onLoad("files");
     });
@@ -968,7 +969,6 @@ function FileViewer({
 
 interface FileEditorState {
   rootId: string;
-  root: string;
   selected: FileEntry;
   source: string;
   draft: string;
@@ -995,7 +995,7 @@ function FilesPanel({
 }) {
   const [cached] = useState(() => {
     const current = fileEditorsBySession.get(sessionId);
-    if (current?.rootId === rootId && current.root === root) return current;
+    if (current?.rootId === rootId) return current;
     fileEditorsBySession.delete(sessionId);
   });
   const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
@@ -1028,7 +1028,7 @@ function FilesPanel({
       if (request.current === id) {
         setSource(contents);
         setDraft(contents);
-        fileEditorsBySession.set(sessionId, { rootId, root, selected: entry, source: contents, draft: contents });
+        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents });
       }
     } catch (reason) {
       if (request.current === id) {
@@ -1047,14 +1047,14 @@ function FilesPanel({
     await invoke("write_text_file", { rootId, path: entry.path, contents });
     if (request.current !== id) return;
     const current = fileEditorsBySession.get(sessionId);
-    if (current?.rootId === rootId && current.root === root && current.selected.path === entry.path)
+    if (current?.rootId === rootId && current.selected.path === entry.path)
       fileEditorsBySession.set(sessionId, { ...current, source: contents });
     if (selectedRef.current?.path === entry.path) setSource(contents);
   }
 
   function changeDraft(contents: string) {
     setDraft(contents);
-    if (selected) fileEditorsBySession.set(sessionId, { rootId, root, selected, source, draft: contents });
+    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents });
   }
 
   function closeFile() {
@@ -1265,7 +1265,6 @@ export function clearInspectorCache(sessionId: string) {
 
 function GitPanel({
   rootId,
-  directory,
   sessionId,
   remote,
   active,
@@ -1274,7 +1273,6 @@ function GitPanel({
   onLoad,
 }: {
   rootId: string;
-  directory: string;
   sessionId: string;
   remote: string;
   active: boolean;
@@ -1353,11 +1351,11 @@ function GitPanel({
   const refresh = useCallback(async () => {
     setError("");
     try {
-      setStatus(await invoke<GitStatus | null>("git_status", { rootId, directory }));
+      setStatus(await invoke<GitStatus | null>("git_status", { rootId }));
     } catch (reason) {
       setError(String(reason));
     }
-  }, [directory, rootId]);
+  }, [rootId]);
 
   async function openDiff(path: string) {
     const request = ++diffRequest.current;
@@ -1366,7 +1364,7 @@ function GitPanel({
     setDiffError("");
     setDiffLoading(true);
     try {
-      const source = await invoke<string>("git_diff", { rootId, directory, path });
+      const source = await invoke<string>("git_diff", { rootId, path });
       if (diffRequest.current === request) setDiffSource(source);
     } catch (reason) {
       if (diffRequest.current === request) setDiffError(String(reason));
@@ -1453,6 +1451,7 @@ function GitPanel({
 
 // Each harness and provider reports what it reports; Lite never fills the gap with a number of its own.
 function missingUsage(session: Session): string {
+  if (session.host) return "Remote sessions report no provider usage.";
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
     return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
@@ -1479,6 +1478,7 @@ function UsagePanel({
       agent: session.agent,
       provider: session.provider,
       sessionId: session.id,
+      host: session.host,
     })
       .then((next) => {
         if (!disposed) {
@@ -1495,7 +1495,7 @@ function UsagePanel({
     return () => {
       disposed = true;
     };
-  }, [onLoad, session.agent, session.provider, session.id]);
+  }, [onLoad, session.agent, session.provider, session.id, session.host]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1717,7 +1717,7 @@ export const Inspector = memo(function Inspector({
           {visited.has("files") ? (
             <TabsContent value="files" keepMounted className="min-h-0 overflow-hidden">
               <FilesPanel
-                key={`${session.rootId}:${session.cwd}:${reload.files}`}
+                key={`${session.rootId}:${reload.files}`}
                 root={session.cwd}
                 rootId={session.rootId}
                 sessionId={session.id}
@@ -1731,9 +1731,8 @@ export const Inspector = memo(function Inspector({
           {visited.has("git") ? (
             <TabsContent value="git" keepMounted className="min-h-0 overflow-hidden">
               <GitPanel
-                key={`${session.rootId}:${session.cwd}:${reload.git}`}
+                key={`${session.rootId}:${reload.git}`}
                 rootId={session.rootId}
-                directory={session.cwd}
                 sessionId={session.id}
                 remote={remote}
                 active={tab === "git" && !collapsed}
