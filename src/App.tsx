@@ -2174,6 +2174,7 @@ function App() {
         runId,
         rootId: session.rootId,
         cwd: session.cwd,
+        host: session.host ?? null,
         providerSessionId: session.providerSessionId,
         agent: session.agent,
         provider: session.provider,

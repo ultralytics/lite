@@ -3635,6 +3635,7 @@ async fn spawn_session(
     run_id: String,
     root_id: String,
     cwd: String,
+    host: Option<String>,
     mut provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
@@ -3648,6 +3649,11 @@ async fn spawn_session(
     rows: u16,
 ) -> Result<Option<String>, String> {
     let ssh = ssh_root(&roots, &root_id)?;
+    match (ssh.as_ref(), host.as_deref()) {
+        (Some(root), Some(host)) if root.host == host => {}
+        (None, None) => {}
+        _ => return Err("The remote workspace permission is no longer available".into()),
+    }
     if ssh.is_none()
         && !roots
             .0
