@@ -154,6 +154,7 @@ export function NewSessionDialog({
   useEffect(() => {
     if (!isOpen || remote) return;
     let disposed = false;
+    setUpdates({});
     void checkAgentUpdates().then((result) => {
       if (!disposed) setUpdates(result);
     });
