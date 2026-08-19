@@ -140,6 +140,27 @@ function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
   return items;
 }
 
+// Full-screen terminals can redraw a link away before the Git panel is opened. Remember references
+// when xterm renders them; the panel fills in their current GitHub metadata when it is visited.
+export function rememberGitHubReferences(sessionId: string, output: string, terminalStream: string) {
+  const { explicit } = githubItemReferences(output, "", terminalStream, "");
+  if (!explicit.length) return;
+  const current = sessionGitHubItems(sessionId);
+  const known = new Set(current.map((item) => itemKey(item.url)));
+  const additions = explicit
+    .filter((url) => !known.has(itemKey(url)))
+    .map((url) => ({
+      url,
+      title: null,
+      state: null,
+      occurredAt: null,
+      updatedAt: null,
+      additions: null,
+      deletions: null,
+    }));
+  if (additions.length) retainGitHubItems(sessionId, additions);
+}
+
 // The colors GitHub itself answers in, so a glance here reads the same as a glance there.
 const GITHUB_STATE = {
   open: "success",

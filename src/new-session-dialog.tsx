@@ -32,7 +32,6 @@ const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
 const DEEPSEEK_REASONING_KEY = "lite.newSession.deepseekReasoning.v1";
 const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
-const REMOTE_KEY = "lite.newSession.remote.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
 const DEEPSEEK_MODELS = [
   { value: "deepseek-v4-flash", label: "Flash" },
@@ -120,7 +119,7 @@ export function NewSessionDialog({
   });
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
-  const [remoteSelected, setRemoteSelected] = useState(() => localStorage.getItem(REMOTE_KEY) === "true");
+  const [remoteSelected, setRemoteSelected] = useState(false);
   const remote = remoteSsh && remoteSelected;
   const [host, setHost] = useState(() => localStorage.getItem(SSH_HOST_KEY) ?? "");
   const [availability, setAvailability] = useState<Record<string, Availability>>({});
@@ -281,7 +280,10 @@ export function NewSessionDialog({
       setDirectory(undefined);
     }
     // A cancelled dialog stays mounted, so a name typed into it must not wait for the next session.
-    if (!open) setTitle((current) => (current === undefined ? undefined : ""));
+    if (!open) {
+      setTitle((current) => (current === undefined ? undefined : ""));
+      setRemoteSelected(false);
+    }
     onOpenChange(open);
   }
 
@@ -333,6 +335,7 @@ export function NewSessionDialog({
       });
       setDirectory(undefined);
       setTitle((current) => (current === undefined ? undefined : ""));
+      setRemoteSelected(false);
       onOpenChange(false);
     } finally {
       setCreating(false);
@@ -407,7 +410,6 @@ export function NewSessionDialog({
                   checked={remote}
                   disabled={creating}
                   onCheckedChange={(checked) => {
-                    localStorage.setItem(REMOTE_KEY, String(checked));
                     if (directory) void invoke("revoke_directory", { rootId: directory.id });
                     setDirectory(undefined);
                     setPath("");
