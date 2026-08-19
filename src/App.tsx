@@ -95,7 +95,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearInspectorCache, Inspector, SearchInput } from "@/inspector";
+import { clearInspectorCache, Inspector, rememberGitHubReferences, SearchInput } from "@/inspector";
 import { including, swapped, without } from "@/lib/utils";
 import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
@@ -1597,6 +1597,7 @@ function App() {
   // Sessions whose terminal has written something recently, which is what separates a connected
   // session that is working from one that is merely connected.
   const [working, setWorking] = useState(loadWorking);
+  const workingRef = useRef(working);
   // Work that was live when the previous process disappeared is resumed once in this process.
   const interrupted = useRef(new Set(working));
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
@@ -1733,6 +1734,7 @@ function App() {
   }
   visibleRef.current = shut.sidebar ? sessions : displayed;
   sessionsRef.current = sessions;
+  workingRef.current = working;
   themeRef.current = theme;
   selectedRef.current = selected;
   notificationsRef.current = notifications;
@@ -1911,7 +1913,7 @@ function App() {
   }, [sessions]);
 
   // This is written while work changes rather than at shutdown, so a power loss still leaves the
-  // next Lite process an exact list. An install freezes the last state before it stops the PTYs.
+  // next Lite process an exact list. Installing snapshots the live list before freezing this effect.
   useEffect(() => {
     if (updateStatus !== "installing") localStorage.setItem(WORKING_KEY, JSON.stringify([...working]));
   }, [updateStatus, working]);
@@ -2546,6 +2548,10 @@ function App() {
   async function restartSessionNow(session: Session, fresh: Session, select: boolean): Promise<boolean> {
     runs.current.delete(session.id);
     forgetShellAgent(session.id);
+    const timer = workTimers.current.get(session.id);
+    if (timer) window.clearTimeout(timer);
+    workTimers.current.delete(session.id);
+    setWorking((current) => without(current, session.id));
     replaceRecentSession(session.id, fresh.id);
     setStartingIds((current) => including(current, fresh.id));
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
@@ -2900,6 +2906,17 @@ function App() {
 
   async function installUpdate() {
     setUpdateProgress(null);
+    // React may not have committed the last working-state effect when this click changes the update
+    // state. Persist from the live owners now, excluding closed, disconnected and shell sessions.
+    const sessions = new Set(
+      sessionsRef.current
+        .filter((session) => session.running && !session.mode && session.agent !== "shell")
+        .map((session) => session.id),
+    );
+    localStorage.setItem(
+      WORKING_KEY,
+      JSON.stringify([...workingRef.current].filter((sessionId) => sessions.has(sessionId))),
+    );
     setUpdateStatus("installing");
     // A download only reports itself while it is running, so it is heard for exactly that long. A
     // successful install restarts Lite from underneath this, and the failures it can return come
@@ -3308,6 +3325,9 @@ function App() {
                               working={working.has(session.id)}
                               starting={startingIds.has(session.id)}
                               onZoom={zoomTerminal}
+                              onOutput={(output, terminalStream) =>
+                                rememberGitHubReferences(session.id, output, terminalStream)
+                              }
                               onRecover={() => recoverSession(session)}
                               onPrompt={(text) => {
                                 const agent = session.agent === "shell" ? commandAgent(text) : undefined;

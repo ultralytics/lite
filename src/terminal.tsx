@@ -14,6 +14,7 @@ import {
   connectTerminalOutput,
   MAX_OUTPUT_BYTES,
   notifyTerminalOutput,
+  readTerminalStream,
   recordTerminalInput,
   subscribeOutput,
   writeSession,
@@ -143,6 +144,7 @@ export function TerminalView({
   starting,
   onZoom,
   onPrompt,
+  onOutput,
   onRecover,
 }: {
   sessionId: string;
@@ -154,12 +156,15 @@ export function TerminalView({
   starting: boolean;
   onZoom: (step: -1 | 0 | 1) => void;
   onPrompt: (text: string) => void;
+  onOutput: (output: string, terminalStream: string) => void;
   onRecover: () => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   // Held in a ref so a new prompt handler never rebuilds the terminal underneath the session.
   const promptRef = useRef(onPrompt);
   promptRef.current = onPrompt;
+  const outputRef = useRef(onOutput);
+  outputRef.current = onOutput;
   const recoverRef = useRef(onRecover);
   recoverRef.current = onRecover;
   const zoomRef = useRef(onZoom);
@@ -228,6 +233,7 @@ export function TerminalView({
     // The addon waits for output to go quiet before rebuilding its result map, which a live TUI may
     // never do. Refresh at a bounded rate while it writes; the addon's own timer handles the final pass.
     let searchRefresh = 0;
+    let outputRefresh = 0;
     const refreshSearch = () => {
       const query = searchQueryRef.current;
       if (!query) return;
@@ -238,6 +244,11 @@ export function TerminalView({
     };
     const parsed = terminal.onWriteParsed(() => {
       notifyTerminalOutput(sessionId);
+      window.clearTimeout(outputRefresh);
+      outputRefresh = window.setTimeout(
+        () => outputRef.current(renderedOutput(terminal), readTerminalStream(sessionId)),
+        250,
+      );
       if (!searchQueryRef.current) return;
       if (!searchRefresh)
         searchRefresh = window.setTimeout(() => {
@@ -342,6 +353,7 @@ export function TerminalView({
     return () => {
       window.clearTimeout(settle);
       window.clearTimeout(searchRefresh);
+      window.clearTimeout(outputRefresh);
       observer.disconnect();
       searchResults.dispose();
       input.dispose();
