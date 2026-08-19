@@ -242,13 +242,16 @@ export function TerminalView({
       searchAddon.clearDecorations();
       searchAddon.findNext(query, { ...searchOptions(themeRef.current), incremental: true });
     };
+    const rememberOutput = () => outputRef.current(renderedOutput(terminal), readTerminalStream(sessionId));
     const parsed = terminal.onWriteParsed(() => {
       notifyTerminalOutput(sessionId);
-      window.clearTimeout(outputRefresh);
-      outputRefresh = window.setTimeout(
-        () => outputRef.current(renderedOutput(terminal), readTerminalStream(sessionId)),
-        250,
-      );
+      if (!outputRefresh) {
+        rememberOutput();
+        outputRefresh = window.setTimeout(() => {
+          outputRefresh = 0;
+          rememberOutput();
+        }, 250);
+      }
       if (!searchQueryRef.current) return;
       if (!searchRefresh)
         searchRefresh = window.setTimeout(() => {

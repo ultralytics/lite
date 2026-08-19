@@ -2546,12 +2546,9 @@ function App() {
   }
 
   async function restartSessionNow(session: Session, fresh: Session, select: boolean): Promise<boolean> {
+    const wasWorking = workingRef.current.has(session.id);
     runs.current.delete(session.id);
     forgetShellAgent(session.id);
-    const timer = workTimers.current.get(session.id);
-    if (timer) window.clearTimeout(timer);
-    workTimers.current.delete(session.id);
-    setWorking((current) => without(current, session.id));
     replaceRecentSession(session.id, fresh.id);
     setStartingIds((current) => including(current, fresh.id));
     setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
@@ -2573,6 +2570,10 @@ function App() {
       }
       return false;
     }
+    const timer = workTimers.current.get(session.id);
+    if (timer) window.clearTimeout(timer);
+    workTimers.current.delete(session.id);
+    setWorking((current) => without(current, session.id));
     if (!(await launch(fresh, false))) {
       replaceRecentSession(fresh.id, session.id);
       await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
@@ -2582,7 +2583,10 @@ function App() {
       setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
       setSelectedId((current) => (current === fresh.id ? session.id : current));
       resumed.current = session.id;
-      if (await launch(restored, true)) setError("Restart failed; the original session was restored.");
+      if (await launch(restored, true)) {
+        if (wasWorking) markWorking(session.id);
+        setError("Restart failed; the original session was restored.");
+      }
       return false;
     }
     if (fresh.agent === "kimi") startKimiConversation(fresh.id);
