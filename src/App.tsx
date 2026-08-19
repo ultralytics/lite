@@ -1405,6 +1405,7 @@ function SessionRow({
           defaultValue={session.name}
           className="min-w-0 flex-1"
           aria-label="Session name"
+          onFocus={(event) => event.currentTarget.select()}
           onBlur={(event) => saveName(event.currentTarget.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();
