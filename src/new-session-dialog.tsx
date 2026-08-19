@@ -57,7 +57,11 @@ function checkAgentUpdates() {
         return [agent, null] as const;
       }
     }),
-  ).then(Object.fromEntries);
+  )
+    .then(Object.fromEntries)
+    .finally(() => {
+      updateChecks = undefined;
+    });
   return updateChecks;
 }
 
@@ -145,8 +149,8 @@ export function NewSessionDialog({
   }, [isOpen, chosen]);
   // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
   const missing = !remote && status && !status.available ? status : undefined;
-  // The first explicit open asks every harness in parallel. The answer is kept for this app run, so
-  // reopening the dialog does not repeat five version processes and five network requests.
+  // Each explicit open asks every harness in parallel. Concurrent opens share the same work, while a
+  // later open checks again so a newly published version or a failed registry request does not stay stale.
   useEffect(() => {
     if (!isOpen || remote) return;
     let disposed = false;
@@ -354,13 +358,7 @@ export function NewSessionDialog({
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === option.id)?.[1];
       if (result && !result.available && result.installable) setError(result.detail);
-      else {
-        updateChecks = (updateChecks ?? Promise.resolve(updates)).then((current) => ({
-          ...current,
-          [option.agent]: false,
-        }));
-        setUpdates((current) => ({ ...current, [option.agent]: false }));
-      }
+      else setUpdates((current) => ({ ...current, [option.agent]: false }));
     } catch (reason) {
       setError(String(reason));
     } finally {
