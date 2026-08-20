@@ -3592,7 +3592,7 @@ async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), 
     }
     let url = match (agent.as_str(), provider.as_deref()) {
         ("claude", _) => "https://code.claude.com/docs/en/setup",
-        ("codex", _) => "https://developers.openai.com/codex/cli",
+        ("codex", _) => "https://learn.chatgpt.com/docs/codex/cli",
         ("gemini", _) => "https://google-gemini.github.io/gemini-cli/",
         ("kimi", _) => {
             "https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html"

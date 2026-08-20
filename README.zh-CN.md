@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI、[DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex) 或 [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli) 的 [Codex](https://developers.openai.com/codex/cli)、[Gemini CLI](https://google-gemini.github.io/gemini-cli/)、[Kimi Code](https://www.kimi.com/code)、[Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
+Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI、[DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex) 或 [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli) 的 [Codex](https://learn.chatgpt.com/docs/codex/cli)、[Gemini CLI](https://google-gemini.github.io/gemini-cli/)、[Kimi Code](https://www.kimi.com/code)、[Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
 
 <div align="center">
   <br>
@@ -74,7 +74,7 @@ chmod +x Lite_*_linux_amd64.AppImage
 安装你需要使用的 provider CLI：
 
 - [Claude Code](https://code.claude.com/docs/en/setup)
-- [Codex](https://developers.openai.com/codex/cli)
+- [Codex](https://learn.chatgpt.com/docs/codex/cli)
 - [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) —— Windows 还需要安装 Git for Windows
 
 在 Lite 中打开每个 provider 并完成一次常规登录。每个 CLI 都把凭据保存在自己的本地存储中，因此之后的 Lite 会话会复用同一份认证信息。Lite 从不读取或复制这些存储。当某个 CLI 缺失时，新建会话对话框会提示你，并给出对应的安装指引。
