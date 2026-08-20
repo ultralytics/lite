@@ -114,6 +114,10 @@ function githubReference(url: string): GitHubReference {
   };
 }
 
+function githubRepositoryKey(url: string) {
+  return url.split("/").slice(3, 5).join("/").toLowerCase();
+}
+
 // Every optional field arrives from Serde as null, never as a missing key. A state of null is a link
 // GitHub could not be asked about rather than one it disowned; those are dropped before they arrive.
 interface GitHubItem {
@@ -127,35 +131,29 @@ interface GitHubItem {
 }
 
 const GITHUB_ITEMS_KEY = "lite.github-items";
-const REMOVED_GITHUB_REPOSITORIES_KEY = "lite.github-repositories.removed";
+const REMOVED_GITHUB_ITEMS_KEY = "lite.github-items.removed";
 
-function removedGitHubRepositories(sessionId: string) {
-  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_REPOSITORIES_KEY) ?? "{}") as Record<
-    string,
-    string[]
-  >;
+function removedGitHubItems(sessionId: string) {
+  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
   return new Set(sessions[sessionId] ?? []);
 }
 
-function setGitHubRepositoryRemoved(sessionId: string, url: string, removed: boolean) {
-  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_REPOSITORIES_KEY) ?? "{}") as Record<
-    string,
-    string[]
-  >;
-  const repositories = new Set(sessions[sessionId] ?? []);
-  if (removed) repositories.add(url.toLowerCase());
-  else repositories.delete(url.toLowerCase());
-  if (repositories.size) sessions[sessionId] = [...repositories];
+function setGitHubItemsRemoved(sessionId: string, urls: string[], removed: boolean) {
+  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
+  const items = new Set(sessions[sessionId] ?? []);
+  for (const url of urls) {
+    if (removed) items.add(itemKey(url));
+    else items.delete(itemKey(url));
+  }
+  if (items.size) sessions[sessionId] = [...items];
   else delete sessions[sessionId];
-  localStorage.setItem(REMOVED_GITHUB_REPOSITORIES_KEY, JSON.stringify(sessions));
+  localStorage.setItem(REMOVED_GITHUB_ITEMS_KEY, JSON.stringify(sessions));
 }
 
 function sessionGitHubItems(sessionId: string) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
-  const removed = removedGitHubRepositories(sessionId);
-  return (sessions[sessionId] ?? []).filter(
-    (item) => !removed.has(githubReference(item.url).repositoryUrl.toLowerCase()),
-  );
+  const removed = removedGitHubItems(sessionId);
+  return (sessions[sessionId] ?? []).filter((item) => !removed.has(itemKey(item.url)));
 }
 
 function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
@@ -1323,9 +1321,9 @@ export function clearInspectorCache(sessionId: string) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
   delete sessions[sessionId];
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
-  const removed = JSON.parse(localStorage.getItem(REMOVED_GITHUB_REPOSITORIES_KEY) ?? "{}") as Record<string, string[]>;
+  const removed = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
   delete removed[sessionId];
-  localStorage.setItem(REMOVED_GITHUB_REPOSITORIES_KEY, JSON.stringify(removed));
+  localStorage.setItem(REMOVED_GITHUB_ITEMS_KEY, JSON.stringify(removed));
 }
 
 function GitPanel({
@@ -1446,7 +1444,11 @@ function GitPanel({
   function removeRepository(repository: RepositoryGroup) {
     const url = repository.url;
     if (!url) return;
-    setGitHubRepositoryRemoved(sessionId, url, true);
+    const urls = items
+      .filter((item) => githubRepositoryKey(item.url) === githubRepositoryKey(url))
+      .map((item) => item.url);
+    if (!urls.length) return;
+    setGitHubItemsRemoved(sessionId, urls, true);
     setItems(sessionGitHubItems(sessionId));
     let toastId = "";
     toastId = toast.add({
@@ -1457,7 +1459,7 @@ function GitPanel({
       actionProps: {
         children: "Undo",
         onClick: () => {
-          setGitHubRepositoryRemoved(sessionId, url, false);
+          setGitHubItemsRemoved(sessionId, urls, false);
           setItems(sessionGitHubItems(sessionId));
           toast.close(toastId);
         },
@@ -1473,8 +1475,14 @@ function GitPanel({
     if (status !== undefined || error) onLoad("git");
   }, [error, onLoad, status]);
 
-  const repositories = repositoryGroups(remote, status ?? null, items);
-  const itemRepositories = new Set(items.map((item) => githubReference(item.url).repositoryUrl.toLowerCase()));
+  const removedRepositories = new Set(
+    [...removedGitHubItems(sessionId)].map((item) => item.slice(0, item.lastIndexOf("#"))),
+  );
+  const repositories = repositoryGroups(remote, status ?? null, items).filter(
+    (repository) =>
+      !repository.url || repository.items.length || !removedRepositories.has(githubRepositoryKey(repository.url)),
+  );
+  const itemRepositories = new Set(items.map((item) => githubRepositoryKey(item.url)));
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
   // repository's own name — and drops the cards left holding nothing.
   const lowered = query.trim().toLowerCase();
@@ -1517,7 +1525,7 @@ function GitPanel({
                 repository={repository}
                 onOpenDiff={(path) => void openDiff(path)}
                 onRemove={
-                  repository.url && itemRepositories.has(repository.url.toLowerCase())
+                  repository.url && itemRepositories.has(githubRepositoryKey(repository.url))
                     ? () => removeRepository(repository)
                     : undefined
                 }
