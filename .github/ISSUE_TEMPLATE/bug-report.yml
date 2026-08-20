@@ -77,7 +77,7 @@ body:
     attributes:
       label: Minimal Reproducible Example
       description: >
-        When asking a question, people will be better able to provide help if you provide the exact steps they can follow to **reproduce** the problem. This is referred to by community members as creating a [minimal reproducible example](https://docs.ultralytics.com/help/minimum-reproducible-example/).
+        When asking a question, people will be better able to provide help if you provide the exact steps they can follow to **reproduce** the problem. This is referred to by community members as creating a [minimal reproducible example](https://docs.ultralytics.com/help/minimum-reproducible-example).
       placeholder: |
         1. Open Lite and start a new session with ...
         2. ...

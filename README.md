@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://developers.openai.com/codex/cli) on OpenAI, [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), or [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli), [Gemini CLI](https://google-gemini.github.io/gemini-cli/), [Kimi Code](https://www.kimi.com/code), [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
+Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli) on OpenAI, [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), or [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli), [Gemini CLI](https://google-gemini.github.io/gemini-cli/), [Kimi Code](https://www.kimi.com/code), [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
 
 <div align="center">
   <br>
@@ -74,7 +74,7 @@ After installing Lite, open **Settings** from the gear in the top bar and choose
 Install the provider CLIs you want to use:
 
 - [Claude Code](https://code.claude.com/docs/en/setup)
-- [Codex](https://developers.openai.com/codex/cli)
+- [Codex](https://learn.chatgpt.com/docs/codex/cli)
 - [Gemini CLI](https://google-gemini.github.io/gemini-cli/)
 - [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) — Windows also needs Git for Windows
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/)
