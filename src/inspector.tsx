@@ -155,7 +155,7 @@ function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
   const items = mergeGitHubItems(sessions[sessionId] ?? [], updates);
   sessions[sessionId] = items;
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
-  return items;
+  return sessionGitHubItems(sessionId);
 }
 
 // Full-screen terminals can redraw a link away before the Git panel is opened. Remember references
