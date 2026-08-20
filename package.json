@@ -40,7 +40,7 @@
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "highlight.js": "^11.12.0",
-    "lucide-react": "^1.32.0",
+    "lucide-react": "^1.33.0",
     "material-icon-theme": "^5.37.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -57,9 +57,9 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
-    "@vitejs/plugin-react": "^6.0.5",
+    "@vitejs/plugin-react": "^6.1.0",
     "knip": "^6.32.2",
-    "vite": "^8.2.1"
+    "vite": "^8.2.2"
   },
   "overrides": {
     "@codemirror/view": "6.43.8"
