@@ -50,7 +50,7 @@ import {
 } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
@@ -127,27 +127,35 @@ interface GitHubItem {
 }
 
 const GITHUB_ITEMS_KEY = "lite.github-items";
-const REMOVED_GITHUB_ITEMS_KEY = "lite.github-items.removed";
+const REMOVED_GITHUB_REPOSITORIES_KEY = "lite.github-repositories.removed";
 
-function removedGitHubItems(sessionId: string) {
-  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
+function removedGitHubRepositories(sessionId: string) {
+  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_REPOSITORIES_KEY) ?? "{}") as Record<
+    string,
+    string[]
+  >;
   return new Set(sessions[sessionId] ?? []);
 }
 
-function setGitHubItemRemoved(sessionId: string, url: string, removed: boolean) {
-  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
-  const items = new Set(sessions[sessionId] ?? []);
-  if (removed) items.add(itemKey(url));
-  else items.delete(itemKey(url));
-  if (items.size) sessions[sessionId] = [...items];
+function setGitHubRepositoryRemoved(sessionId: string, url: string, removed: boolean) {
+  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_REPOSITORIES_KEY) ?? "{}") as Record<
+    string,
+    string[]
+  >;
+  const repositories = new Set(sessions[sessionId] ?? []);
+  if (removed) repositories.add(url.toLowerCase());
+  else repositories.delete(url.toLowerCase());
+  if (repositories.size) sessions[sessionId] = [...repositories];
   else delete sessions[sessionId];
-  localStorage.setItem(REMOVED_GITHUB_ITEMS_KEY, JSON.stringify(sessions));
+  localStorage.setItem(REMOVED_GITHUB_REPOSITORIES_KEY, JSON.stringify(sessions));
 }
 
 function sessionGitHubItems(sessionId: string) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
-  const removed = removedGitHubItems(sessionId);
-  return (sessions[sessionId] ?? []).filter((item) => !removed.has(itemKey(item.url)));
+  const removed = removedGitHubRepositories(sessionId);
+  return (sessions[sessionId] ?? []).filter(
+    (item) => !removed.has(githubReference(item.url).repositoryUrl.toLowerCase()),
+  );
 }
 
 function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
@@ -264,77 +272,53 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
   return [...groups.values()];
 }
 
-function GitHubItemList({
-  label,
-  items,
-  onRemove,
-}: {
-  label: string;
-  items: RepositoryGroup["items"];
-  onRemove: (item: GitHubItem) => void;
-}) {
+function GitHubItemList({ label, items }: { label: string; items: RepositoryGroup["items"] }) {
   if (!items.length) return null;
   return (
     <div className="border-t">
       <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">{label}</p>
       <ItemGroup className="has-data-[size=xs]:gap-0">
-        {items.map((item) => {
-          const { url, title, state, occurredAt, additions, deletions, kind, number } = item;
-          return (
-            <Item
-              key={url}
-              size="xs"
-              className="flex-nowrap items-stretch gap-0 rounded-none p-0 text-left hover:bg-muted"
-            >
+        {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
+          <Item
+            key={url}
+            size="xs"
+            className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
+            render={
               <button
                 type="button"
-                className="flex min-w-0 flex-1 items-start gap-2 px-3 py-2 text-left"
                 title={url}
                 data-context-url={url}
                 onClick={() => void invoke("open_url", { url })}
-              >
-                <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
-                  <GitHubItemIcon kind={kind} state={state} />
-                </ItemMedia>
-                <ItemContent>
-                  <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
-                  {title ? (
-                    <div className="flex min-w-0 items-center gap-2">
-                      <ItemDescription className="min-w-0 truncate font-mono">
-                        #{number}
-                        {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
-                      </ItemDescription>
-                      {additions ? (
-                        <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
-                          +{additions}
-                        </span>
-                      ) : null}
-                      {deletions ? (
-                        <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
-                      ) : null}
-                      {state ? (
-                        <Badge className="ml-auto" variant={GITHUB_STATE[state]}>
-                          {state}
-                        </Badge>
-                      ) : null}
-                    </div>
+              />
+            }
+          >
+            <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
+              <GitHubItemIcon kind={kind} state={state} />
+            </ItemMedia>
+            <ItemContent>
+              <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
+              {title ? (
+                <div className="flex min-w-0 items-center gap-2">
+                  <ItemDescription className="min-w-0 truncate font-mono">
+                    #{number}
+                    {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
+                  </ItemDescription>
+                  {additions ? (
+                    <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">+{additions}</span>
                   ) : null}
-                </ItemContent>
-              </button>
-              <ItemActions className="self-center pr-1">
-                <ActionIconButton
-                  size="icon-xs"
-                  className="text-muted-foreground hover:text-destructive"
-                  tooltip={`Remove ${kind}`}
-                  aria-label={`Remove ${kind} #${number}`}
-                  onClick={() => onRemove(item)}
-                >
-                  <Trash2 />
-                </ActionIconButton>
-              </ItemActions>
-            </Item>
-          );
-        })}
+                  {deletions ? (
+                    <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
+                  ) : null}
+                  {state ? (
+                    <Badge className="ml-auto" variant={GITHUB_STATE[state]}>
+                      {state}
+                    </Badge>
+                  ) : null}
+                </div>
+              ) : null}
+            </ItemContent>
+          </Item>
+        ))}
       </ItemGroup>
     </div>
   );
@@ -1227,11 +1211,11 @@ function DiffViewer({
 function RepositoryCard({
   repository,
   onOpenDiff,
-  onRemoveItem,
+  onRemove,
 }: {
   repository: RepositoryGroup;
   onOpenDiff: (path: string) => void;
-  onRemoveItem: (item: GitHubItem) => void;
+  onRemove?: () => void;
 }) {
   const pullRequests = repository.items.filter((item) => item.kind === "pull request");
   const issues = repository.items.filter((item) => item.kind === "issue");
@@ -1265,19 +1249,32 @@ function RepositoryCard({
 
   return (
     <section className="overflow-hidden rounded-lg border">
-      {repository.url ? (
-        <button
-          type="button"
-          className="flex w-full flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left hover:bg-muted"
-          title={`Open ${repository.url}`}
-          data-context-url={repository.url}
-          onClick={() => void invoke("open_url", { url: repository.url })}
-        >
-          {header}
-        </button>
-      ) : (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">{header}</div>
-      )}
+      <div className="flex items-start">
+        {repository.url ? (
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left hover:bg-muted"
+            title={`Open ${repository.url}`}
+            data-context-url={repository.url}
+            onClick={() => void invoke("open_url", { url: repository.url })}
+          >
+            {header}
+          </button>
+        ) : (
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">{header}</div>
+        )}
+        {onRemove ? (
+          <ActionIconButton
+            size="icon-sm"
+            className="mt-1.5 mr-1.5 text-muted-foreground hover:text-destructive"
+            tooltip="Remove repository"
+            aria-label={`Remove ${repository.name}`}
+            onClick={onRemove}
+          >
+            <Trash2 />
+          </ActionIconButton>
+        ) : null}
+      </div>
       {repository.changes.length ? (
         <div className="border-t px-2.5 py-2">
           <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
@@ -1312,8 +1309,8 @@ function RepositoryCard({
           })}
         </div>
       ) : null}
-      <GitHubItemList label="Pull requests" items={pullRequests} onRemove={onRemoveItem} />
-      <GitHubItemList label="Issues" items={issues} onRemove={onRemoveItem} />
+      <GitHubItemList label="Pull requests" items={pullRequests} />
+      <GitHubItemList label="Issues" items={issues} />
     </section>
   );
 }
@@ -1326,9 +1323,9 @@ export function clearInspectorCache(sessionId: string) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
   delete sessions[sessionId];
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
-  const removed = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
+  const removed = JSON.parse(localStorage.getItem(REMOVED_GITHUB_REPOSITORIES_KEY) ?? "{}") as Record<string, string[]>;
   delete removed[sessionId];
-  localStorage.setItem(REMOVED_GITHUB_ITEMS_KEY, JSON.stringify(removed));
+  localStorage.setItem(REMOVED_GITHUB_REPOSITORIES_KEY, JSON.stringify(removed));
 }
 
 function GitPanel({
@@ -1446,19 +1443,21 @@ function GitPanel({
     setDiffPath("");
   }, []);
 
-  function removeItem(item: GitHubItem) {
-    setGitHubItemRemoved(sessionId, item.url, true);
+  function removeRepository(repository: RepositoryGroup) {
+    const url = repository.url;
+    if (!url) return;
+    setGitHubRepositoryRemoved(sessionId, url, true);
     setItems(sessionGitHubItems(sessionId));
     let toastId = "";
     toastId = toast.add({
-      title: "Removed",
-      description: item.title ?? item.url,
+      title: "Removed repository",
+      description: repository.name,
       type: "success",
       timeout: 8000,
       actionProps: {
         children: "Undo",
         onClick: () => {
-          setGitHubItemRemoved(sessionId, item.url, false);
+          setGitHubRepositoryRemoved(sessionId, url, false);
           setItems(sessionGitHubItems(sessionId));
           toast.close(toastId);
         },
@@ -1475,6 +1474,7 @@ function GitPanel({
   }, [error, onLoad, status]);
 
   const repositories = repositoryGroups(remote, status ?? null, items);
+  const itemRepositories = new Set(items.map((item) => githubReference(item.url).repositoryUrl.toLowerCase()));
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
   // repository's own name — and drops the cards left holding nothing.
   const lowered = query.trim().toLowerCase();
@@ -1516,7 +1516,11 @@ function GitPanel({
                 key={(repository.url ?? repository.path)?.toLowerCase()}
                 repository={repository}
                 onOpenDiff={(path) => void openDiff(path)}
-                onRemoveItem={removeItem}
+                onRemove={
+                  repository.url && itemRepositories.has(repository.url.toLowerCase())
+                    ? () => removeRepository(repository)
+                    : undefined
+                }
               />
             ))}
             {lowered && status !== undefined && repositories.length && !shown.length ? (
