@@ -50,11 +50,12 @@ import {
 } from "@/components/ui/dialog";
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
-import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
@@ -126,10 +127,27 @@ interface GitHubItem {
 }
 
 const GITHUB_ITEMS_KEY = "lite.github-items";
+const REMOVED_GITHUB_ITEMS_KEY = "lite.github-items.removed";
+
+function removedGitHubItems(sessionId: string) {
+  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
+  return new Set(sessions[sessionId] ?? []);
+}
+
+function setGitHubItemRemoved(sessionId: string, url: string, removed: boolean) {
+  const sessions = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
+  const items = new Set(sessions[sessionId] ?? []);
+  if (removed) items.add(itemKey(url));
+  else items.delete(itemKey(url));
+  if (items.size) sessions[sessionId] = [...items];
+  else delete sessions[sessionId];
+  localStorage.setItem(REMOVED_GITHUB_ITEMS_KEY, JSON.stringify(sessions));
+}
 
 function sessionGitHubItems(sessionId: string) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
-  return sessions[sessionId] ?? [];
+  const removed = removedGitHubItems(sessionId);
+  return (sessions[sessionId] ?? []).filter((item) => !removed.has(itemKey(item.url)));
 }
 
 function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
@@ -246,53 +264,77 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
   return [...groups.values()];
 }
 
-function GitHubItemList({ label, items }: { label: string; items: RepositoryGroup["items"] }) {
+function GitHubItemList({
+  label,
+  items,
+  onRemove,
+}: {
+  label: string;
+  items: RepositoryGroup["items"];
+  onRemove: (item: GitHubItem) => void;
+}) {
   if (!items.length) return null;
   return (
     <div className="border-t">
       <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">{label}</p>
       <ItemGroup className="has-data-[size=xs]:gap-0">
-        {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
-          <Item
-            key={url}
-            size="xs"
-            className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
-            render={
+        {items.map((item) => {
+          const { url, title, state, occurredAt, additions, deletions, kind, number } = item;
+          return (
+            <Item
+              key={url}
+              size="xs"
+              className="flex-nowrap items-stretch gap-0 rounded-none p-0 text-left hover:bg-muted"
+            >
               <button
                 type="button"
+                className="flex min-w-0 flex-1 items-start gap-2 px-3 py-2 text-left"
                 title={url}
                 data-context-url={url}
                 onClick={() => void invoke("open_url", { url })}
-              />
-            }
-          >
-            <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
-              <GitHubItemIcon kind={kind} state={state} />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
-              {title ? (
-                <div className="flex min-w-0 items-center gap-2">
-                  <ItemDescription className="min-w-0 truncate font-mono">
-                    #{number}
-                    {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
-                  </ItemDescription>
-                  {additions ? (
-                    <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">+{additions}</span>
+              >
+                <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
+                  <GitHubItemIcon kind={kind} state={state} />
+                </ItemMedia>
+                <ItemContent>
+                  <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
+                  {title ? (
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ItemDescription className="min-w-0 truncate font-mono">
+                        #{number}
+                        {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
+                      </ItemDescription>
+                      {additions ? (
+                        <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
+                          +{additions}
+                        </span>
+                      ) : null}
+                      {deletions ? (
+                        <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
+                      ) : null}
+                      {state ? (
+                        <Badge className="ml-auto" variant={GITHUB_STATE[state]}>
+                          {state}
+                        </Badge>
+                      ) : null}
+                    </div>
                   ) : null}
-                  {deletions ? (
-                    <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
-                  ) : null}
-                  {state ? (
-                    <Badge className="ml-auto" variant={GITHUB_STATE[state]}>
-                      {state}
-                    </Badge>
-                  ) : null}
-                </div>
-              ) : null}
-            </ItemContent>
-          </Item>
-        ))}
+                </ItemContent>
+              </button>
+              <ItemActions className="self-center pr-1">
+                <ActionIconButton
+                  size="icon-xs"
+                  className="text-muted-foreground hover:text-destructive"
+                  tooltip={`Remove ${kind}`}
+                  aria-label={`Remove ${kind} #${number}`}
+                  onClick={() => onRemove(item)}
+                >
+                  <Trash2 />
+                </ActionIconButton>
+              </ItemActions>
+            </Item>
+          );
+        })}
       </ItemGroup>
     </div>
   );
@@ -1185,9 +1227,11 @@ function DiffViewer({
 function RepositoryCard({
   repository,
   onOpenDiff,
+  onRemoveItem,
 }: {
   repository: RepositoryGroup;
   onOpenDiff: (path: string) => void;
+  onRemoveItem: (item: GitHubItem) => void;
 }) {
   const pullRequests = repository.items.filter((item) => item.kind === "pull request");
   const issues = repository.items.filter((item) => item.kind === "issue");
@@ -1268,8 +1312,8 @@ function RepositoryCard({
           })}
         </div>
       ) : null}
-      <GitHubItemList label="Pull requests" items={pullRequests} />
-      <GitHubItemList label="Issues" items={issues} />
+      <GitHubItemList label="Pull requests" items={pullRequests} onRemove={onRemoveItem} />
+      <GitHubItemList label="Issues" items={issues} onRemove={onRemoveItem} />
     </section>
   );
 }
@@ -1282,6 +1326,9 @@ export function clearInspectorCache(sessionId: string) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
   delete sessions[sessionId];
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
+  const removed = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
+  delete removed[sessionId];
+  localStorage.setItem(REMOVED_GITHUB_ITEMS_KEY, JSON.stringify(removed));
 }
 
 function GitPanel({
@@ -1399,6 +1446,26 @@ function GitPanel({
     setDiffPath("");
   }, []);
 
+  function removeItem(item: GitHubItem) {
+    setGitHubItemRemoved(sessionId, item.url, true);
+    setItems(sessionGitHubItems(sessionId));
+    let toastId = "";
+    toastId = toast.add({
+      title: "Removed",
+      description: item.title ?? item.url,
+      type: "success",
+      timeout: 8000,
+      actionProps: {
+        children: "Undo",
+        onClick: () => {
+          setGitHubItemRemoved(sessionId, item.url, false);
+          setItems(sessionGitHubItems(sessionId));
+          toast.close(toastId);
+        },
+      },
+    });
+  }
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -1449,6 +1516,7 @@ function GitPanel({
                 key={(repository.url ?? repository.path)?.toLowerCase()}
                 repository={repository}
                 onOpenDiff={(path) => void openDiff(path)}
+                onRemoveItem={removeItem}
               />
             ))}
             {lowered && status !== undefined && repositories.length && !shown.length ? (
