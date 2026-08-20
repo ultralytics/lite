@@ -1249,11 +1249,11 @@ function RepositoryCard({
 
   return (
     <section className="overflow-hidden rounded-lg border">
-      <div className="flex items-start">
+      <div className="group/repository flex items-start hover:bg-muted focus-within:bg-muted">
         {repository.url ? (
           <button
             type="button"
-            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left hover:bg-muted"
+            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left"
             title={`Open ${repository.url}`}
             data-context-url={repository.url}
             onClick={() => void invoke("open_url", { url: repository.url })}
@@ -1266,7 +1266,7 @@ function RepositoryCard({
         {onRemove ? (
           <ActionIconButton
             size="icon-sm"
-            className="mt-1.5 mr-1.5 text-muted-foreground hover:text-destructive"
+            className="mt-1.5 mr-1.5 hidden text-muted-foreground hover:text-destructive group-hover/repository:inline-flex group-focus-within/repository:inline-flex"
             tooltip="Remove repository"
             aria-label={`Remove ${repository.name}`}
             onClick={onRemove}
