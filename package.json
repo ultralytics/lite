@@ -58,7 +58,7 @@
     "@types/react-dom": "^19.2.5",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vitejs/plugin-react": "^6.1.0",
-    "knip": "^6.32.2",
+    "knip": "^6.32.3",
     "vite": "^8.2.2"
   },
   "overrides": {
