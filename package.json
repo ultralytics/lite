@@ -25,6 +25,7 @@
     "@codemirror/commands": "^6.11.0",
     "@codemirror/language": "^6.12.4",
     "@codemirror/language-data": "^6.5.2",
+    "@codemirror/merge": "^6.12.2",
     "@codemirror/search": "^6.7.1",
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.8",
@@ -40,8 +41,8 @@
     "clsx": "^2.1.1",
     "codemirror": "^6.0.2",
     "highlight.js": "^11.12.0",
+    "jetbrains-file-icon-theme": "github:fogio-org/vscode-jetbrains-file-icon-theme#75fa199b2f48c4528577818196f5f62c97c48eae",
     "lucide-react": "^1.35.0",
-    "material-icon-theme": "^5.38.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
@@ -66,8 +67,7 @@
   },
   "knip": {
     "ignoreDependencies": [
-      "@fontsource-variable/geist",
-      "material-icon-theme"
+      "@fontsource-variable/geist"
     ]
   }
 }

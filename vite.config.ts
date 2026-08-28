@@ -17,9 +17,9 @@ export default defineConfig(async () => ({
     },
   },
   build: {
-    // File-tree icons stay separate files: a tree shows a dozen of them, so the startup bundle should not
-    // carry the whole set inline.
-    assetsInlineLimit: (file) => (file.includes("material-icon-theme") ? false : undefined),
+    // File-tree icons stay separate files: a tree shows a dozen of them, so its lazy chunk carries
+    // associations and URLs rather than hundreds of SVG bodies.
+    assetsInlineLimit: (file) => (file.includes("jetbrains-file-icon-theme") ? false : undefined),
     rollupOptions: {
       input: {
         main: path.resolve(import.meta.dirname, "./index.html"),

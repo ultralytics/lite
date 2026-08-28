@@ -79,7 +79,7 @@ const CodePreview = lazy(() => import("@/code-preview"));
 // The icon table is the file browser's, so it loads with the first tree rather than with the app; a
 // row keeps its icon's place while it does.
 const Icon = lazy(() => import("@/file-icons"));
-function FileIcon(props: { name: string; directory?: boolean; open?: boolean }) {
+function FileIcon(props: { name: string; directory?: boolean }) {
   return (
     <Suspense fallback={<span className="size-4 shrink-0" />}>
       <Icon {...props} />
@@ -130,6 +130,18 @@ interface GitHubItem {
   deletions: number | null;
 }
 
+function pendingGitHubItem(url: string): GitHubItem {
+  return {
+    url,
+    title: null,
+    state: null,
+    occurredAt: null,
+    updatedAt: null,
+    additions: null,
+    deletions: null,
+  };
+}
+
 const GITHUB_ITEMS_KEY = "lite.github-items";
 const REMOVED_GITHUB_ITEMS_KEY = "lite.github-items.removed";
 
@@ -171,17 +183,7 @@ export function rememberGitHubReferences(sessionId: string, output: string, term
   if (!explicit.length) return;
   const current = sessionGitHubItems(sessionId);
   const known = new Set(current.map((item) => itemKey(item.url)));
-  const additions = explicit
-    .filter((url) => !known.has(itemKey(url)))
-    .map((url) => ({
-      url,
-      title: null,
-      state: null,
-      occurredAt: null,
-      updatedAt: null,
-      additions: null,
-      deletions: null,
-    }));
+  const additions = explicit.filter((url) => !known.has(itemKey(url))).map(pendingGitHubItem);
   if (additions.length) retainGitHubItems(sessionId, additions);
 }
 
@@ -270,11 +272,27 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
   return [...groups.values()];
 }
 
-function GitHubItemList({ label, items }: { label: string; items: RepositoryGroup["items"] }) {
-  if (!items.length) return null;
+function GitHubItemList({
+  label,
+  items,
+  loading,
+}: {
+  label: string;
+  items: RepositoryGroup["items"];
+  loading: boolean;
+}) {
+  if (!items.length)
+    return loading ? (
+      <div className="border-t">
+        <Loading label={`Loading ${label.toLowerCase()}…`} />
+      </div>
+    ) : null;
   return (
     <div className="border-t">
-      <p className="px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">{label}</p>
+      <p className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
+        {label}
+        {loading ? <Spinner className="size-3" aria-label={`Loading ${label.toLowerCase()}`} /> : null}
+      </p>
       <ItemGroup className="has-data-[size=xs]:gap-0">
         {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
           <Item
@@ -638,7 +656,7 @@ function FileTree({
                       <ChevronRight
                         className={`size-3 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
                       />
-                      <FileIcon name={entry.name} directory open={open} />
+                      <FileIcon name={entry.name} directory />
                     </>
                   ) : (
                     <>
@@ -731,7 +749,7 @@ function FileTree({
           <ChevronRight
             className={`size-3 text-muted-foreground transition-transform ${rootOpen ? "rotate-90" : ""}`}
           />
-          <FileIcon name={name} directory open={rootOpen} />
+          <FileIcon name={name} directory />
           <span className="truncate">{name}</span>
         </button>
         <ActionIconButton
@@ -854,6 +872,7 @@ function FileViewer({
   entry,
   source,
   draft,
+  baseline,
   error,
   loading,
   fontSize,
@@ -864,6 +883,7 @@ function FileViewer({
   entry: FileEntry;
   source: string;
   draft: string;
+  baseline: string | null;
   error: string;
   loading: boolean;
   fontSize: number;
@@ -982,6 +1002,7 @@ function FileViewer({
               <CodePreview
                 path={entry.path}
                 source={draft}
+                baseline={baseline ?? undefined}
                 editable
                 fontSize={fontSize}
                 onChange={(contents) =>
@@ -1017,6 +1038,12 @@ interface FileEditorState {
   selected: FileEntry;
   source: string;
   draft: string;
+  baseline: string | null;
+}
+
+interface TextFile {
+  contents: string;
+  baseline: string | null;
 }
 
 const fileEditorsBySession = new Map<string, FileEditorState>();
@@ -1046,6 +1073,7 @@ function FilesPanel({
   const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
   const [source, setSource] = useState(cached?.source ?? "");
   const [draft, setDraft] = useState(cached?.draft ?? "");
+  const [baseline, setBaseline] = useState<string | null>(cached?.baseline ?? null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -1066,14 +1094,16 @@ function FilesPanel({
     setSelected(entry);
     setSource("");
     setDraft("");
+    setBaseline(null);
     setError("");
     setLoading(true);
     try {
-      const contents = await invoke<string>("read_text_file", { rootId, path: entry.path });
+      const { contents, baseline } = await invoke<TextFile>("read_text_file", { rootId, path: entry.path });
       if (request.current === id) {
         setSource(contents);
         setDraft(contents);
-        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents });
+        setBaseline(baseline);
+        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents, baseline });
       }
     } catch (reason) {
       if (request.current === id) {
@@ -1099,7 +1129,7 @@ function FilesPanel({
 
   function changeDraft(contents: string) {
     setDraft(contents);
-    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents });
+    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents, baseline });
   }
 
   function closeFile() {
@@ -1121,6 +1151,7 @@ function FilesPanel({
           entry={selected}
           source={source}
           draft={draft}
+          baseline={baseline}
           error={error}
           loading={loading}
           fontSize={fontSize}
@@ -1208,15 +1239,22 @@ function DiffViewer({
 
 function RepositoryCard({
   repository,
+  loadingUrls,
   onOpenDiff,
   onRemove,
 }: {
   repository: RepositoryGroup;
+  loadingUrls: string[];
   onOpenDiff: (path: string) => void;
   onRemove?: () => void;
 }) {
   const pullRequests = repository.items.filter((item) => item.kind === "pull request");
   const issues = repository.items.filter((item) => item.kind === "issue");
+  const loadingKinds = new Set(
+    loadingUrls
+      .filter((url) => repository.url && githubRepositoryKey(url) === githubRepositoryKey(repository.url))
+      .map((url) => githubReference(url).kind),
+  );
   const header = (
     <>
       <span className="flex min-w-0 w-full items-center gap-2.5">
@@ -1307,8 +1345,8 @@ function RepositoryCard({
           })}
         </div>
       ) : null}
-      <GitHubItemList label="Pull requests" items={pullRequests} />
-      <GitHubItemList label="Issues" items={issues} />
+      <GitHubItemList label="Pull requests" items={pullRequests} loading={loadingKinds.has("pull request")} />
+      <GitHubItemList label="Issues" items={issues} loading={loadingKinds.has("issue")} />
     </section>
   );
 }
@@ -1346,6 +1384,12 @@ function GitPanel({
   const [references, setReferences] = useState(() => namedInSession(sessionId, remote));
   const [status, setStatus] = useState<GitStatus | null>();
   const [items, setItems] = useState<GitHubItem[]>(() => sessionGitHubItems(sessionId));
+  const [loadingUrls, setLoadingUrls] = useState(() =>
+    mergeGitHubItems(
+      items,
+      [...references.explicit, ...references.inferred].map((url) => ({ url })),
+    ).map((item) => item.url),
+  );
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [diffPath, setDiffPath] = useState("");
@@ -1391,9 +1435,14 @@ function GitPanel({
       visible,
       [...explicit, ...inferred].map((url) => ({ url })),
     ).map((item) => item.url);
-    if (!urls.length) return setItems([]);
+    if (!urls.length) {
+      setItems([]);
+      setLoadingUrls([]);
+      return;
+    }
     let disposed = false;
     setItems(visible);
+    setLoadingUrls(urls);
     void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
         if (!disposed) {
@@ -1405,7 +1454,10 @@ function GitPanel({
           setItems(retainGitHubItems(sessionId, updates));
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!disposed) setLoadingUrls([]);
+      });
     return () => {
       disposed = true;
     };
@@ -1478,10 +1530,11 @@ function GitPanel({
   const removedRepositories = new Set(
     [...removedGitHubItems(sessionId)].map((item) => item.slice(0, item.lastIndexOf("#"))),
   );
-  const repositories = repositoryGroups(remote, status ?? null, items).filter(
-    (repository) =>
-      !repository.url || repository.items.length || !removedRepositories.has(githubRepositoryKey(repository.url)),
-  );
+  const repositories = repositoryGroups(
+    remote,
+    status ?? null,
+    mergeGitHubItems(loadingUrls.map(pendingGitHubItem), items),
+  ).filter((repository) => !repository.url || !removedRepositories.has(githubRepositoryKey(repository.url)));
   const itemRepositories = new Set(items.map((item) => githubRepositoryKey(item.url)));
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
   // repository's own name — and drops the cards left holding nothing.
@@ -1523,6 +1576,7 @@ function GitPanel({
               <RepositoryCard
                 key={(repository.url ?? repository.path)?.toLowerCase()}
                 repository={repository}
+                loadingUrls={loadingUrls}
                 onOpenDiff={(path) => void openDiff(path)}
                 onRemove={
                   repository.url && itemRepositories.has(githubRepositoryKey(repository.url))

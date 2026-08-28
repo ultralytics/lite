@@ -546,6 +546,13 @@ struct DirectoryListing {
     next_cursor: Option<DirectoryCursor>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TextFile {
+    contents: String,
+    baseline: Option<String>,
+}
+
 fn directory_key(name: &str, path: &str, is_directory: bool) -> (u8, String, String) {
     (
         u8::from(!is_directory),
@@ -4470,28 +4477,124 @@ async fn read_text_file(
     roots: State<'_, Roots>,
     root_id: String,
     path: String,
-) -> Result<String, String> {
-    let bytes = if let Some(root) = ssh_root(&roots, &root_id)? {
+) -> Result<TextFile, String> {
+    let (bytes, baseline) = if let Some(root) = ssh_root(&roots, &root_id)? {
         tauri::async_runtime::spawn_blocking(move || {
-            ssh_output(
+            let marker = format!("lite-file-{}", uuid::Uuid::new_v4());
+            let separator = format!("\0{marker}\0");
+            let output = ssh_output(
                 &root,
                 &scoped_ssh_script(
                     &root,
                     &path,
-                    &format!("head -c {} -- \"$path\"", MAX_FILE_BYTES + 1),
+                    &format!(
+                        "head -c {} -- \"$path\" || exit; printf '\\0%s\\0' {}; parent=${{path%/*}}; repository=$(git -C \"$parent\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '0\\0'; exit 0; }}; case \"$path\" in \"$repository\"/*) pathspec=${{path#\"$repository\"/}};; *) printf '0\\0'; exit 0;; esac; if ! git -C \"$repository\" --literal-pathspecs ls-files --error-unmatch -- \"$pathspec\" >/dev/null 2>&1; then git -C \"$repository\" --literal-pathspecs check-ignore -q -- \"$pathspec\"; ignored=$?; if test \"$ignored\" = 1; then printf '1\\0'; else printf '0\\0'; fi; exit 0; fi; {SSH_GIT_BASE} object=$base:$pathspec; if ! git -C \"$repository\" cat-file -e \"$object\" 2>/dev/null; then printf '1\\0'; exit 0; fi; baseline=$(mktemp) || {{ printf '0\\0'; exit 0; }}; code=$(mktemp) || {{ rm -f -- \"$baseline\"; printf '0\\0'; exit 0; }}; trap 'rm -f -- \"$baseline\" \"$code\"' EXIT; {{ git -C \"$repository\" cat-file --filters \"--path=$pathspec\" \"$object\"; printf '%s' $? > \"$code\"; }} | head -c {} > \"$baseline\"; result=$(cat \"$code\"); size=$(wc -c < \"$baseline\"); if test \"$result\" = 0 && test \"$size\" -le {MAX_FILE_BYTES}; then printf '1\\0'; cat -- \"$baseline\"; else printf '0\\0'; fi; rm -f -- \"$baseline\" \"$code\"; trap - EXIT",
+                        MAX_FILE_BYTES + 1,
+                        posix_quote(&marker),
+                        MAX_FILE_BYTES + 1,
+                    ),
                 )?,
-            )
+            )?;
+            let separator = separator.as_bytes();
+            let split = output
+                .windows(separator.len())
+                .position(|window| window == separator)
+                .ok_or_else(|| "Could not read remote file".to_owned())?;
+            let (contents, rest) = output.split_at(split);
+            let rest = &rest[separator.len()..];
+            let Some(status) = rest.first() else {
+                return Err("Could not read remote file".to_owned());
+            };
+            if rest.get(1) != Some(&0) {
+                return Err("Could not read remote file".to_owned());
+            }
+            Ok::<(Vec<u8>, Option<Vec<u8>>), String>((
+                contents.to_vec(),
+                (*status == b'1').then(|| rest[2..].to_vec()),
+            ))
         })
         .await
         .map_err(|error| error.to_string())??
     } else {
         let root = root_path(&roots, &root_id)?;
         let path = scoped_path(&root, &path)?;
-        let mut bytes = Vec::new();
-        fs::File::open(path)
-            .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
-            .map_err(|error| error.to_string())?;
-        bytes
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut bytes = Vec::new();
+            fs::File::open(&path)
+                .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
+                .map_err(|error| error.to_string())?;
+            let baseline = (|| {
+                let git = resolve_executable("git")?;
+                let repository = fs::canonicalize(
+                    command_output(&git, path.parent()?, &["rev-parse", "--show-toplevel"]).ok()?,
+                )
+                .ok()?;
+                let pathspec = path
+                    .strip_prefix(&repository)
+                    .ok()?
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                if command_output(
+                    &git,
+                    &repository,
+                    &[
+                        "--literal-pathspecs",
+                        "ls-files",
+                        "--error-unmatch",
+                        "--",
+                        &pathspec,
+                    ],
+                )
+                .is_err()
+                {
+                    let ignored = Command::new(&git)
+                        .arg("-C")
+                        .arg(&repository)
+                        .args(["--literal-pathspecs", "check-ignore", "-q", "--", &pathspec])
+                        .status()
+                        .ok()?;
+                    return (ignored.code() == Some(1)).then(Vec::new);
+                }
+                let base = git_diff_base(&git, &repository).ok()?;
+                let object = format!("{base}:{pathspec}");
+                if command_output(&git, &repository, &["cat-file", "-e", &object]).is_err() {
+                    return Some(Vec::new());
+                }
+                let mut child = Command::new(git)
+                    .arg("-C")
+                    .arg(repository)
+                    .args(["cat-file", "--filters"])
+                    .arg(format!("--path={pathspec}"))
+                    .arg(object)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .ok()?;
+                let mut output = Vec::new();
+                if child
+                    .stdout
+                    .take()?
+                    .take(MAX_FILE_BYTES + 1)
+                    .read_to_end(&mut output)
+                    .is_err()
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                if output.len() > MAX_FILE_BYTES as usize {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                child.wait().ok()?.success().then_some(output)
+            })();
+            Ok::<(Vec<u8>, Option<Vec<u8>>), String>((bytes, baseline))
+        })
+        .await
+        .map_err(|error| error.to_string())??
     };
     if bytes.len() > MAX_FILE_BYTES as usize {
         return Err("File is larger than 500 KB".into());
@@ -4499,7 +4602,15 @@ async fn read_text_file(
     if bytes.contains(&0) {
         return Err("Binary files cannot be previewed".into());
     }
-    String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text".into())
+    let contents = String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text")?;
+    let baseline = baseline.and_then(|bytes| {
+        if bytes.contains(&0) {
+            None
+        } else {
+            String::from_utf8(bytes).ok()
+        }
+    });
+    Ok(TextFile { contents, baseline })
 }
 
 #[tauri::command]

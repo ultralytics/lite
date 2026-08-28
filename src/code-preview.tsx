@@ -167,6 +167,7 @@ export default function CodePreview({
   source,
   rendered = false,
   editable = false,
+  baseline,
   fontSize,
   onChange,
 }: {
@@ -174,6 +175,7 @@ export default function CodePreview({
   source: string;
   rendered?: boolean;
   editable?: boolean;
+  baseline?: string;
   fontSize?: number;
   onChange?: (source: string) => void;
 }) {
@@ -192,7 +194,7 @@ export default function CodePreview({
     );
   }
   if (editable) {
-    return <SourceEditor path={path} source={source} fontSize={fontSize} onChange={onChange} />;
+    return <SourceEditor path={path} source={source} baseline={baseline} fontSize={fontSize} onChange={onChange} />;
   }
   return (
     <pre className="flex min-h-full overflow-auto font-mono">
