@@ -489,7 +489,7 @@ export default function SourceEditor({
               position: "relative",
               minWidth: "0.375rem",
               padding: "0",
-              cursor: "context-menu",
+              cursor: "pointer",
             },
             ".cm-changeMarker": {
               position: "absolute",
