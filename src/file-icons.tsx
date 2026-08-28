@@ -1,59 +1,50 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-// JetBrains' own file and folder icons. The file browser lazy-loads this module, and the bounded
-// glob keeps the rest of the icon package out of Lite's startup bundle.
-const ICONS = import.meta.glob<string>(
-  "/node_modules/@jetbrains/icons/{file,folder,image,file-archive,file-css,file-go,file-gql,file-html,file-java,file-js,file-json,file-kotlin,file-properties,file-python,file-ts,file-tsx,file-xml,file-yaml}.js",
-  { eager: true, import: "default" },
+import theme from "jetbrains-file-icon-theme/themes/auto-jetbrains-icon-theme.json";
+
+// The complete off-the-shelf JetBrains theme owns both its associations and artwork. This module is
+// lazy-loaded with the file browser, and Vite emits each SVG separately so none enters startup code.
+const ICONS = import.meta.glob<string>("/node_modules/jetbrains-file-icon-theme/themes/icons/**/*.svg", {
+  eager: true,
+  query: "?url",
+  import: "default",
+});
+
+const names = Object.fromEntries(Object.entries(theme.fileNames).map(([name, icon]) => [name.toLowerCase(), icon]));
+const folders = Object.fromEntries(Object.entries(theme.folderNames).map(([name, icon]) => [name.toLowerCase(), icon]));
+const lightNames = Object.fromEntries(
+  Object.entries(theme.light.fileNames).map(([name, icon]) => [name.toLowerCase(), icon]),
+);
+const lightFolders = Object.fromEntries(
+  Object.entries(theme.light.folderNames).map(([name, icon]) => [name.toLowerCase(), icon]),
 );
 
-const FILE_TYPES: Record<string, string> = {
-  "7z": "file-archive",
-  css: "file-css",
-  gif: "image",
-  go: "file-go",
-  gql: "file-gql",
-  graphql: "file-gql",
-  gz: "file-archive",
-  htm: "file-html",
-  html: "file-html",
-  ico: "image",
-  java: "file-java",
-  jpeg: "image",
-  jpg: "image",
-  js: "file-js",
-  json: "file-json",
-  json5: "file-json",
-  jsonc: "file-json",
-  jsx: "file-js",
-  kt: "file-kotlin",
-  kts: "file-kotlin",
-  png: "image",
-  properties: "file-properties",
-  py: "file-python",
-  pyi: "file-python",
-  tar: "file-archive",
-  ts: "file-ts",
-  tsx: "file-tsx",
-  webp: "image",
-  xml: "file-xml",
-  yaml: "file-yaml",
-  yml: "file-yaml",
-  zip: "file-archive",
-};
-
-function icon(name: string) {
-  return ICONS[`/node_modules/@jetbrains/icons/${name}.js`] ?? ICONS["/node_modules/@jetbrains/icons/file.js"];
+function associatedIcon(name: string, directory: boolean, light = false) {
+  const lower = name.toLowerCase();
+  if (directory) return (light ? lightFolders : folders)[lower] ?? (light ? theme.light.folder : theme.folder);
+  const named = (light ? lightNames : names)[lower];
+  if (named) return named;
+  const extensions = light ? theme.light.fileExtensions : theme.fileExtensions;
+  const parts = lower.split(".");
+  for (let start = 1; start < parts.length; start++) {
+    const icon = extensions[parts.slice(start).join(".") as keyof typeof extensions];
+    if (icon) return icon;
+  }
+  return light ? theme.light.file : theme.file;
 }
 
-export default function FileIcon({ name, directory }: { name: string; directory?: boolean }) {
-  const extension = name.toLowerCase().split(".").pop() ?? "";
-  // The package's documented JS imports are trusted, static SVG strings from JetBrains.
+function iconUrl(name: string, directory: boolean, light = false) {
+  const definition =
+    theme.iconDefinitions[associatedIcon(name, directory, light) as keyof typeof theme.iconDefinitions];
+  return ICONS[`/node_modules/jetbrains-file-icon-theme/themes/${definition.iconPath.slice(2)}`];
+}
+
+export default function FileIcon({ name, directory = false }: { name: string; directory?: boolean }) {
+  const icon = "size-4 shrink-0";
   return (
-    <span
-      aria-hidden="true"
-      className="size-4 shrink-0 [&>svg]:size-4"
-      dangerouslySetInnerHTML={{ __html: icon(directory ? "folder" : (FILE_TYPES[extension] ?? "file")) }}
-    />
+    <span aria-hidden="true" className={icon}>
+      <img src={iconUrl(name, directory, true)} alt="" className={`${icon} dark:hidden`} />
+      <img src={iconUrl(name, directory)} alt="" className={`${icon} hidden dark:block`} />
+    </span>
   );
 }

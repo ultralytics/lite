@@ -13,7 +13,6 @@
         "@codemirror/state": "^6.7.1",
         "@codemirror/view": "^6.43.8",
         "@fontsource-variable/geist": "^5.3.0",
-        "@jetbrains/icons": "^5.23.4",
         "@lezer/highlight": "^1.2.3",
         "@tailwindcss/vite": "^4.3.3",
         "@tauri-apps/api": "^2.11.1",
@@ -24,6 +23,7 @@
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "codemirror": "^6.0.2",
+        "jetbrains-file-icon-theme": "github:fogio-org/vscode-jetbrains-file-icon-theme#75fa199b2f48c4528577818196f5f62c97c48eae",
         "highlight.js": "^11.12.0",
         "lucide-react": "^1.35.0",
         "react": "^19.2.8",
@@ -150,8 +150,6 @@
     "@floating-ui/utils": ["@floating-ui/utils@0.2.12", "", {}, "sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww=="],
 
     "@fontsource-variable/geist": ["@fontsource-variable/geist@5.3.0", "", {}, "sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA=="],
-
-    "@jetbrains/icons": ["@jetbrains/icons@5.23.4", "", {}, "sha512-eAO/VJ3HxEU3DFGMAWMX9vKGG32UFSjrVQzQwpGOiZZAFebnRXEpkZPB75/hbK5KcU3PcfDMEBsYuohJDioIWw=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
@@ -488,6 +486,8 @@
     "is-hexadecimal": ["is-hexadecimal@2.0.1", "", {}, "sha512-DgZQp241c8oO6cA1SbTEWiXeoxV42vlcJxgH+B3hi1AiqqKruZR3ZGF8In3fj4+/y/7rHvlOZLZtgJ/4ttYGZg=="],
 
     "is-plain-obj": ["is-plain-obj@4.1.0", "", {}, "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg=="],
+
+    "jetbrains-file-icon-theme": ["jetbrains-file-icon-theme@github:fogio-org/vscode-jetbrains-file-icon-theme#75fa199", {}, "fogio-org-vscode-jetbrains-file-icon-theme-75fa199", "sha512-O5Rli1pYJC7+OQv1VvoIFKG2cOdS66LftRHsd6ZS0NuRRiy+an7Zta8Oi4czPk5MUNIWcciNJnayDdMqojIBjQ=="],
 
     "jiti": ["jiti@2.7.0", "", { "bin": { "jiti": "lib/jiti-cli.mjs" } }, "sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ=="],
 
