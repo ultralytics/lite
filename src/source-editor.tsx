@@ -495,7 +495,7 @@ export default function SourceEditor({
               position: "absolute",
               top: "-1px",
               right: "0",
-              width: "3px",
+              width: "4px",
               transition: "width 80ms ease",
               zIndex: "1",
             },
@@ -506,16 +506,16 @@ export default function SourceEditor({
             ".cm-changeMarker-modified": { backgroundColor: "var(--color-sky-500)" },
             ".cm-changeMarker-deleted": {
               top: "-2px",
-              width: "5px",
+              width: "6px",
               height: "3px",
               backgroundColor: "var(--destructive)",
               transition: "width 80ms ease, height 80ms ease",
             },
             ".cm-changeGutter .cm-gutterElement:hover .cm-changeMarker:not(.cm-changeMarker-deleted)": {
-              width: "5px",
+              width: "6px",
             },
             ".cm-changeGutter .cm-gutterElement:hover .cm-changeMarker-deleted": {
-              width: "7px",
+              width: "8px",
               height: "4px",
             },
             ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "transparent" },
