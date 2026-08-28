@@ -196,6 +196,7 @@ export function TerminalView({
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    setScrolledUp(false);
 
     const terminal = new Terminal({
       // The official search addon uses xterm decorations to count and mark every match.

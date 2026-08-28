@@ -4518,79 +4518,83 @@ async fn read_text_file(
     } else {
         let root = root_path(&roots, &root_id)?;
         let path = scoped_path(&root, &path)?;
-        let mut bytes = Vec::new();
-        fs::File::open(&path)
-            .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
-            .map_err(|error| error.to_string())?;
-        let baseline = (|| {
-            let git = resolve_executable("git")?;
-            let repository = fs::canonicalize(
-                command_output(&git, path.parent()?, &["rev-parse", "--show-toplevel"]).ok()?,
-            )
-            .ok()?;
-            let pathspec = path
-                .strip_prefix(&repository)
-                .ok()?
-                .components()
-                .map(|component| component.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>()
-                .join("/");
-            if command_output(
-                &git,
-                &repository,
-                &[
-                    "--literal-pathspecs",
-                    "ls-files",
-                    "--error-unmatch",
-                    "--",
-                    &pathspec,
-                ],
-            )
-            .is_err()
-            {
-                let ignored = Command::new(&git)
-                    .arg("-C")
-                    .arg(&repository)
-                    .args(["--literal-pathspecs", "check-ignore", "-q", "--", &pathspec])
-                    .status()
-                    .ok()?;
-                return (ignored.code() == Some(1)).then(Vec::new);
-            }
-            let base = git_diff_base(&git, &repository).ok()?;
-            let object = format!("{base}:{pathspec}");
-            if command_output(&git, &repository, &["cat-file", "-e", &object]).is_err() {
-                return Some(Vec::new());
-            }
-            let mut child = Command::new(git)
-                .arg("-C")
-                .arg(repository)
-                .args(["cat-file", "--filters"])
-                .arg(format!("--path={pathspec}"))
-                .arg(object)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut bytes = Vec::new();
+            fs::File::open(&path)
+                .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
+                .map_err(|error| error.to_string())?;
+            let baseline = (|| {
+                let git = resolve_executable("git")?;
+                let repository = fs::canonicalize(
+                    command_output(&git, path.parent()?, &["rev-parse", "--show-toplevel"]).ok()?,
+                )
                 .ok()?;
-            let mut output = Vec::new();
-            if child
-                .stdout
-                .take()?
-                .take(MAX_FILE_BYTES + 1)
-                .read_to_end(&mut output)
+                let pathspec = path
+                    .strip_prefix(&repository)
+                    .ok()?
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                if command_output(
+                    &git,
+                    &repository,
+                    &[
+                        "--literal-pathspecs",
+                        "ls-files",
+                        "--error-unmatch",
+                        "--",
+                        &pathspec,
+                    ],
+                )
                 .is_err()
-            {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            if output.len() > MAX_FILE_BYTES as usize {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            child.wait().ok()?.success().then_some(output)
-        })();
-        (bytes, baseline)
+                {
+                    let ignored = Command::new(&git)
+                        .arg("-C")
+                        .arg(&repository)
+                        .args(["--literal-pathspecs", "check-ignore", "-q", "--", &pathspec])
+                        .status()
+                        .ok()?;
+                    return (ignored.code() == Some(1)).then(Vec::new);
+                }
+                let base = git_diff_base(&git, &repository).ok()?;
+                let object = format!("{base}:{pathspec}");
+                if command_output(&git, &repository, &["cat-file", "-e", &object]).is_err() {
+                    return Some(Vec::new());
+                }
+                let mut child = Command::new(git)
+                    .arg("-C")
+                    .arg(repository)
+                    .args(["cat-file", "--filters"])
+                    .arg(format!("--path={pathspec}"))
+                    .arg(object)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .ok()?;
+                let mut output = Vec::new();
+                if child
+                    .stdout
+                    .take()?
+                    .take(MAX_FILE_BYTES + 1)
+                    .read_to_end(&mut output)
+                    .is_err()
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                if output.len() > MAX_FILE_BYTES as usize {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                child.wait().ok()?.success().then_some(output)
+            })();
+            Ok::<(Vec<u8>, Option<Vec<u8>>), String>((bytes, baseline))
+        })
+        .await
+        .map_err(|error| error.to_string())??
     };
     if bytes.len() > MAX_FILE_BYTES as usize {
         return Err("File is larger than 500 KB".into());
