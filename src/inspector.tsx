@@ -130,6 +130,18 @@ interface GitHubItem {
   deletions: number | null;
 }
 
+function pendingGitHubItem(url: string): GitHubItem {
+  return {
+    url,
+    title: null,
+    state: null,
+    occurredAt: null,
+    updatedAt: null,
+    additions: null,
+    deletions: null,
+  };
+}
+
 const GITHUB_ITEMS_KEY = "lite.github-items";
 const REMOVED_GITHUB_ITEMS_KEY = "lite.github-items.removed";
 
@@ -171,17 +183,7 @@ export function rememberGitHubReferences(sessionId: string, output: string, term
   if (!explicit.length) return;
   const current = sessionGitHubItems(sessionId);
   const known = new Set(current.map((item) => itemKey(item.url)));
-  const additions = explicit
-    .filter((url) => !known.has(itemKey(url)))
-    .map((url) => ({
-      url,
-      title: null,
-      state: null,
-      occurredAt: null,
-      updatedAt: null,
-      additions: null,
-      deletions: null,
-    }));
+  const additions = explicit.filter((url) => !known.has(itemKey(url))).map(pendingGitHubItem);
   if (additions.length) retainGitHubItems(sessionId, additions);
 }
 
@@ -1509,13 +1511,17 @@ function GitPanel({
   }, [refresh]);
 
   useEffect(() => {
-    if ((status !== undefined || error) && !loadingUrls.length) onLoad("git");
-  }, [error, loadingUrls.length, onLoad, status]);
+    if (status !== undefined || error) onLoad("git");
+  }, [error, onLoad, status]);
 
   const removedRepositories = new Set(
     [...removedGitHubItems(sessionId)].map((item) => item.slice(0, item.lastIndexOf("#"))),
   );
-  const repositories = repositoryGroups(remote, status ?? null, items).filter(
+  const repositories = repositoryGroups(
+    remote,
+    status ?? null,
+    mergeGitHubItems(loadingUrls.map(pendingGitHubItem), items),
+  ).filter(
     (repository) =>
       !repository.url || repository.items.length || !removedRepositories.has(githubRepositoryKey(repository.url)),
   );
