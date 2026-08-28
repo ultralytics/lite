@@ -1534,10 +1534,7 @@ function GitPanel({
     remote,
     status ?? null,
     mergeGitHubItems(loadingUrls.map(pendingGitHubItem), items),
-  ).filter(
-    (repository) =>
-      !repository.url || repository.items.length || !removedRepositories.has(githubRepositoryKey(repository.url)),
-  );
+  ).filter((repository) => !repository.url || !removedRepositories.has(githubRepositoryKey(repository.url)));
   const itemRepositories = new Set(items.map((item) => githubRepositoryKey(item.url)));
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
   // repository's own name — and drops the cards left holding nothing.

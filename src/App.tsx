@@ -349,6 +349,7 @@ type AppMenuContext = {
   expandSessions: HTMLButtonElement | null;
   newSession: HTMLButtonElement | null;
   refresh: HTMLButtonElement | null;
+  revert: HTMLButtonElement | null;
   selectedText: string;
   sessionId: string;
   url: string;
@@ -371,6 +372,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   expandSessions: null,
   newSession: null,
   refresh: null,
+  revert: null,
   selectedText: "",
   sessionId: "",
   url: "",
@@ -397,6 +399,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const session = target.closest<HTMLElement>("[data-context-session]");
   const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
   const files = target.closest<HTMLElement>("[data-context-files]");
+  const change = target.closest<HTMLElement>("[data-context-change]");
   // The terminal and the file viewer each zoom their own type, so the menu offers whichever owns the click.
   const zoom = target.closest<HTMLElement>("[data-context-zoom], [data-zoom-panel]");
   const selectedText =
@@ -415,6 +418,10 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     expandSessions: surface?.querySelector<HTMLButtonElement>("[data-context-expand-sessions]") ?? null,
     newSession: surface?.querySelector<HTMLButtonElement>("[data-context-new-session]") ?? null,
     refresh: surface?.querySelector<HTMLButtonElement>("[data-context-refresh]") ?? null,
+    revert:
+      change
+        ?.closest<HTMLElement>("[data-context-editor]")
+        ?.querySelector<HTMLButtonElement>("[data-context-revert]") ?? null,
     selectedText,
     sessionId: session?.dataset.contextSession ?? "",
     url: link instanceof HTMLAnchorElement ? link.href : (link?.dataset.contextUrl ?? ""),
@@ -432,6 +439,7 @@ function hasMenuItems(context: AppMenuContext): boolean {
     context.editable,
     context.directory || context.expandFiles || context.expandPanel || context.expandSessions,
     context.newSession || context.refresh,
+    context.revert,
     context.selectedText,
     context.sessionId,
     context.url || context.value,
@@ -502,6 +510,7 @@ function AppContextMenu({
   ].some(Boolean);
   const editGroup = Boolean(context.editable || context.selectedText);
   const sessionsGroup = Boolean(session || context.newSession);
+  const hasOtherMenuItems = hasMenuItems({ ...context, revert: null });
 
   return (
     <ContextMenu
@@ -515,6 +524,15 @@ function AppContextMenu({
     >
       <ContextMenuTrigger render={children} />
       <ContextMenuContent className="w-44">
+        {context.revert ? (
+          <>
+            <ContextMenuItem onClick={() => context.revert?.click()}>
+              <RotateCcw />
+              Revert change
+            </ContextMenuItem>
+            {hasOtherMenuItems ? <ContextMenuSeparator /> : null}
+          </>
+        ) : null}
         {session ? (
           <>
             {session.id !== selectedId || !session.running ? (

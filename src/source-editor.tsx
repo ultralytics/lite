@@ -87,7 +87,8 @@ class ChangeMarker extends GutterMarker {
   toDOM() {
     const marker = document.createElement("div");
     marker.className = `cm-changeMarker cm-changeMarker-${this.kind}`;
-    marker.title = `${this.kind[0].toUpperCase()}${this.kind.slice(1)} lines · Right-click to revert`;
+    marker.dataset.contextChange = "";
+    marker.title = `${this.kind[0].toUpperCase()}${this.kind.slice(1)} lines`;
     return marker;
   }
 }
@@ -98,7 +99,7 @@ const changeMarkers = {
   deleted: new ChangeMarker("deleted"),
 };
 
-function changeGutter(baseline: string) {
+function changeGutter(baseline: string, setRevert: (action: () => void) => void) {
   const original = EditorState.create({ doc: baseline }).doc;
   const diffConfig = { scanLimit: 500, timeout: 250 };
   const chunks = StateField.define<readonly Chunk[]>({
@@ -149,16 +150,18 @@ function changeGutter(baseline: string) {
         contextmenu(view, line) {
           const chunk = changedChunk(view.state, line.from);
           if (!chunk) return false;
-          view.dispatch({
-            changes: {
-              from: chunk.fromB,
-              to: Math.min(chunk.toB, view.state.doc.length),
-              insert: original.sliceString(chunk.fromA, Math.min(chunk.toA, original.length)),
-            },
-            userEvent: "input.revert",
+          setRevert(() => {
+            view.dispatch({
+              changes: {
+                from: chunk.fromB,
+                to: Math.min(chunk.toB, view.state.doc.length),
+                insert: original.sliceString(chunk.fromA, Math.min(chunk.toA, original.length)),
+              },
+              userEvent: "input.revert",
+            });
+            view.focus();
           });
-          view.focus();
-          return true;
+          return false;
         },
       },
     }),
@@ -403,6 +406,7 @@ export default function SourceEditor({
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView>(null);
+  const revert = useRef<(() => void) | null>(null);
   const change = useRef(onChange);
   const initialSource = useRef(source);
   const [panel, setPanel] = useState<{ dom: HTMLElement; view: EditorView } | null>(null);
@@ -449,7 +453,7 @@ export default function SourceEditor({
           keymap.of([indentWithTab]),
           indentUnit.of(detectIndent(path, initialSource.current)),
           syntaxHighlighting(editorHighlight),
-          ...(baseline === undefined ? [] : changeGutter(baseline)),
+          ...(baseline === undefined ? [] : changeGutter(baseline, (action) => (revert.current = action))),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) change.current?.(update.state.doc.toString());
           }),
@@ -473,29 +477,29 @@ export default function SourceEditor({
             },
             ".cm-changeMarker": {
               position: "absolute",
-              top: "0",
+              top: "-1px",
               right: "0",
-              bottom: "0",
-              width: "2px",
+              bottom: "-1px",
+              width: "3px",
               borderRadius: "1px 0 0 1px",
               transition: "width 80ms ease",
             },
             ".cm-changeMarker-added": { backgroundColor: "#62b543" },
             ".cm-changeMarker-modified": { backgroundColor: "#3574f0" },
             ".cm-changeMarker-deleted": {
-              top: "-1px",
+              top: "-2px",
               bottom: "auto",
-              width: "4px",
-              height: "2px",
+              width: "5px",
+              height: "3px",
               backgroundColor: "#8b8d90",
               transition: "width 80ms ease, height 80ms ease",
             },
             ".cm-changeGutter .cm-gutterElement:hover .cm-changeMarker:not(.cm-changeMarker-deleted)": {
-              width: "4px",
+              width: "5px",
             },
             ".cm-changeGutter .cm-gutterElement:hover .cm-changeMarker-deleted": {
-              width: "6px",
-              height: "3px",
+              width: "7px",
+              height: "4px",
             },
             ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "transparent" },
             ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
@@ -609,6 +613,7 @@ export default function SourceEditor({
     <div
       ref={parent}
       className="size-full"
+      data-context-editor
       style={{ fontSize }}
       onKeyDownCapture={(event) => {
         if (!view.current || !matchesShortcut(event.nativeEvent, "find")) return;
@@ -622,6 +627,16 @@ export default function SourceEditor({
         } else openSearchPanel(view.current);
       }}
     >
+      <button
+        type="button"
+        className="hidden"
+        data-context-revert
+        tabIndex={-1}
+        onClick={() => {
+          revert.current?.();
+          revert.current = null;
+        }}
+      />
       {panel ? createPortal(<EditorSearch view={panel.view} query={query} matches={matches} />, panel.dom) : null}
     </div>
   );

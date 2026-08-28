@@ -4488,9 +4488,10 @@ async fn read_text_file(
                     &root,
                     &path,
                     &format!(
-                        "head -c {} -- \"$path\" || exit; printf '\\0%s\\0' {}; parent=${{path%/*}}; repository=$(git -C \"$parent\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '0\\0'; exit 0; }}; case \"$path\" in \"$repository\"/*) pathspec=${{path#\"$repository\"/}};; *) printf '0\\0'; exit 0;; esac; if ! git -C \"$repository\" --literal-pathspecs ls-files --error-unmatch -- \"$pathspec\" >/dev/null 2>&1; then printf '1\\0'; exit 0; fi; {SSH_GIT_BASE} object=$base:$pathspec; if ! git -C \"$repository\" cat-file -e \"$object\" 2>/dev/null; then printf '1\\0'; exit 0; fi; size=$(git -C \"$repository\" cat-file -s \"$object\") || {{ printf '0\\0'; exit 0; }}; if test \"$size\" -gt {MAX_FILE_BYTES}; then printf '0\\0'; exit 0; fi; baseline=$(mktemp) || {{ printf '0\\0'; exit 0; }}; trap 'rm -f -- \"$baseline\"' EXIT; if git -C \"$repository\" cat-file blob \"$object\" > \"$baseline\"; then printf '1\\0'; cat -- \"$baseline\"; else printf '0\\0'; fi; rm -f -- \"$baseline\"; trap - EXIT",
+                        "head -c {} -- \"$path\" || exit; printf '\\0%s\\0' {}; parent=${{path%/*}}; repository=$(git -C \"$parent\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '0\\0'; exit 0; }}; case \"$path\" in \"$repository\"/*) pathspec=${{path#\"$repository\"/}};; *) printf '0\\0'; exit 0;; esac; if ! git -C \"$repository\" --literal-pathspecs ls-files --error-unmatch -- \"$pathspec\" >/dev/null 2>&1; then git -C \"$repository\" --literal-pathspecs check-ignore -q -- \"$pathspec\"; ignored=$?; if test \"$ignored\" = 1; then printf '1\\0'; else printf '0\\0'; fi; exit 0; fi; {SSH_GIT_BASE} object=$base:$pathspec; if ! git -C \"$repository\" cat-file -e \"$object\" 2>/dev/null; then printf '1\\0'; exit 0; fi; baseline=$(mktemp) || {{ printf '0\\0'; exit 0; }}; code=$(mktemp) || {{ rm -f -- \"$baseline\"; printf '0\\0'; exit 0; }}; trap 'rm -f -- \"$baseline\" \"$code\"' EXIT; {{ git -C \"$repository\" cat-file --filters \"--path=$pathspec\" \"$object\"; printf '%s' $? > \"$code\"; }} | head -c {} > \"$baseline\"; result=$(cat \"$code\"); size=$(wc -c < \"$baseline\"); if test \"$result\" = 0 && test \"$size\" -le {MAX_FILE_BYTES}; then printf '1\\0'; cat -- \"$baseline\"; else printf '0\\0'; fi; rm -f -- \"$baseline\" \"$code\"; trap - EXIT",
                         MAX_FILE_BYTES + 1,
                         posix_quote(&marker),
+                        MAX_FILE_BYTES + 1,
                     ),
                 )?,
             )?;
@@ -4527,8 +4528,13 @@ async fn read_text_file(
                 command_output(&git, path.parent()?, &["rev-parse", "--show-toplevel"]).ok()?,
             )
             .ok()?;
-            let pathspec = path.strip_prefix(&repository).ok()?;
-            let pathspec = path_text(pathspec);
+            let pathspec = path
+                .strip_prefix(&repository)
+                .ok()?
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             if command_output(
                 &git,
                 &repository,
@@ -4542,28 +4548,47 @@ async fn read_text_file(
             )
             .is_err()
             {
-                return Some(Vec::new());
+                let ignored = Command::new(&git)
+                    .arg("-C")
+                    .arg(&repository)
+                    .args(["--literal-pathspecs", "check-ignore", "-q", "--", &pathspec])
+                    .status()
+                    .ok()?;
+                return (ignored.code() == Some(1)).then(Vec::new);
             }
             let base = git_diff_base(&git, &repository).ok()?;
             let object = format!("{base}:{pathspec}");
             if command_output(&git, &repository, &["cat-file", "-e", &object]).is_err() {
                 return Some(Vec::new());
             }
-            let size = command_output(&git, &repository, &["cat-file", "-s", &object])
-                .ok()?
-                .parse::<u64>()
-                .ok()?;
-            if size > MAX_FILE_BYTES {
-                return None;
-            }
-            Command::new(git)
+            let mut child = Command::new(git)
                 .arg("-C")
                 .arg(repository)
-                .args(["cat-file", "blob", &object])
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .map(|output| output.stdout)
+                .args(["cat-file", "--filters"])
+                .arg(format!("--path={pathspec}"))
+                .arg(object)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .ok()?;
+            let mut output = Vec::new();
+            if child
+                .stdout
+                .take()?
+                .take(MAX_FILE_BYTES + 1)
+                .read_to_end(&mut output)
+                .is_err()
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            if output.len() > MAX_FILE_BYTES as usize {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+            child.wait().ok()?.success().then_some(output)
         })();
         (bytes, baseline)
     };
