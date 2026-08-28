@@ -484,10 +484,10 @@ export default function SourceEditor({
               borderRight: "1px solid color-mix(in oklab, var(--border) 60%, transparent)",
             },
             ".cm-lineNumbers .cm-gutterElement": { padding: "0 0.5rem 0 0.75rem" },
-            ".cm-changeGutter": { width: "0.375rem" },
+            ".cm-changeGutter": { width: "0", overflow: "visible" },
             ".cm-changeGutter .cm-gutterElement": {
               position: "relative",
-              minWidth: "0.375rem",
+              minWidth: "0",
               padding: "0",
               cursor: "pointer",
             },
