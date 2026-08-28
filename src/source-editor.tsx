@@ -3,6 +3,7 @@
 import { indentWithTab } from "@codemirror/commands";
 import { HighlightStyle, indentUnit, LanguageDescription, syntaxHighlighting } from "@codemirror/language";
 import { languages as editorLanguages } from "@codemirror/language-data";
+import { Chunk } from "@codemirror/merge";
 import {
   closeSearchPanel,
   getSearchQuery,
@@ -13,8 +14,8 @@ import {
   search,
   setSearchQuery,
 } from "@codemirror/search";
-import { EditorSelection, EditorState, StateEffect } from "@codemirror/state";
-import { EditorView, keymap, type Panel } from "@codemirror/view";
+import { EditorSelection, EditorState, type Range, RangeSet, StateEffect, StateField } from "@codemirror/state";
+import { EditorView, GutterMarker, gutter, keymap, type Panel } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { basicSetup } from "codemirror";
 import { CaseSensitive, ChevronDown, ChevronUp, Regex, Replace, Search, WholeWord, X } from "lucide-react";
@@ -71,6 +72,98 @@ const OPTION_KEYS = Object.fromEntries(
   ]),
 ) as Record<"caseSensitive" | "wholeWord" | "regexp" | "replace", string>;
 const countFormat = new Intl.NumberFormat();
+
+type ChangeKind = "added" | "modified" | "deleted";
+
+class ChangeMarker extends GutterMarker {
+  constructor(readonly kind: ChangeKind) {
+    super();
+  }
+
+  eq(other: ChangeMarker) {
+    return this.kind === other.kind;
+  }
+
+  toDOM() {
+    const marker = document.createElement("div");
+    marker.className = `cm-changeMarker cm-changeMarker-${this.kind}`;
+    marker.title = `${this.kind[0].toUpperCase()}${this.kind.slice(1)} lines · Right-click to revert`;
+    return marker;
+  }
+}
+
+const changeMarkers = {
+  added: new ChangeMarker("added"),
+  modified: new ChangeMarker("modified"),
+  deleted: new ChangeMarker("deleted"),
+};
+
+function changeGutter(baseline: string) {
+  const original = EditorState.create({ doc: baseline }).doc;
+  const diffConfig = { scanLimit: 500, timeout: 250 };
+  const chunks = StateField.define<readonly Chunk[]>({
+    create: (state) => Chunk.build(original, state.doc, diffConfig),
+    update: (value, transaction) =>
+      transaction.docChanged
+        ? Chunk.updateB(value, original, transaction.state.doc, transaction.changes, diffConfig)
+        : value,
+  });
+
+  function kind(chunk: Chunk): ChangeKind {
+    if (chunk.fromA === chunk.toA) return "added";
+    return chunk.fromB === chunk.toB ? "deleted" : "modified";
+  }
+
+  function changedChunk(state: EditorState, lineFrom: number) {
+    for (const chunk of state.field(chunks)) {
+      if (chunk.fromB === chunk.toB) {
+        if (state.doc.lineAt(Math.min(chunk.fromB, state.doc.length)).from === lineFrom) return chunk;
+      } else if (lineFrom >= chunk.fromB && lineFrom < Math.min(chunk.toB, state.doc.length + 1)) {
+        return chunk;
+      }
+    }
+  }
+
+  return [
+    chunks,
+    gutter({
+      class: "cm-changeGutter",
+      markers(view) {
+        const ranges: Range<GutterMarker>[] = [];
+        for (const chunk of view.state.field(chunks)) {
+          const marker = changeMarkers[kind(chunk)];
+          const start = view.state.doc.lineAt(Math.min(chunk.fromB, view.state.doc.length));
+          if (chunk.fromB === chunk.toB) {
+            ranges.push(marker.range(start.from));
+            continue;
+          }
+          const end = Math.min(chunk.toB, view.state.doc.length);
+          for (let line = start; line.from < end; line = view.state.doc.line(line.number + 1)) {
+            ranges.push(marker.range(line.from));
+            if (line.number === view.state.doc.lines) break;
+          }
+        }
+        return RangeSet.of(ranges, true);
+      },
+      domEventHandlers: {
+        contextmenu(view, line) {
+          const chunk = changedChunk(view.state, line.from);
+          if (!chunk) return false;
+          view.dispatch({
+            changes: {
+              from: chunk.fromB,
+              to: Math.min(chunk.toB, view.state.doc.length),
+              insert: original.sliceString(chunk.fromA, Math.min(chunk.toA, original.length)),
+            },
+            userEvent: "input.revert",
+          });
+          view.focus();
+          return true;
+        },
+      },
+    }),
+  ];
+}
 
 // Where the selection stands among the matches, counted the way the terminal counts its own.
 function countMatches(state: EditorState): { index: number; count: number } {
@@ -298,11 +391,13 @@ function EditorSearch({
 export default function SourceEditor({
   path,
   source,
+  baseline,
   fontSize,
   onChange,
 }: {
   path: string;
   source: string;
+  baseline?: string;
   fontSize?: number;
   onChange?: (source: string) => void;
 }) {
@@ -354,6 +449,7 @@ export default function SourceEditor({
           keymap.of([indentWithTab]),
           indentUnit.of(detectIndent(path, initialSource.current)),
           syntaxHighlighting(editorHighlight),
+          ...(baseline === undefined ? [] : changeGutter(baseline)),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) change.current?.(update.state.doc.toString());
           }),
@@ -368,6 +464,39 @@ export default function SourceEditor({
               borderRight: "1px solid color-mix(in oklab, var(--border) 60%, transparent)",
             },
             ".cm-lineNumbers .cm-gutterElement": { padding: "0 0.5rem 0 0.75rem" },
+            ".cm-changeGutter": { width: "0.375rem" },
+            ".cm-changeGutter .cm-gutterElement": {
+              position: "relative",
+              minWidth: "0.375rem",
+              padding: "0",
+              cursor: "context-menu",
+            },
+            ".cm-changeMarker": {
+              position: "absolute",
+              top: "0",
+              right: "0",
+              bottom: "0",
+              width: "2px",
+              borderRadius: "1px 0 0 1px",
+              transition: "width 80ms ease",
+            },
+            ".cm-changeMarker-added": { backgroundColor: "#62b543" },
+            ".cm-changeMarker-modified": { backgroundColor: "#3574f0" },
+            ".cm-changeMarker-deleted": {
+              top: "-1px",
+              bottom: "auto",
+              width: "4px",
+              height: "2px",
+              backgroundColor: "#8b8d90",
+              transition: "width 80ms ease, height 80ms ease",
+            },
+            ".cm-changeGutter .cm-gutterElement:hover .cm-changeMarker:not(.cm-changeMarker-deleted)": {
+              width: "4px",
+            },
+            ".cm-changeGutter .cm-gutterElement:hover .cm-changeMarker-deleted": {
+              width: "6px",
+              height: "3px",
+            },
             ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "transparent" },
             ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
               backgroundColor: "color-mix(in oklab, var(--ring) 35%, transparent) !important",
@@ -470,7 +599,7 @@ export default function SourceEditor({
       view.current = null;
       editor.destroy();
     };
-  }, [path]);
+  }, [path, baseline]);
 
   useEffect(() => {
     if (fontSize !== undefined) view.current?.requestMeasure();

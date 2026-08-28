@@ -872,6 +872,7 @@ function FileViewer({
   entry,
   source,
   draft,
+  baseline,
   error,
   loading,
   fontSize,
@@ -882,6 +883,7 @@ function FileViewer({
   entry: FileEntry;
   source: string;
   draft: string;
+  baseline: string | null;
   error: string;
   loading: boolean;
   fontSize: number;
@@ -1000,6 +1002,7 @@ function FileViewer({
               <CodePreview
                 path={entry.path}
                 source={draft}
+                baseline={baseline ?? undefined}
                 editable
                 fontSize={fontSize}
                 onChange={(contents) =>
@@ -1035,6 +1038,12 @@ interface FileEditorState {
   selected: FileEntry;
   source: string;
   draft: string;
+  baseline: string | null;
+}
+
+interface TextFile {
+  contents: string;
+  baseline: string | null;
 }
 
 const fileEditorsBySession = new Map<string, FileEditorState>();
@@ -1064,6 +1073,7 @@ function FilesPanel({
   const [selected, setSelected] = useState<FileEntry | null>(cached?.selected ?? null);
   const [source, setSource] = useState(cached?.source ?? "");
   const [draft, setDraft] = useState(cached?.draft ?? "");
+  const [baseline, setBaseline] = useState<string | null>(cached?.baseline ?? null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -1084,14 +1094,16 @@ function FilesPanel({
     setSelected(entry);
     setSource("");
     setDraft("");
+    setBaseline(null);
     setError("");
     setLoading(true);
     try {
-      const contents = await invoke<string>("read_text_file", { rootId, path: entry.path });
+      const { contents, baseline } = await invoke<TextFile>("read_text_file", { rootId, path: entry.path });
       if (request.current === id) {
         setSource(contents);
         setDraft(contents);
-        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents });
+        setBaseline(baseline);
+        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents, baseline });
       }
     } catch (reason) {
       if (request.current === id) {
@@ -1117,7 +1129,7 @@ function FilesPanel({
 
   function changeDraft(contents: string) {
     setDraft(contents);
-    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents });
+    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents, baseline });
   }
 
   function closeFile() {
@@ -1139,6 +1151,7 @@ function FilesPanel({
           entry={selected}
           source={source}
           draft={draft}
+          baseline={baseline}
           error={error}
           loading={loading}
           fontSize={fontSize}
