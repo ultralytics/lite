@@ -117,14 +117,23 @@ function changeGutter(baseline: string, setRevert: (action: () => void) => void)
         : value,
   });
 
-  function kind(chunk: Chunk): ChangeKind {
-    if (chunk.fromA === chunk.endA) return "added";
-    return chunk.fromB === chunk.endB ? "deleted" : "modified";
+  function kind(chunk: Chunk, currentLength: number): ChangeKind {
+    if (
+      chunk.changes.every((change) => change.fromA === change.toA) &&
+      chunk.fromA === Math.min(chunk.toA, original.length)
+    )
+      return "added";
+    if (
+      chunk.changes.every((change) => change.fromB === change.toB) &&
+      chunk.fromB === Math.min(chunk.toB, currentLength)
+    )
+      return "deleted";
+    return "modified";
   }
 
   function changedChunk(state: EditorState, lineFrom: number) {
     for (const chunk of state.field(chunks)) {
-      if (kind(chunk) === "deleted") {
+      if (kind(chunk, state.doc.length) === "deleted") {
         if (state.doc.lineAt(Math.min(chunk.fromB, state.doc.length)).from === lineFrom) return chunk;
       } else if (lineFrom >= chunk.fromB && lineFrom < Math.min(chunk.toB, state.doc.length + 1)) {
         return chunk;
@@ -140,7 +149,7 @@ function changeGutter(baseline: string, setRevert: (action: () => void) => void)
         const ranges: Range<GutterMarker>[] = [];
         for (const chunk of view.state.field(chunks)) {
           const start = view.state.doc.lineAt(Math.min(chunk.fromB, view.state.doc.length));
-          if (kind(chunk) === "deleted") {
+          if (kind(chunk, view.state.doc.length) === "deleted") {
             ranges.push(new ChangeMarker("deleted", 0).range(start.from));
             continue;
           }
@@ -153,7 +162,7 @@ function changeGutter(baseline: string, setRevert: (action: () => void) => void)
           const lastChanged = view.state.doc.lineAt(Math.max(chunk.fromB, end - 1));
           ranges.push(
             new ChangeMarker(
-              kind(chunk),
+              kind(chunk, view.state.doc.length),
               last.number - firstVisible.number + 1,
               firstVisible.number === start.number,
               last.number === lastChanged.number,
