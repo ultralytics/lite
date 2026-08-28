@@ -118,13 +118,13 @@ function changeGutter(baseline: string, setRevert: (action: () => void) => void)
   });
 
   function kind(chunk: Chunk): ChangeKind {
-    if (chunk.fromA === chunk.toA) return "added";
-    return chunk.fromB === chunk.toB ? "deleted" : "modified";
+    if (chunk.fromA === chunk.endA) return "added";
+    return chunk.fromB === chunk.endB ? "deleted" : "modified";
   }
 
   function changedChunk(state: EditorState, lineFrom: number) {
     for (const chunk of state.field(chunks)) {
-      if (chunk.fromB === chunk.toB) {
+      if (kind(chunk) === "deleted") {
         if (state.doc.lineAt(Math.min(chunk.fromB, state.doc.length)).from === lineFrom) return chunk;
       } else if (lineFrom >= chunk.fromB && lineFrom < Math.min(chunk.toB, state.doc.length + 1)) {
         return chunk;
@@ -140,7 +140,7 @@ function changeGutter(baseline: string, setRevert: (action: () => void) => void)
         const ranges: Range<GutterMarker>[] = [];
         for (const chunk of view.state.field(chunks)) {
           const start = view.state.doc.lineAt(Math.min(chunk.fromB, view.state.doc.length));
-          if (chunk.fromB === chunk.toB) {
+          if (kind(chunk) === "deleted") {
             ranges.push(new ChangeMarker("deleted", 0).range(start.from));
             continue;
           }
