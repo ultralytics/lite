@@ -400,6 +400,10 @@ function menuContext(target: EventTarget | null): AppMenuContext {
   const surface = session ? null : target.closest<HTMLElement>("[data-context-surface]");
   const files = target.closest<HTMLElement>("[data-context-files]");
   const change = target.closest<HTMLElement>("[data-context-change]");
+  const revert = change
+    ?.closest<HTMLElement>("[data-context-editor]")
+    ?.querySelector<HTMLButtonElement>("[data-context-revert]");
+  if (revert) return { ...EMPTY_MENU_CONTEXT, revert };
   // The terminal and the file viewer each zoom their own type, so the menu offers whichever owns the click.
   const zoom = target.closest<HTMLElement>("[data-context-zoom], [data-zoom-panel]");
   const selectedText =
@@ -418,10 +422,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     expandSessions: surface?.querySelector<HTMLButtonElement>("[data-context-expand-sessions]") ?? null,
     newSession: surface?.querySelector<HTMLButtonElement>("[data-context-new-session]") ?? null,
     refresh: surface?.querySelector<HTMLButtonElement>("[data-context-refresh]") ?? null,
-    revert:
-      change
-        ?.closest<HTMLElement>("[data-context-editor]")
-        ?.querySelector<HTMLButtonElement>("[data-context-revert]") ?? null,
+    revert: null,
     selectedText,
     sessionId: session?.dataset.contextSession ?? "",
     url: link instanceof HTMLAnchorElement ? link.href : (link?.dataset.contextUrl ?? ""),
@@ -510,8 +511,6 @@ function AppContextMenu({
   ].some(Boolean);
   const editGroup = Boolean(context.editable || context.selectedText);
   const sessionsGroup = Boolean(session || context.newSession);
-  const hasOtherMenuItems = hasMenuItems({ ...context, revert: null });
-
   return (
     <ContextMenu
       open={open}
@@ -525,13 +524,10 @@ function AppContextMenu({
       <ContextMenuTrigger render={children} />
       <ContextMenuContent className="w-44">
         {context.revert ? (
-          <>
-            <ContextMenuItem onClick={() => context.revert?.click()}>
-              <RotateCcw />
-              Revert change
-            </ContextMenuItem>
-            {hasOtherMenuItems ? <ContextMenuSeparator /> : null}
-          </>
+          <ContextMenuItem onClick={() => context.revert?.click()}>
+            <RotateCcw />
+            Revert change
+          </ContextMenuItem>
         ) : null}
         {session ? (
           <>
