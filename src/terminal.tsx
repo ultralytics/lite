@@ -5,10 +5,11 @@ import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ITheme, Terminal } from "@xterm/xterm";
-import { ChevronDown, ChevronUp, Search, X } from "lucide-react";
+import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 
+import { ActionIconButton } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import {
   connectTerminalOutput,
@@ -175,6 +176,7 @@ export function TerminalView({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResult, setSearchResult] = useState({ resultIndex: -1, resultCount: 0 });
+  const [scrolledUp, setScrolledUp] = useState(false);
   const searchQueryRef = useRef("");
   const resizeRef = useRef<() => void>(() => undefined);
   const checkRef = useRef(true);
@@ -229,6 +231,7 @@ export function TerminalView({
       }),
     );
     terminal.open(container);
+    const scroll = terminal.onScroll((viewportY) => setScrolledUp(viewportY < terminal.buffer.active.baseY));
     const disconnectTerminalOutput = connectTerminalOutput(sessionId, () => renderedOutput(terminal));
     // The addon waits for output to go quiet before rebuilding its result map, which a live TUI may
     // never do. Refresh at a bounded rate while it writes; the addon's own timer handles the final pass.
@@ -359,6 +362,7 @@ export function TerminalView({
       window.clearTimeout(outputRefresh);
       observer.disconnect();
       searchResults.dispose();
+      scroll.dispose();
       input.dispose();
       unsubscribe();
       parsed.dispose();
@@ -450,6 +454,11 @@ export function TerminalView({
     } else setSearchOpen(true);
   }
 
+  function scrollToBottom() {
+    terminalRef.current?.scrollToBottom();
+    terminalRef.current?.focus();
+  }
+
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
   // and it only subtracts padding declared on the terminal's own element. Padding here would be
@@ -488,7 +497,7 @@ export function TerminalView({
       <button type="button" hidden data-context-zoom-out onClick={() => zoomRef.current(-1)} />
       <button type="button" hidden data-context-zoom-reset onClick={() => zoomRef.current(0)} />
       <button type="button" hidden data-terminal-search onClick={openSearch} />
-      <button type="button" hidden data-terminal-scroll-bottom onClick={() => terminalRef.current?.scrollToBottom()} />
+      <button type="button" hidden data-terminal-scroll-bottom onClick={scrollToBottom} />
       {searchOpen ? (
         <div className="absolute top-2 right-[8.5rem] z-10 w-72 max-w-[calc(100%-9rem)] rounded-lg bg-background shadow-lg">
           <InputGroup>
@@ -549,6 +558,19 @@ export function TerminalView({
             </InputGroupAddon>
           </InputGroup>
         </div>
+      ) : null}
+      {scrolledUp ? (
+        <ActionIconButton
+          size="icon-sm"
+          className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-full bg-background/90 text-muted-foreground shadow-sm"
+          tooltip="Scroll to bottom"
+          tooltipSide="top"
+          aria-label="Scroll to bottom"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={scrollToBottom}
+        >
+          <ArrowDownToLine />
+        </ActionIconButton>
       ) : null}
       <div ref={containerRef} className="h-full w-full" />
     </div>
