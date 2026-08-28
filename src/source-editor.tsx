@@ -76,28 +76,35 @@ const countFormat = new Intl.NumberFormat();
 type ChangeKind = "added" | "modified" | "deleted";
 
 class ChangeMarker extends GutterMarker {
-  constructor(readonly kind: ChangeKind) {
+  constructor(
+    readonly kind: ChangeKind,
+    readonly lines: number,
+    readonly roundedStart = true,
+    readonly roundedEnd = true,
+  ) {
     super();
   }
 
   eq(other: ChangeMarker) {
-    return this.kind === other.kind;
+    return (
+      this.kind === other.kind &&
+      this.lines === other.lines &&
+      this.roundedStart === other.roundedStart &&
+      this.roundedEnd === other.roundedEnd
+    );
   }
 
   toDOM() {
     const marker = document.createElement("div");
     marker.className = `cm-changeMarker cm-changeMarker-${this.kind}`;
+    if (this.roundedStart) marker.classList.add("cm-changeMarker-start");
+    if (this.roundedEnd) marker.classList.add("cm-changeMarker-end");
     marker.dataset.contextChange = "";
+    if (this.lines) marker.style.height = `calc(${this.lines * 1.5}em + 2px)`;
     marker.title = `${this.kind[0].toUpperCase()}${this.kind.slice(1)} lines`;
     return marker;
   }
 }
-
-const changeMarkers = {
-  added: new ChangeMarker("added"),
-  modified: new ChangeMarker("modified"),
-  deleted: new ChangeMarker("deleted"),
-};
 
 function changeGutter(baseline: string, setRevert: (action: () => void) => void) {
   const original = EditorState.create({ doc: baseline }).doc;
@@ -132,17 +139,26 @@ function changeGutter(baseline: string, setRevert: (action: () => void) => void)
       markers(view) {
         const ranges: Range<GutterMarker>[] = [];
         for (const chunk of view.state.field(chunks)) {
-          const marker = changeMarkers[kind(chunk)];
           const start = view.state.doc.lineAt(Math.min(chunk.fromB, view.state.doc.length));
           if (chunk.fromB === chunk.toB) {
-            ranges.push(marker.range(start.from));
+            ranges.push(new ChangeMarker("deleted", 0).range(start.from));
             continue;
           }
           const end = Math.min(chunk.toB, view.state.doc.length);
-          for (let line = start; line.from < end; line = view.state.doc.line(line.number + 1)) {
-            ranges.push(marker.range(line.from));
-            if (line.number === view.state.doc.lines) break;
-          }
+          const visibleFrom = Math.max(chunk.fromB, view.viewport.from);
+          const visibleTo = Math.min(end, view.viewport.to);
+          if (visibleFrom >= visibleTo) continue;
+          const firstVisible = view.state.doc.lineAt(visibleFrom);
+          const last = view.state.doc.lineAt(Math.max(visibleFrom, visibleTo - 1));
+          const lastChanged = view.state.doc.lineAt(Math.max(chunk.fromB, end - 1));
+          ranges.push(
+            new ChangeMarker(
+              kind(chunk),
+              last.number - firstVisible.number + 1,
+              firstVisible.number === start.number,
+              last.number === lastChanged.number,
+            ).range(firstVisible.from),
+          );
         }
         return RangeSet.of(ranges, true);
       },
@@ -479,19 +495,20 @@ export default function SourceEditor({
               position: "absolute",
               top: "-1px",
               right: "0",
-              bottom: "-1px",
               width: "3px",
-              borderRadius: "1px 0 0 1px",
               transition: "width 80ms ease",
+              zIndex: "1",
             },
-            ".cm-changeMarker-added": { backgroundColor: "#62b543" },
-            ".cm-changeMarker-modified": { backgroundColor: "#3574f0" },
+            ".cm-changeMarker-start": { borderRadius: "2px 2px 0 0" },
+            ".cm-changeMarker-end": { borderRadius: "0 0 2px 2px" },
+            ".cm-changeMarker-start.cm-changeMarker-end": { borderRadius: "2px" },
+            ".cm-changeMarker-added": { backgroundColor: "var(--success)" },
+            ".cm-changeMarker-modified": { backgroundColor: "var(--color-sky-500)" },
             ".cm-changeMarker-deleted": {
               top: "-2px",
-              bottom: "auto",
               width: "5px",
               height: "3px",
-              backgroundColor: "#8b8d90",
+              backgroundColor: "var(--destructive)",
               transition: "width 80ms ease, height 80ms ease",
             },
             ".cm-changeGutter .cm-gutterElement:hover .cm-changeMarker:not(.cm-changeMarker-deleted)": {
