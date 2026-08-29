@@ -137,7 +137,7 @@ jobs:
       - name: Install production dependencies
         run: bun install --frozen-lockfile --production
       - name: Generate SBOM
-        uses: anchore/sbom-action@v0.24.0
+        uses: anchore/sbom-action@v0.24.2
         env:
           SYFT_SOURCE_NAME: Lite
           SYFT_SOURCE_VERSION: ${{ needs.check.outputs.tag }}
