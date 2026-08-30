@@ -42,7 +42,7 @@
     "codemirror": "^6.0.2",
     "highlight.js": "^11.12.0",
     "jetbrains-file-icon-theme": "github:fogio-org/vscode-jetbrains-file-icon-theme#75fa199b2f48c4528577818196f5f62c97c48eae",
-    "lucide-react": "^1.35.0",
+    "lucide-react": "^1.37.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
