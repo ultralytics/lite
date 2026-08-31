@@ -94,6 +94,7 @@ interface Availability {
 export function NewSessionDialog({
   open: isOpen,
   choice: chosen,
+  initialPath,
   remoteSsh,
   onOpenChange,
   onCreate,
@@ -101,6 +102,7 @@ export function NewSessionDialog({
   open: boolean;
   // A choice made outside the dialog — a welcome tile — which the dialog opens on.
   choice?: string;
+  initialPath?: string;
   remoteSsh: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
@@ -205,7 +207,7 @@ export function NewSessionDialog({
     setAvailability({});
     setAuth(undefined);
     if (!remote) {
-      void invoke<DirectoryGrant | null>("default_directory")
+      void invoke<DirectoryGrant | null>("default_directory", { path: initialPath ?? null })
         .then((selected) => {
           if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
           else if (selected) {
@@ -235,7 +237,7 @@ export function NewSessionDialog({
     return () => {
       disposed = true;
     };
-  }, [isOpen, remote]);
+  }, [initialPath, isOpen, remote]);
 
   async function chooseFolder() {
     setError("");

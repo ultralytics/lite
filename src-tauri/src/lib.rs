@@ -1697,8 +1697,11 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
 fn default_directory(
     app: AppHandle,
     roots: State<Roots>,
+    path: Option<String>,
 ) -> Result<Option<DirectoryGrant>, String> {
-    default_directory_path(&app)
+    path.map(PathBuf::from)
+        .filter(|path| path.is_dir())
+        .or_else(|| default_directory_path(&app))
         .map(|path| grant_directory(&app, &roots, path, None))
         .transpose()
 }

@@ -1581,6 +1581,7 @@ function App() {
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [newSessionChoice, setNewSessionChoice] = useState<string>();
+  const [newSessionPath, setNewSessionPath] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
@@ -1655,7 +1656,7 @@ function App() {
   const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const recoveries = useRef(new Map<string, Promise<void>>());
   const recoveryFailures = useRef(new Set<string>());
-  const directoryUpdates = useRef(new Map<string, Promise<void>>());
+  const directoryUpdates = useRef(new Map<string, { path: string; update: Promise<void> }>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
   // covered real changes (true) or only ignored files and submodules (false); read at cleanup.
   const forceWorktree = useRef(new Map<string, boolean>());
@@ -1763,6 +1764,14 @@ function App() {
       void recoverRef.current(session).catch(() => {});
     } else if (!startingIds.has(session.id)) void resumeSession(session);
   };
+  const openNewSession = useCallback((choice?: string) => {
+    const session = selectedRef.current;
+    setNewSessionPath(
+      session && !session.host ? (directoryUpdates.current.get(session.id)?.path ?? session.cwd) : undefined,
+    );
+    setNewSessionChoice(choice);
+    setNewSessionOpen(true);
+  }, []);
 
   // A drag reports every frame, so a side changes state only when the answer changes: handing back the
   // same object leaves React with nothing to redraw while the divider moves.
@@ -1890,7 +1899,7 @@ function App() {
         return;
       }
       if (matchesShortcut(event, "switchSession")) setSessionSwitcherOpen(true);
-      else if (matchesShortcut(event, "newSession")) setNewSessionOpen(true);
+      else if (matchesShortcut(event, "newSession")) openNewSession();
       else if (matchesShortcut(event, "settings")) setSettingsOpen(true);
       else if (matchesShortcut(event, "closeSession") && selectedRef.current) closeRef.current(selectedRef.current);
       else if (matchesShortcut(event, "nextAttention")) {
@@ -1918,7 +1927,7 @@ function App() {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [openNewSession]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -2063,7 +2072,7 @@ function App() {
     const pending = directoryUpdates.current.get(sessionId);
     // A return to the current cwd still belongs behind an in-flight change.
     if (!pending && session.cwd === path) return;
-    const update = (pending ?? Promise.resolve())
+    const update = (pending?.update ?? Promise.resolve())
       .then(async () => {
         const current = sessionsRef.current.find((item) => item.id === sessionId);
         if (!current) return;
@@ -2076,9 +2085,9 @@ function App() {
         );
       })
       .catch((reason) => setError(String(reason)));
-    directoryUpdates.current.set(sessionId, update);
+    directoryUpdates.current.set(sessionId, { path, update });
     void update.then(() => {
-      if (directoryUpdates.current.get(sessionId) === update) directoryUpdates.current.delete(sessionId);
+      if (directoryUpdates.current.get(sessionId)?.update === update) directoryUpdates.current.delete(sessionId);
     });
   }, []);
 
@@ -2373,7 +2382,7 @@ function App() {
     setSettingsOpen(false);
     try {
       const grant =
-        (await invoke<{ id: string; path: string } | null>("default_directory")) ??
+        (await invoke<{ id: string; path: string } | null>("default_directory", { path: null })) ??
         (await invoke<{ id: string; path: string } | null>("choose_directory"));
       if (!grant) return;
       createSession({
@@ -3153,7 +3162,7 @@ function App() {
                         tooltipSide="right"
                         aria-label="New session"
                         data-context-new-session
-                        onClick={() => setNewSessionOpen(true)}
+                        onClick={() => openNewSession()}
                       >
                         <Plus />
                       </ActionIconButton>
@@ -3204,7 +3213,7 @@ function App() {
                         tooltip="New session"
                         aria-label="New session"
                         data-context-new-session
-                        onClick={() => setNewSessionOpen(true)}
+                        onClick={() => openNewSession()}
                       >
                         <Plus />
                       </ActionIconButton>
@@ -3442,13 +3451,7 @@ function App() {
                     )}
                   </div>
                 ) : (
-                  <Welcome
-                    onChoose={(choice) => {
-                      setNewSessionChoice(choice);
-                      setNewSessionOpen(true);
-                    }}
-                    onSettings={() => setSettingsOpen(true)}
-                  />
+                  <Welcome onChoose={openNewSession} onSettings={() => setSettingsOpen(true)} />
                 )}
                 {error ? (
                   <div className="flex shrink-0 items-start gap-2 border-t bg-destructive/10 px-3 py-2 text-xs text-destructive">
@@ -3814,11 +3817,15 @@ function App() {
           <NewSessionDialog
             open={newSessionOpen}
             choice={newSessionChoice}
+            initialPath={newSessionPath}
             remoteSsh={remoteSsh}
             onOpenChange={(open) => {
               setNewSessionOpen(open);
               // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
-              if (!open) setNewSessionChoice(undefined);
+              if (!open) {
+                setNewSessionChoice(undefined);
+                setNewSessionPath(undefined);
+              }
             }}
             onCreate={createSession}
           />
@@ -3831,7 +3838,7 @@ function App() {
             startingIds={startingIds}
             shellAgents={shellAgents}
             commands={[
-              { id: "new-session", label: "New session", shortcut: "newSession", run: () => setNewSessionOpen(true) },
+              { id: "new-session", label: "New session", shortcut: "newSession", run: openNewSession },
               {
                 id: "next-attention",
                 label: "Open the next session waiting on you",
