@@ -1656,7 +1656,7 @@ function App() {
   const receiveOutput = useRef<(sessionId: string, runId: string, data: Uint8Array) => void>(() => {});
   const recoveries = useRef(new Map<string, Promise<void>>());
   const recoveryFailures = useRef(new Set<string>());
-  const directoryUpdates = useRef(new Map<string, Promise<void>>());
+  const directoryUpdates = useRef(new Map<string, { path: string; update: Promise<void> }>());
   // Sessions whose worktree the user agreed to force-remove, mapped to whether the approval
   // covered real changes (true) or only ignored files and submodules (false); read at cleanup.
   const forceWorktree = useRef(new Map<string, boolean>());
@@ -1766,7 +1766,9 @@ function App() {
   };
   const openNewSession = useCallback((choice?: string) => {
     const session = selectedRef.current;
-    setNewSessionPath(session && !session.host ? session.cwd : undefined);
+    setNewSessionPath(
+      session && !session.host ? (directoryUpdates.current.get(session.id)?.path ?? session.cwd) : undefined,
+    );
     setNewSessionChoice(choice);
     setNewSessionOpen(true);
   }, []);
@@ -2070,7 +2072,7 @@ function App() {
     const pending = directoryUpdates.current.get(sessionId);
     // A return to the current cwd still belongs behind an in-flight change.
     if (!pending && session.cwd === path) return;
-    const update = (pending ?? Promise.resolve())
+    const update = (pending?.update ?? Promise.resolve())
       .then(async () => {
         const current = sessionsRef.current.find((item) => item.id === sessionId);
         if (!current) return;
@@ -2083,9 +2085,9 @@ function App() {
         );
       })
       .catch((reason) => setError(String(reason)));
-    directoryUpdates.current.set(sessionId, update);
+    directoryUpdates.current.set(sessionId, { path, update });
     void update.then(() => {
-      if (directoryUpdates.current.get(sessionId) === update) directoryUpdates.current.delete(sessionId);
+      if (directoryUpdates.current.get(sessionId)?.update === update) directoryUpdates.current.delete(sessionId);
     });
   }, []);
 
