@@ -348,6 +348,7 @@ const TABS = [
   { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
 ] as const;
 type InspectorTab = (typeof TABS)[number]["value"];
+const inspectorTabsBySession = new Map<string, InspectorTab>();
 
 // Every optional field arrives from Serde as null, never as a missing key.
 interface UsageWindow {
@@ -1356,6 +1357,7 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
   fileEditorsBySession.delete(sessionId);
+  inspectorTabsBySession.delete(sessionId);
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
   delete sessions[sessionId];
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
@@ -1741,10 +1743,10 @@ export const Inspector = memo(function Inspector({
   onExpand: () => void;
   onCollapse: () => void;
 }) {
-  const [tab, setTab] = useState<string>(TABS[0].value);
+  const [tab, setTab] = useState<InspectorTab>(() => inspectorTabsBySession.get(session.id) ?? TABS[0].value);
   const fileSearch = useRef<HTMLInputElement>(null);
   const gitSearch = useRef<HTMLInputElement>(null);
-  const [visited, setVisited] = useState(() => new Set<string>([TABS[0].value]));
+  const [visited, setVisited] = useState(() => new Set<string>([tab]));
   // A tab already names the panel it shows, so the panel does not name itself again. The refresh button
   // rebuilds whichever is open, and every explicit Files visit rebuilds that disk snapshot as well.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
@@ -1764,9 +1766,11 @@ export const Inspector = memo(function Inspector({
   }
 
   function selectTab(value: string) {
-    setTab(value);
-    visitTab(value);
-    if (value === "files") refreshTab(value);
+    const next = value as InspectorTab;
+    inspectorTabsBySession.set(session.id, next);
+    setTab(next);
+    visitTab(next);
+    if (next === "files") refreshTab(next);
   }
 
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
