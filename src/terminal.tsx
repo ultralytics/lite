@@ -1,6 +1,7 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -305,11 +306,15 @@ export function TerminalView({
     // through. Fitting on each one rewraps the scrollback and hands the child a window size it is
     // never shown at, so the terminal is fitted once the size has settled.
     let settle = 0;
-    const observer = new ResizeObserver(() => {
+    const settleResize = () => {
       window.clearTimeout(settle);
       settle = window.setTimeout(resize, 100);
-    });
+    };
+    const observer = new ResizeObserver(settleResize);
     observer.observe(container);
+    // WebKit can miss the element resize when macOS moves a window onto the built-in display after
+    // an external display disconnects. The native window event reaches the same fit owner.
+    const resized = getCurrentWindow().onResized(settleResize);
     // Command and the zoom keys resize the type, as they do in a terminal app.
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
@@ -362,6 +367,7 @@ export function TerminalView({
       window.clearTimeout(searchRefresh);
       window.clearTimeout(outputRefresh);
       observer.disconnect();
+      void resized.then((unlisten) => unlisten());
       searchResults.dispose();
       scroll.dispose();
       input.dispose();
