@@ -46,11 +46,13 @@ const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const DEEPSEEK_MODEL: &str = "deepseek-v4-flash";
-const CODEX_NOTIFICATION_ARGS: [&str; 4] = [
+const CODEX_NOTIFICATION_ARGS: [&str; 6] = [
     "-c",
     r#"tui.notification_method="osc9""#,
     "-c",
     r#"tui.notification_condition="always""#,
+    "-c",
+    r#"tui.terminal_title=["session-id","thread"]"#,
 ];
 const SUPPORTED_KEYS: [&str; 6] = [
     "claude",
@@ -2387,7 +2389,7 @@ fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>,
         &[(
             3,
             "thread/list",
-            serde_json::json!({"cwd": path_text(cwd), "limit": 100}),
+            serde_json::json!({"cwd": path_text(cwd), "limit": 100, "modelProviders": []}),
         )],
     )?;
     Ok(responses
@@ -2399,6 +2401,63 @@ fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>,
         .filter_map(|thread| thread.get("id").and_then(serde_json::Value::as_str))
         .map(str::to_owned)
         .collect())
+}
+
+// Codex reports its thread in this PTY's title. Resolve a shortened title only against
+// matching IDs, never against whichever conversation appeared next in the same folder.
+#[tauri::command]
+async fn record_codex_session(
+    app: AppHandle,
+    session_id: String,
+    run_id: String,
+    root_id: String,
+    title: String,
+) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let prefix = title.strip_suffix("...").unwrap_or(&title);
+        if !(20..=36).contains(&prefix.len())
+            || !prefix
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() || byte == b'-')
+        {
+            return Err("Invalid Codex thread title".into());
+        }
+        let provider_sessions = app.state::<ProviderSessions>();
+        if provider_sessions
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(&session_id)
+            .is_some_and(|id| id.starts_with(prefix))
+        {
+            return Ok(());
+        }
+        let roots = app.state::<Roots>();
+        let ids = if let Some(root) = ssh_root(&roots, &root_id)? {
+            ssh_provider_session_ids(&root, "codex")?
+        } else {
+            codex_thread_ids(&app.state::<CodexServer>(), &root_path(&roots, &root_id)?)?
+        };
+        let mut matching = ids.iter().filter(|id| id.starts_with(prefix));
+        let id = matching
+            .next()
+            .ok_or("Codex has not saved the reported conversation")?;
+        if matching.next().is_some() {
+            return Err("Codex reported an ambiguous conversation ID".into());
+        }
+        // Serialize the association with stopping/replacing its owning PTY.
+        let sessions = app.state::<Sessions>();
+        let running = sessions.0.lock().map_err(|error| error.to_string())?;
+        if running
+            .get(&session_id)
+            .is_some_and(|session| session.run_id == run_id)
+        {
+            update_provider_session(&app, &provider_sessions, &session_id, Some(id.clone()))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool, String> {
@@ -2743,11 +2802,6 @@ enum CliAuthMethod {
     ApiKey,
 }
 
-struct CliAuth {
-    method: CliAuthMethod,
-    key_hint: Option<String>,
-}
-
 fn key_hint(key: &str) -> String {
     let key = key.trim();
     key.chars()
@@ -2755,126 +2809,39 @@ fn key_hint(key: &str) -> String {
         .collect()
 }
 
-fn kimi_provider_name(config: &toml_edit::DocumentMut) -> Option<String> {
-    let model = config.get("default_model")?.as_str()?;
-    config
-        .get("models")?
-        .get(model)?
-        .get("provider")?
-        .as_str()
-        .map(str::to_owned)
+fn kimi_auth() -> Option<CliAuthMethod> {
+    // Ask the CLI for its public summary; its configuration and credentials stay its own.
+    let output = Command::new(resolve_executable("kimi")?)
+        .args(["provider", "list"])
+        .env("PATH", user_path()?)
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    (output.status.success()
+        && String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line.contains("  type=")))
+    .then_some(CliAuthMethod::Provider)
 }
 
-fn kimi_env_api_key(provider: &dyn toml_edit::TableLike) -> Option<&'static str> {
-    match provider.get("type")?.as_str()? {
-        "kimi" => Some("KIMI_API_KEY"),
-        "anthropic" => Some("ANTHROPIC_API_KEY"),
-        "openai" | "openai_responses" => Some("OPENAI_API_KEY"),
-        "google-genai" => Some("GOOGLE_API_KEY"),
-        "vertexai" => Some("VERTEXAI_API_KEY"),
-        _ => None,
-    }
-}
-
-fn kimi_auth(app: &AppHandle) -> Option<CliAuth> {
-    let config = fs::read_to_string(kimi_home(app).ok()?.join("config.toml")).ok()?;
-    let config = config.parse::<toml_edit::DocumentMut>().ok()?;
-    let provider = kimi_provider_name(&config)?;
-    let provider = config.get("providers")?.get(&provider)?.as_table_like()?;
-
-    let api_key = provider
-        .get("api_key")
-        .and_then(toml_edit::Item::as_str)
-        .filter(|key| !key.trim().is_empty())
-        .or_else(|| {
-            let name = kimi_env_api_key(provider)?;
-            provider
-                .get("env")
-                .and_then(toml_edit::Item::as_table_like)
-                .and_then(|env| env.get(name))
-                .and_then(toml_edit::Item::as_str)
-                .filter(|key| !key.trim().is_empty())
-        });
-    if let Some(api_key) = api_key {
-        Some(CliAuth {
-            method: CliAuthMethod::ApiKey,
-            key_hint: Some(key_hint(api_key)),
-        })
-    } else if provider.get("oauth").is_some() {
-        Some(CliAuth {
-            method: CliAuthMethod::Provider,
-            key_hint: None,
-        })
-    } else {
-        None
-    }
-}
-
-fn delete_kimi_api_key(app: &AppHandle) -> Result<(), String> {
-    let path = kimi_home(app)?.join("config.toml");
-    let permissions = fs::metadata(&path)
-        .map_err(|error| error.to_string())?
-        .permissions();
-    let text = fs::read_to_string(&path).map_err(|error| error.to_string())?;
-    let mut config = text
-        .parse::<toml_edit::DocumentMut>()
-        .map_err(|error| error.to_string())?;
-    let provider = kimi_provider_name(&config).ok_or("Kimi's default provider is missing")?;
-    let provider = config
-        .get_mut("providers")
-        .and_then(toml_edit::Item::as_table_like_mut)
-        .and_then(|providers| providers.get_mut(&provider))
-        .and_then(toml_edit::Item::as_table_like_mut)
-        .ok_or("Kimi's default provider is missing")?;
-
-    let env_api_key = kimi_env_api_key(provider);
-    let removed_env = env_api_key.is_some_and(|name| {
-        provider
-            .get_mut("env")
-            .and_then(toml_edit::Item::as_table_like_mut)
-            .is_some_and(|env| env.remove(name).is_some())
-    });
-    let removed = provider.remove("api_key").is_some() || removed_env;
-    if removed {
-        write_atomic(&path, config.to_string().as_bytes())?;
-        fs::set_permissions(&path, permissions).map_err(|error| error.to_string())?;
-    }
-    Ok(())
-}
-
-fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuth> {
+fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
     match name {
-        "claude" => claude_signed_in(app).then_some(CliAuth {
-            method: CliAuthMethod::Provider,
-            key_hint: None,
-        }),
+        "claude" => claude_signed_in(app).then_some(CliAuthMethod::Provider),
         "codex" => codex_home(app)
             .is_ok_and(|home| home.join("auth.json").is_file())
-            .then_some(CliAuth {
-                method: CliAuthMethod::Provider,
-                key_hint: None,
-            }),
+            .then_some(CliAuthMethod::Provider),
         name if CODEX_PROVIDERS.iter().any(|provider| provider.id == name) => {
             let provider = codex_provider(Some(name))?;
             (codex_profile_exists(app, provider.id) || codex_declares_provider(app, provider.id))
-                .then_some(CliAuth {
-                    method: CliAuthMethod::ApiKey,
-                    key_hint: None,
-                })
+                .then_some(CliAuthMethod::ApiKey)
         }
         "gemini" => gemini_home(app)
             .is_ok_and(|home| home.join("oauth_creds.json").is_file())
-            .then_some(CliAuth {
-                method: CliAuthMethod::Provider,
-                key_hint: None,
-            }),
-        "kimi" => kimi_auth(app),
+            .then_some(CliAuthMethod::Provider),
+        "kimi" => kimi_auth(),
         "qwen" => qwen_home(app)
             .is_ok_and(|home| home.join("oauth_creds.json").is_file())
-            .then_some(CliAuth {
-                method: CliAuthMethod::Provider,
-                key_hint: None,
-            }),
+            .then_some(CliAuthMethod::Provider),
         _ => None,
     }
 }
@@ -2885,27 +2852,29 @@ struct ProviderAuth {
     name: String,
     key_hint: Option<String>,
     cli_auth_method: Option<CliAuthMethod>,
-    cli_key_hint: Option<String>,
 }
 
 #[tauri::command]
 async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
-    let keys = load_api_keys(&app);
-    Ok(SUPPORTED_KEYS
-        .iter()
-        .copied()
-        .chain(["qwen"])
-        .map(|name| {
-            let cli_auth = cli_auth(&app, name);
-            ProviderAuth {
-                name: name.to_owned(),
-                // Only the last characters travel to the interface, enough to tell two keys apart.
-                key_hint: keys.get(name).map(|key| key_hint(key)),
-                cli_auth_method: cli_auth.as_ref().map(|auth| auth.method),
-                cli_key_hint: cli_auth.and_then(|auth| auth.key_hint),
-            }
-        })
-        .collect())
+    tauri::async_runtime::spawn_blocking(move || {
+        let keys = load_api_keys(&app);
+        Ok(SUPPORTED_KEYS
+            .iter()
+            .copied()
+            .chain(["qwen"])
+            .map(|name| {
+                let cli_auth = cli_auth(&app, name);
+                ProviderAuth {
+                    name: name.to_owned(),
+                    // Only the last characters travel to the interface, enough to tell two keys apart.
+                    key_hint: keys.get(name).map(|key| key_hint(key)),
+                    cli_auth_method: cli_auth,
+                }
+            })
+            .collect())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -2927,9 +2896,6 @@ async fn delete_api_key(app: AppHandle, name: String) -> Result<(), String> {
     let mut keys = load_api_keys(&app);
     if keys.remove(&name).is_some() {
         return write_api_keys(&app, &keys);
-    }
-    if name == "kimi" {
-        return delete_kimi_api_key(&app);
     }
     Ok(())
 }
@@ -3971,6 +3937,25 @@ async fn spawn_session(
         ssh_session_command(root, &launch, initial_prompt.as_deref())?
     } else if signing_in {
         login_command(&agent)?
+    } else if mode.as_deref() == Some("rebuild") {
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = CommandBuilder::new("/bin/sh");
+            command.args(["-c", "git pull --ff-only origin main && bun run local; printf '\\033]6973;lite-rebuild-finished\\007'; exec \"${SHELL:-/bin/sh}\" -l"]);
+            command
+        };
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = CommandBuilder::new(
+                std::env::var_os("COMSPEC").unwrap_or_else(|| "cmd.exe".into()),
+            );
+            command.args(["/C", "(git pull --ff-only origin main && bun run local) & echo \x1b]6973;lite-rebuild-finished\x07 & cmd /K"]);
+            command
+        };
+        if let Some(path) = user_path() {
+            command.env("PATH", path);
+        }
+        command
     } else {
         agent_command(&app, &launch)?
     };
@@ -3986,21 +3971,6 @@ async fn spawn_session(
         ssh.is_none().then_some(cwd.as_path()),
         theme.as_deref(),
     );
-    // Codex records a new thread per launch, so its discovery watches for one the tab did not start with.
-    // Kimi attaches to the directory's session instead, so its discovery reads that session directly.
-    let known_sessions =
-        if !signing_in && provider_session_id.is_none() && (agent == "codex" || agent == "kimi") {
-            if agent == "kimi" {
-                Some(HashSet::new())
-            } else if ssh.is_some() {
-                remote_sessions
-            } else {
-                // Losing discovery costs exact resume, not the session, so a failure still opens the terminal.
-                codex_thread_ids(&codex_server, &cwd).ok()
-            }
-        } else {
-            None
-        };
     let mut child = match pair.slave.spawn_command(command) {
         Ok(child) => child,
         Err(error) => {
@@ -4103,10 +4073,9 @@ async fn spawn_session(
         );
     });
 
-    if let Some(existing) = known_sessions {
+    if !signing_in && provider_session_id.is_none() && agent == "kimi" {
         let discovery_app = app.clone();
         let discovery_session_id = session_id.clone();
-        let discovery_agent = agent.clone();
         let discovery_ssh = ssh.clone();
         thread::spawn(move || {
             // The id appears with the first turn, which may be minutes away, so an idle tab is asked
@@ -4114,27 +4083,14 @@ async fn spawn_session(
             let mut wait = Duration::from_secs(1);
             loop {
                 let current = if let Some(root) = discovery_ssh.as_ref() {
-                    let remote_agent = if discovery_agent == "kimi" {
-                        "kimi-current"
-                    } else {
-                        discovery_agent.as_str()
-                    };
-                    ssh_provider_session_ids(root, remote_agent)
-                } else if discovery_agent == "kimi" {
+                    ssh_provider_session_ids(root, "kimi-current")
+                } else {
                     Ok(kimi_current_session(&discovery_app, &cwd)
                         .into_iter()
                         .collect::<HashSet<_>>())
-                } else {
-                    codex_thread_ids(&discovery_app.state::<CodexServer>(), &cwd)
                 };
-                let candidates = current.map(|current| {
-                    current
-                        .difference(&existing)
-                        .cloned()
-                        .collect::<HashSet<_>>()
-                });
                 // Whatever another tab already claimed is skipped, so overlapping launches settle apart.
-                if let Ok(candidates) = candidates
+                if let Ok(candidates) = current
                     && candidates.iter().any(|provider_session_id| {
                         update_provider_session(
                             &discovery_app,
@@ -4452,28 +4408,34 @@ async fn list_directory(
         .map_err(|error| error.to_string())?;
     }
     let root = root_path(&roots, &root_id)?;
-    let path = scoped_path(&root, &path)?;
-    let after = after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
-    let mut page = BTreeMap::new();
-    let mut has_more = false;
-    for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
-        let Ok(entry) = entry else { continue };
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if settings.hide_hidden.load(Ordering::Relaxed) && name.starts_with('.') {
-            continue;
+    let hide_hidden = settings.hide_hidden.load(Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = scoped_path(&root, &path)?;
+        let after =
+            after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
+        let mut page = BTreeMap::new();
+        let mut has_more = false;
+        for entry in fs::read_dir(path).map_err(|error| error.to_string())? {
+            let Ok(entry) = entry else { continue };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if hide_hidden && name.starts_with('.') {
+                continue;
+            }
+            let entry = FileEntry {
+                name,
+                path: path_text(&entry.path()),
+                is_directory: file_type.is_dir(),
+                is_symlink: file_type.is_symlink(),
+            };
+            page_directory_entry(&mut page, &mut has_more, &after, entry);
         }
-        let entry = FileEntry {
-            name,
-            path: path_text(&entry.path()),
-            is_directory: file_type.is_dir(),
-            is_symlink: file_type.is_symlink(),
-        };
-        page_directory_entry(&mut page, &mut has_more, &after, entry);
-    }
-    Ok(directory_listing(page, has_more))
+        Ok(directory_listing(page, has_more))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -4667,8 +4629,9 @@ async fn write_text_file(
     root_id: String,
     path: String,
     contents: String,
+    original: String,
 ) -> Result<(), String> {
-    if contents.len() > MAX_FILE_BYTES as usize {
+    if contents.len() > MAX_FILE_BYTES as usize || original.len() > MAX_FILE_BYTES as usize {
         return Err("File is larger than 500 KB".into());
     }
     if let Some(root) = ssh_root(&roots, &root_id)? {
@@ -4676,23 +4639,39 @@ async fn write_text_file(
             let script = scoped_ssh_script(
                 &root,
                 &path,
-                "set -e; test -f \"$path\" || { printf '%s\\n' 'Only files can be edited' >&2; exit 1; }; parent=${path%/*}; test -n \"$parent\" || parent=/; tmp=$(mktemp \"$parent\"/.lite.XXXXXX); trap 'rm -f -- \"$tmp\"' EXIT; cat > \"$tmp\"; chmod --reference=\"$path\" \"$tmp\"; mv -- \"$tmp\" \"$path\"; trap - EXIT",
+                &format!("set -e; test -f \"$path\" || {{ printf '%s\\n' 'Only files can be edited' >&2; exit 1; }}; parent=${{path%/*}}; test -n \"$parent\" || parent=/; tmp=$(mktemp \"$parent\"/.lite.XXXXXX); trap 'rm -f -- \"$tmp\" \"$input\"' EXIT; input=$(mktemp \"$parent\"/.lite.XXXXXX); cat > \"$input\"; tail -c +{} \"$input\" > \"$tmp\"; head -c {} \"$input\" | cmp -s - \"$path\" || {{ printf '%s\\n' 'The file changed on disk. Copy your draft before reopening it to compare changes.' >&2; exit 1; }}; chmod --reference=\"$path\" \"$tmp\"; mv -- \"$tmp\" \"$path\"", original.len() + 1, original.len()),
             )?;
-            ssh_stream(&root, &script, Some(contents.as_bytes()), |_| Ok(()))
+            let mut input = original.into_bytes();
+            input.extend_from_slice(contents.as_bytes());
+            ssh_stream(&root, &script, Some(&input), |_| Ok(()))
         })
         .await
         .map_err(|error| error.to_string())?;
     }
     let root = root_path(&roots, &root_id)?;
-    let path = scoped_path(&root, &path)?;
-    if !path.is_file() {
-        return Err("Only files can be edited".into());
-    }
-    let permissions = fs::metadata(&path)
-        .map_err(|error| error.to_string())?
-        .permissions();
-    write_atomic(&path, contents.as_bytes())?;
-    fs::set_permissions(path, permissions).map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = scoped_path(&root, &path)?;
+        if !path.is_file() {
+            return Err("Only files can be edited".into());
+        }
+        let mut current = Vec::new();
+        fs::File::open(&path)
+            .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut current))
+            .map_err(|error| error.to_string())?;
+        if current != original.as_bytes() {
+            return Err(
+                "The file changed on disk. Copy your draft before reopening it to compare changes."
+                    .into(),
+            );
+        }
+        let permissions = fs::metadata(&path)
+            .map_err(|error| error.to_string())?
+            .permissions();
+        write_atomic(&path, contents.as_bytes())?;
+        fs::set_permissions(path, permissions).map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -4959,82 +4938,87 @@ async fn git_diff(
             .map_err(|error| error.to_string())?;
     }
     let granted = root_path(&roots, &root_id)?;
-    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let repository = fs::canonicalize(command_output(
-        &git,
-        &granted,
-        &["rev-parse", "--show-toplevel"],
-    )?)
-    .map_err(|error| error.to_string())?;
-    let file = relative
-        .components()
-        .fold(repository.clone(), |mut file, component| {
-            if let Component::Normal(part) = component {
-                file.push(part);
-            }
-            file
-        });
-    let mut ancestor = file.as_path();
-    while !ancestor.exists() {
-        ancestor = ancestor
-            .parent()
-            .ok_or("This change is outside the selected folder")?;
-    }
-    let ancestor = fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
-    if !ancestor.starts_with(&granted) {
-        return Err(
-            "This change is outside the selected folder; start a session from the repository root to view it"
-                .into(),
-        );
-    }
-    let pathspec = path_text(relative);
-    let file = path_text(&file);
-    let untracked = !bounded_git_output(
-        &git,
-        &repository,
-        &[
-            "--literal-pathspecs",
-            "ls-files",
-            "--others",
-            "--exclude-standard",
-            "-z",
-            "--",
-            &pathspec,
-        ],
-        &[0],
-    )?
-    .is_empty();
-    if untracked {
-        let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
-        return bounded_git_output(
+    tauri::async_runtime::spawn_blocking(move || {
+        let relative = Path::new(&path);
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let repository = fs::canonicalize(command_output(
+            &git,
+            &granted,
+            &["rev-parse", "--show-toplevel"],
+        )?)
+        .map_err(|error| error.to_string())?;
+        let file = relative
+            .components()
+            .fold(repository.clone(), |mut file, component| {
+                if let Component::Normal(part) = component {
+                    file.push(part);
+                }
+                file
+            });
+        let mut ancestor = file.as_path();
+        while !ancestor.exists() {
+            ancestor = ancestor
+                .parent()
+                .ok_or("This change is outside the selected folder")?;
+        }
+        let ancestor = fs::canonicalize(ancestor).map_err(|error| error.to_string())?;
+        if !ancestor.starts_with(&granted) {
+            return Err(
+                "This change is outside the selected folder; start a session from the repository root to view it"
+                    .into(),
+            );
+        }
+        let pathspec = path_text(relative);
+        let file = path_text(&file);
+        let untracked = !bounded_git_output(
             &git,
             &repository,
             &[
-                "diff",
-                "--no-index",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-renames",
-                "--no-color",
+                "--literal-pathspecs",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
                 "--",
-                null,
-                &file,
+                &pathspec,
             ],
-            &[0, 1],
-        );
-    }
-    let base = git_diff_base(&git, &repository)?;
-    let mut args = vec![
-        "--literal-pathspecs",
-        "diff",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-renames",
-        "--no-color",
-    ];
-    args.push(&base);
-    args.extend(["--", &pathspec]);
-    bounded_git_output(&git, &repository, &args, &[0])
+            &[0],
+        )?
+        .is_empty();
+        if untracked {
+            let null = if cfg!(windows) { "NUL" } else { "/dev/null" };
+            return bounded_git_output(
+                &git,
+                &repository,
+                &[
+                    "diff",
+                    "--no-index",
+                    "--no-ext-diff",
+                    "--no-textconv",
+                    "--no-renames",
+                    "--no-color",
+                    "--",
+                    null,
+                    &file,
+                ],
+                &[0, 1],
+            );
+        }
+        let base = git_diff_base(&git, &repository)?;
+        let mut args = vec![
+            "--literal-pathspecs",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+            "--no-color",
+        ];
+        args.push(&base);
+        args.extend(["--", &pathspec]);
+        bounded_git_output(&git, &repository, &args, &[0])
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -5099,88 +5083,92 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
         .map_err(|error| error.to_string())?;
     }
     let path = root_path(&roots, &root_id)?;
-    // Locating Git runs a login shell, so one refresh resolves it once rather than once per command.
-    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let root = match command_output(&git, &path, &["rev-parse", "--show-toplevel"]) {
-        Ok(root) => root,
-        Err(_) => return Ok(None),
-    };
-    let repository = fs::canonicalize(&root).map_err(|error| error.to_string())?;
-    let scope = path
-        .strip_prefix(&repository)
-        .map_err(|_| "The selected folder is outside the Git repository")?;
-    let scope_text = if scope.as_os_str().is_empty() {
-        ".".into()
-    } else {
-        path_text(scope)
-    };
-    let branch = command_output(&git, &path, &["branch", "--show-current"])?;
-    let (changes, changes_truncated) = bounded_git_changes(
-        &git,
-        &repository,
-        &[
-            "--literal-pathspecs",
-            "status",
-            "--porcelain=v1",
-            "-z",
-            "--no-renames",
-            "--untracked-files=all",
-            "--",
-            &scope_text,
-        ],
-    )?;
-    let base = git_diff_base(&git, &repository)?;
-    let line_diffs = Command::new(&git)
-        .arg("-C")
-        .arg(path_text(&repository))
-        .args([
-            "--literal-pathspecs",
-            "diff",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-renames",
-            "--numstat",
-            "-z",
-            &base,
-            "--",
-            &scope_text,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()
-        .and_then(|mut child| {
-            let stdout = child.stdout.take()?;
-            let mut output = Vec::new();
-            if stdout
-                .take(MAX_GIT_DIFF_BYTES + 1)
-                .read_to_end(&mut output)
-                .is_err()
-            {
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-            if output.len() > MAX_GIT_DIFF_BYTES as usize {
-                output.truncate(MAX_GIT_DIFF_BYTES as usize);
-                let _ = child.kill();
-                let _ = child.wait();
-            } else if !child.wait().ok()?.success() {
-                return None;
-            }
-            truncate_to_record(&mut output);
-            Some(output)
-        })
-        .map(|output| git_line_diffs(&output))
-        .unwrap_or_default();
-    Ok(Some(git_status_result(
-        root,
-        branch,
-        changes,
-        line_diffs,
-        changes_truncated,
-        scope,
-    )))
+    tauri::async_runtime::spawn_blocking(move || {
+        // Locating Git runs a login shell, so one refresh resolves it once rather than once per command.
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let root = match command_output(&git, &path, &["rev-parse", "--show-toplevel"]) {
+            Ok(root) => root,
+            Err(_) => return Ok(None),
+        };
+        let repository = fs::canonicalize(&root).map_err(|error| error.to_string())?;
+        let scope = path
+            .strip_prefix(&repository)
+            .map_err(|_| "The selected folder is outside the Git repository")?;
+        let scope_text = if scope.as_os_str().is_empty() {
+            ".".into()
+        } else {
+            path_text(scope)
+        };
+        let branch = command_output(&git, &path, &["branch", "--show-current"])?;
+        let (changes, changes_truncated) = bounded_git_changes(
+            &git,
+            &repository,
+            &[
+                "--literal-pathspecs",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--no-renames",
+                "--untracked-files=all",
+                "--",
+                &scope_text,
+            ],
+        )?;
+        let base = git_diff_base(&git, &repository)?;
+        let line_diffs = Command::new(&git)
+            .arg("-C")
+            .arg(path_text(&repository))
+            .args([
+                "--literal-pathspecs",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--no-renames",
+                "--numstat",
+                "-z",
+                &base,
+                "--",
+                &scope_text,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()
+            .and_then(|mut child| {
+                let stdout = child.stdout.take()?;
+                let mut output = Vec::new();
+                if stdout
+                    .take(MAX_GIT_DIFF_BYTES + 1)
+                    .read_to_end(&mut output)
+                    .is_err()
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                if output.len() > MAX_GIT_DIFF_BYTES as usize {
+                    output.truncate(MAX_GIT_DIFF_BYTES as usize);
+                    let _ = child.kill();
+                    let _ = child.wait();
+                } else if !child.wait().ok()?.success() {
+                    return None;
+                }
+                truncate_to_record(&mut output);
+                Some(output)
+            })
+            .map(|output| git_line_diffs(&output))
+            .unwrap_or_default();
+        Ok(Some(git_status_result(
+            root,
+            branch,
+            changes,
+            line_diffs,
+            changes_truncated,
+            scope,
+        )))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // A remote is stored the way the repository was cloned, and only its https form opens in a browser.
@@ -5920,7 +5908,6 @@ async fn remove_worktree(
 #[tauri::command]
 async fn read_usage(
     app: AppHandle,
-    codex_server: State<'_, CodexServer>,
     provider_sessions: State<'_, ProviderSessions>,
     agent: String,
     provider: Option<String>,
@@ -5940,99 +5927,110 @@ async fn read_usage(
     } else {
         None
     };
-    match agent.as_str() {
-        "claude" => {
-            let directory = app
-                .path()
-                .app_data_dir()
-                .map_err(|error| error.to_string())?;
-            let path = directory.join(format!("usage-{session_id}.json"));
-            let mut usage = match fs::read(path) {
-                Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| error.to_string())?,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    UsageSnapshot::default()
-                }
-                Err(error) => return Err(error.to_string()),
-            };
-            // Claude's limits are account-wide, while its context and cost belong to this session.
-            // Use Claude's newest report for each account-wide limit rather than hiding one when the
-            // selected session has not sent a message yet or another report omitted that window.
-            if let Ok(entries) = fs::read_dir(directory) {
-                let mut latest = [None, None];
-                for (modified, window) in entries
-                    .flatten()
-                    .filter(|entry| {
-                        entry.file_name().to_str().is_some_and(|name| {
-                            name.starts_with("usage-") && name.ends_with(".json")
+    tauri::async_runtime::spawn_blocking(move || {
+        match agent.as_str() {
+            "claude" => {
+                let directory = app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|error| error.to_string())?;
+                let path = directory.join(format!("usage-{session_id}.json"));
+                let mut usage = match fs::read(path) {
+                    Ok(bytes) => {
+                        serde_json::from_slice(&bytes).map_err(|error| error.to_string())?
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                        UsageSnapshot::default()
+                    }
+                    Err(error) => return Err(error.to_string()),
+                };
+                // Claude's limits are account-wide, while its context and cost belong to this session.
+                // Use Claude's newest report for each account-wide limit rather than hiding one when the
+                // selected session has not sent a message yet or another report omitted that window.
+                if let Ok(entries) = fs::read_dir(directory) {
+                    let mut latest = [None, None];
+                    for (modified, window) in entries
+                        .flatten()
+                        .filter(|entry| {
+                            entry.file_name().to_str().is_some_and(|name| {
+                                name.starts_with("usage-") && name.ends_with(".json")
+                            })
                         })
-                    })
-                    .filter_map(|entry| {
-                        let modified = entry.metadata().ok()?.modified().ok()?;
-                        let snapshot: UsageSnapshot =
-                            serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
-                        Some((modified, snapshot.windows))
-                    })
-                    .flat_map(|(modified, windows)| {
-                        windows.into_iter().map(move |window| (modified, window))
-                    })
-                {
-                    let index = match window.label.as_str() {
-                        "Current session" | "5 hour" => 0,
-                        "Current week" | "7 day" => 1,
-                        _ => continue,
-                    };
-                    if latest[index]
-                        .as_ref()
-                        .is_none_or(|(current, _)| modified > *current)
+                        .filter_map(|entry| {
+                            let modified = entry.metadata().ok()?.modified().ok()?;
+                            let snapshot: UsageSnapshot =
+                                serde_json::from_slice(&fs::read(entry.path()).ok()?).ok()?;
+                            Some((modified, snapshot.windows))
+                        })
+                        .flat_map(|(modified, windows)| {
+                            windows.into_iter().map(move |window| (modified, window))
+                        })
                     {
-                        latest[index] = Some((modified, window));
+                        let index = match window.label.as_str() {
+                            "Current session" | "5 hour" => 0,
+                            "Current week" | "7 day" => 1,
+                            _ => continue,
+                        };
+                        if latest[index]
+                            .as_ref()
+                            .is_none_or(|(current, _)| modified > *current)
+                        {
+                            latest[index] = Some((modified, window));
+                        }
+                    }
+                    let windows: Vec<_> = latest
+                        .into_iter()
+                        .flatten()
+                        .map(|(_, window)| window)
+                        .collect();
+                    if !windows.is_empty() {
+                        usage.windows = windows;
                     }
                 }
-                let windows: Vec<_> = latest
-                    .into_iter()
-                    .flatten()
-                    .map(|(_, window)| window)
-                    .collect();
-                if !windows.is_empty() {
-                    usage.windows = windows;
+                for window in &mut usage.windows {
+                    window.label = match window.label.as_str() {
+                        "5 hour" => "Current session".into(),
+                        "7 day" => "Current week".into(),
+                        _ => continue,
+                    };
                 }
+                let now = SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_secs());
+                usage
+                    .windows
+                    .retain(|window| window.resets_at.is_none_or(|reset| reset > now));
+                Ok((usage.context_used_percent.is_some()
+                    || usage.context_tokens.is_some_and(|tokens| tokens > 0)
+                    || usage.cost_usd.is_some_and(|cost| cost > 0.0)
+                    || !usage.windows.is_empty())
+                .then_some(usage))
             }
-            for window in &mut usage.windows {
-                window.label = match window.label.as_str() {
-                    "5 hour" => "Current session".into(),
-                    "7 day" => "Current week".into(),
-                    _ => continue,
-                };
+            "codex" => {
+                // Custom providers have local thread context but do not bill OpenAI, so omit only the
+                // account requests rather than omitting the whole session.
+                let account = codex_provider(provider.as_deref()).is_none();
+                if !account && provider_session_id.is_none() {
+                    return Ok(None);
+                }
+                codex_usage(
+                    &app.state::<CodexServer>(),
+                    provider_session_id.as_deref(),
+                    account,
+                )
+                .map(Some)
             }
-            let now = SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs());
-            usage
-                .windows
-                .retain(|window| window.resets_at.is_none_or(|reset| reset > now));
-            Ok((usage.context_used_percent.is_some()
-                || usage.context_tokens.is_some_and(|tokens| tokens > 0)
-                || usage.cost_usd.is_some_and(|cost| cost > 0.0)
-                || !usage.windows.is_empty())
-            .then_some(usage))
+            "gemini" | "qwen" => Ok(native_session_path(&app, &agent, &session_id)
+                .and_then(|path| native_context(&path, &agent))),
+            "kimi" => Ok(provider_session_id
+                .as_deref()
+                .and_then(|id| kimi_context(&app, id))),
+            "shell" => Ok(None),
+            _ => Err("Unknown session type".into()),
         }
-        "codex" => {
-            // Custom providers have local thread context but do not bill OpenAI, so omit only the
-            // account requests rather than omitting the whole session.
-            let account = codex_provider(provider.as_deref()).is_none();
-            if !account && provider_session_id.is_none() {
-                return Ok(None);
-            }
-            codex_usage(&codex_server, provider_session_id.as_deref(), account).map(Some)
-        }
-        "gemini" | "qwen" => Ok(native_session_path(&app, &agent, &session_id)
-            .and_then(|path| native_context(&path, &agent))),
-        "kimi" => Ok(provider_session_id
-            .as_deref()
-            .and_then(|id| kimi_context(&app, id))),
-        "shell" => Ok(None),
-        _ => Err("Unknown session type".into()),
-    }
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn stop_runtime(app: &AppHandle) {
@@ -6260,6 +6258,7 @@ pub fn run() {
             default_directory,
             revoke_directory,
             spawn_session,
+            record_codex_session,
             write_session,
             watch_shell_agent,
             resize_session,

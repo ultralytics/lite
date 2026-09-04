@@ -95,7 +95,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { clearInspectorCache, Inspector, rememberGitHubReferences, SearchInput } from "@/inspector";
+import { clearInspectorCache, Inspector, rememberGitHubReferences, SearchInput, unsavedFile } from "@/inspector";
 import { including, swapped, without } from "@/lib/utils";
 import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
@@ -617,7 +617,7 @@ function AppContextMenu({
         {linkGroup && surfaceGroup ? <ContextMenuSeparator /> : null}
         {context.refresh ? (
           <ContextMenuItem onClick={() => context.refresh?.click()}>
-            <RefreshCw />
+            <RefreshCw className={context.refresh.disabled ? "animate-spin" : undefined} />
             Refresh
           </ContextMenuItem>
         ) : null}
@@ -1210,7 +1210,7 @@ function SessionActionButtons({
         disabled={starting}
         onClick={onRestart}
       >
-        {starting ? <Spinner /> : <RotateCcw />}
+        <RotateCcw className={starting ? "animate-spin" : undefined} />
       </ActionIconButton>
       <ActionIconButton
         size="icon-sm"
@@ -1835,9 +1835,20 @@ function App() {
     return () => void resized.then((unlisten) => unlisten());
   }, []);
 
+  const canCloseEditors = useCallback((sessionId?: string) => {
+    const path = unsavedFile(sessionId);
+    if (!path) return true;
+    setError(`Save or discard your changes to “${path}” before continuing.`);
+    return false;
+  }, []);
+
   useEffect(() => {
     const window = getCurrentWindow();
     const closing = window.onCloseRequested(async (event) => {
+      if (!canCloseEditors()) {
+        event.preventDefault();
+        return;
+      }
       const running = sessionsRef.current.filter((session) => session.running).length;
       if (running) {
         event.preventDefault();
@@ -1851,7 +1862,7 @@ function App() {
       await window.destroy();
     });
     return () => void closing.then((unlisten) => unlisten());
-  }, []);
+  }, [canCloseEditors]);
 
   // Opening a session reads its current notifications. A later notification remains highlighted until
   // the user returns to that session.
@@ -2105,11 +2116,24 @@ function App() {
     // byte as a JSON number and hand back an array to copy again, on the busiest path there is.
     receiveOutput.current = (sessionId, runId, data) => {
       if (runs.current.get(sessionId) !== runId) return;
-      const { title, path, activity, activityChanged, backgroundActivity, notification } = appendOutput(
-        sessionId,
-        data,
-      );
-      if (title) markTitle(sessionId, title);
+      const { title, path, activity, activityChanged, backgroundActivity, notification, rebuildFinished } =
+        appendOutput(sessionId, data);
+      if (rebuildFinished)
+        setSessions((current) =>
+          current.map((session) =>
+            session.id === sessionId && session.mode === "rebuild" ? { ...session, mode: undefined } : session,
+          ),
+        );
+      if (title) {
+        const session = sessionsRef.current.find((item) => item.id === sessionId);
+        const [identity, ...name] = title.split(" | ");
+        if (session?.agent === "codex" && /^[\da-f-]{20,36}(?:\.\.\.)?$/i.test(identity)) {
+          void invoke("record_codex_session", { sessionId, runId, rootId: session.rootId, title: identity }).catch(
+            (reason) => setError(String(reason)),
+          );
+          if (name.length && !name[0].startsWith(identity.replace("...", ""))) markTitle(sessionId, name.join(" | "));
+        } else markTitle(sessionId, title);
+      }
       if (path) markDirectory(sessionId, path);
       if (activity === true) clearAttention(sessionId);
       if (
@@ -2499,6 +2523,7 @@ function App() {
   }
 
   function restartSession(session: Session, select = true, recovered = false) {
+    if (!canCloseEditors(session.id)) return;
     // A close in flight owns this session's fate: restarting now would inherit a worktree the
     // close dialog is about to take away.
     const recovering = recoveries.current.get(session.id);
@@ -2646,7 +2671,8 @@ function App() {
           // its scope were the user's answer at close time; the backend re-reads the tree
           // immediately before removing, so nothing written since the confirmation is taken
           // against a narrower approval.
-          const approved = forceWorktree.current.delete(session.id);
+          const approved = forceWorktree.current.get(session.id);
+          forceWorktree.current.delete(session.id);
           await enqueueCleanup(() =>
             invoke("remove_worktree", {
               rootId: session.rootId,
@@ -2691,6 +2717,7 @@ function App() {
   // A worktree session owns the folder it runs in, so closing one first asks whether the folder
   // and its branch go with the tab. Everything else closes directly.
   function closeSession(session: Session, recovered = false) {
+    if (!canCloseEditors(session.id)) return;
     const recovering = recoveries.current.get(session.id);
     if (recovering) {
       const close = () => {
@@ -2903,13 +2930,15 @@ function App() {
     }
   }
 
-  // A local build is rebuilt by running one command in the tree it came from, so Lite opens that tree
-  // in a shell and runs it there rather than building out of sight: a build that fails says why, in the
-  // place its output belongs, and the tab stays afterwards like any other.
+  // The build command reports completion; its shell stays open with the output available.
+  const buildRunning =
+    rebuilding ||
+    sessions.some((session) => session.mode === "rebuild" && (session.running || startingIds.has(session.id)));
+
   async function rebuild() {
     // One build at a time: the dialog closes on the click, but checking again reopens it still behind
     // its tree, and a second build would contend with the first over the same target and dist folders.
-    if (rebuilding) return;
+    if (buildRunning) return;
     setRebuilding(true);
     try {
       const folder = await invoke<{ id: string; path: string }>("grant_repo");
@@ -2919,20 +2948,22 @@ function App() {
         cwd: folder.path,
         rootId: folder.id,
         name: "Rebuild Lite",
+        mode: "rebuild",
         renamed: true,
         running: false,
       };
       setUpdateOpen(false);
       createSession(session);
-      runOnStart(session.id, "git pull --ff-only origin main && bun run local");
     } catch (reason) {
-      setRebuilding(false);
       setUpdateError(String(reason));
       setUpdateStatus("error");
+    } finally {
+      setRebuilding(false);
     }
   }
 
   async function installUpdate() {
+    if (!canCloseEditors()) return;
     setUpdateProgress(null);
     // React may not have committed the last working-state effect when this click changes the update
     // state. Persist from the live owners now, excluding closed, disconnected and shell sessions.
@@ -3610,7 +3641,7 @@ function App() {
                   <Button variant="outline" onClick={() => changeUpdateOpen(false)}>
                     Not now
                   </Button>
-                  <Button disabled={rebuilding} onClick={() => void rebuild()}>
+                  <Button disabled={buildRunning} onClick={() => void rebuild()}>
                     <Play />
                     Rebuild
                   </Button>
@@ -3686,6 +3717,7 @@ function App() {
                   variant="destructive"
                   disabled={closingAllRunning}
                   onClick={() => {
+                    if (!canCloseEditors()) return;
                     attentionRef.current = [];
                     setAttention([]);
                     for (const session of sessions) {

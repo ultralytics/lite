@@ -256,15 +256,17 @@ function EditorSearch({
       let last: { from: number; to: number } | undefined;
       const cursor = of.getCursor(view.state);
       for (let found = cursor.next(); !found.done; found = cursor.next()) {
-        if (found.value.to <= from) match = found.value;
+        if (found.value.to <= from && (found.value.from !== from || found.value.to !== to)) match = found.value;
         last = found.value;
       }
       match ??= last;
     } else {
       const start = incremental ? from : to;
-      match = [of.getCursor(view.state, start).next(), of.getCursor(view.state, 0).next()].find(
-        (found) => !found.done,
-      )?.value;
+      const cursor = of.getCursor(view.state, start);
+      let found = cursor.next();
+      if (!incremental && !found.done && found.value.from === from && found.value.to === to) found = cursor.next();
+      if (found.done) found = of.getCursor(view.state, 0).next();
+      match = found.done ? undefined : found.value;
     }
     if (match)
       view.dispatch({
