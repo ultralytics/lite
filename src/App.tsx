@@ -838,7 +838,7 @@ function VersionBadge({
             variant={commit ? "error" : BADGE_VARIANT[release]}
             render={<button type="button" onClick={onCheck} />}
           >
-            {!commit && release === "checking" ? <Spinner aria-hidden="true" /> : null}
+            {!commit && release === "checking" ? <RefreshCw className="animate-spin" aria-hidden="true" /> : null}
             {commit || version}
           </Badge>
         }
@@ -3588,7 +3588,12 @@ function App() {
                     </ProgressLabel>
                     <ProgressValue />
                   </Progress>
-                ) : updateStatus === "checking" || updateStatus === "installing" ? (
+                ) : updateStatus === "checking" ? (
+                  <RefreshCw
+                    className="mx-auto size-5 animate-spin text-muted-foreground"
+                    aria-label="Checking for updates"
+                  />
+                ) : updateStatus === "installing" ? (
                   <Spinner className="mx-auto size-5 text-muted-foreground" />
                 ) : (
                   // What this copy of Lite actually is, which is the first thing worth knowing when it and

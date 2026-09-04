@@ -2809,7 +2809,15 @@ fn key_hint(key: &str) -> String {
         .collect()
 }
 
-fn kimi_auth() -> Option<CliAuthMethod> {
+fn kimi_auth(app: &AppHandle) -> Option<CliAuthMethod> {
+    let home = kimi_home(app).ok()?;
+    // As with Codex and Gemini, check only whether the CLI has stored its sign-in.
+    if home.join("credentials/kimi-code.json").is_file() {
+        return Some(CliAuthMethod::Provider);
+    }
+    if !home.join("config.toml").is_file() {
+        return None;
+    }
     // Ask the CLI for its public summary; its configuration and credentials stay its own.
     let output = Command::new(resolve_executable("kimi")?)
         .args(["provider", "list"])
@@ -2820,7 +2828,7 @@ fn kimi_auth() -> Option<CliAuthMethod> {
     (output.status.success()
         && String::from_utf8_lossy(&output.stdout)
             .lines()
-            .any(|line| line.contains("  type=")))
+            .any(|line| line.contains("  type=") && !line.contains("  source=oauth")))
     .then_some(CliAuthMethod::Provider)
 }
 
@@ -2838,7 +2846,7 @@ fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
         "gemini" => gemini_home(app)
             .is_ok_and(|home| home.join("oauth_creds.json").is_file())
             .then_some(CliAuthMethod::Provider),
-        "kimi" => kimi_auth(),
+        "kimi" => kimi_auth(app),
         "qwen" => qwen_home(app)
             .is_ok_and(|home| home.join("oauth_creds.json").is_file())
             .then_some(CliAuthMethod::Provider),
