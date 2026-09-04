@@ -121,7 +121,7 @@ export function MarkdownPreview({ source, className = "" }: { source: string; cl
         remarkPlugins={[remarkGfm]}
         components={{
           a({ href, children }) {
-            return href ? (
+            return href?.startsWith("http://") || href?.startsWith("https://") ? (
               <a
                 href={href}
                 onClick={(event) => {
