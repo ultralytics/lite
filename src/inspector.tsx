@@ -599,7 +599,10 @@ function FileTree({
 
   const searchFiles = useEffectEvent(() => void walk(false));
   useEffect(() => {
-    if (!lowered) setExpandingAll(false);
+    if (!lowered) {
+      setExpandingAll(false);
+      setLimited(false);
+    }
     const timer = lowered ? window.setTimeout(searchFiles, 150) : undefined;
     return () => {
       window.clearTimeout(timer);
