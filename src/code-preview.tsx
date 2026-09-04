@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import hljs from "highlight.js/lib/core";
-import { type ImgHTMLAttributes, lazy, useEffect, useMemo, useState } from "react";
+import { type ImgHTMLAttributes, lazy, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
@@ -151,27 +151,37 @@ function PreviewImage({
   ...props
 }: ImgHTMLAttributes<HTMLImageElement> & { onReadPath?: (path: string) => Promise<ArrayBuffer> }) {
   const local = Boolean(src && onReadPath && !/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(src));
+  const image = useRef<HTMLImageElement>(null);
   const [resolved, setResolved] = useState<string>();
   useEffect(() => {
     setResolved(undefined);
     if (!local || !src || !onReadPath) return;
     let active = true;
     let objectUrl: string | undefined;
-    void onReadPath(src)
-      .then((bytes) => {
-        if (!active) return;
-        objectUrl = URL.createObjectURL(
-          new Blob([bytes], { type: /\.svg(?:[?#]|$)/i.test(src) ? "image/svg+xml" : "" }),
-        );
-        setResolved(objectUrl);
-      })
-      .catch(() => {});
+    const load = () => {
+      void onReadPath(src)
+        .then((bytes) => {
+          if (!active) return;
+          objectUrl = URL.createObjectURL(
+            new Blob([bytes], { type: /\.svg(?:[?#]|$)/i.test(src) ? "image/svg+xml" : "" }),
+          );
+          setResolved(objectUrl);
+        })
+        .catch(() => {});
+    };
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries[0]?.isIntersecting) return;
+      observer.disconnect();
+      load();
+    });
+    if (image.current) observer.observe(image.current);
     return () => {
       active = false;
+      observer.disconnect();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [local, onReadPath, src]);
-  return <img src={local ? resolved : src} alt={alt} loading="lazy" decoding="async" {...props} />;
+  return <img ref={image} src={local ? resolved : src} alt={alt} loading="lazy" decoding="async" {...props} />;
 }
 
 // A gutter beside the source rather than a number on each line: a highlighted span may open on one line
@@ -214,7 +224,10 @@ export function MarkdownPreview({
                 href={href}
                 onClick={(event) => {
                   event.preventDefault();
-                  void invoke("open_url", { url: href.startsWith("//") ? `https:${href}` : href });
+                  const url = href.startsWith("//")
+                    ? `https:${href}`
+                    : href.replace(/^https?:/i, (scheme) => scheme.toLowerCase());
+                  void invoke("open_url", { url });
                 }}
               >
                 {children}
