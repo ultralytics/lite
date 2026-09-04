@@ -73,6 +73,7 @@ const extensionLanguages: Record<string, string> = {
   rb: "ruby",
   rs: "rust",
   sh: "bash",
+  shell: "bash",
   ts: "typescript",
   tsx: "typescript",
   svg: "xml",
@@ -81,6 +82,7 @@ const extensionLanguages: Record<string, string> = {
 };
 
 function highlighted(source: string, language?: string) {
+  language = language && (extensionLanguages[language.toLowerCase()] ?? language.toLowerCase());
   if (source.length <= 200_000 && language && hljs.getLanguage(language))
     return hljs.highlight(source, { language }).value;
   return source.replace(/[&<>]/g, (character) => (character === "&" ? "&amp;" : character === "<" ? "&lt;" : "&gt;"));
@@ -187,6 +189,7 @@ export function MarkdownPreview({
               <a
                 href={href}
                 onClick={(event) => {
+                  if (href.startsWith("?")) event.preventDefault();
                   if (!external && !local) return;
                   event.preventDefault();
                   if (external) {
