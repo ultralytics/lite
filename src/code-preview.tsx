@@ -2,26 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import hljs from "highlight.js/lib/core";
-import bash from "highlight.js/lib/languages/bash";
-import cpp from "highlight.js/lib/languages/cpp";
-import csharp from "highlight.js/lib/languages/csharp";
-import css from "highlight.js/lib/languages/css";
-import diff from "highlight.js/lib/languages/diff";
-import go from "highlight.js/lib/languages/go";
-import java from "highlight.js/lib/languages/java";
-import javascript from "highlight.js/lib/languages/javascript";
-import json from "highlight.js/lib/languages/json";
-import kotlin from "highlight.js/lib/languages/kotlin";
-import markdown from "highlight.js/lib/languages/markdown";
-import php from "highlight.js/lib/languages/php";
-import python from "highlight.js/lib/languages/python";
-import ruby from "highlight.js/lib/languages/ruby";
-import rust from "highlight.js/lib/languages/rust";
-import sql from "highlight.js/lib/languages/sql";
-import typescript from "highlight.js/lib/languages/typescript";
-import xml from "highlight.js/lib/languages/xml";
-import yaml from "highlight.js/lib/languages/yaml";
-import { lazy, useMemo } from "react";
+import { lazy, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
@@ -31,28 +12,74 @@ import remarkGfm from "remark-gfm";
 // when the first file is edited rather than with the first rendered Markdown.
 const SourceEditor = lazy(() => import("@/source-editor"));
 
-const languages = {
-  bash,
-  cpp,
-  csharp,
-  css,
-  diff,
-  go,
-  java,
-  javascript,
-  json,
-  kotlin,
-  markdown,
-  php,
-  python,
-  ruby,
-  rust,
-  sql,
-  typescript,
-  xml,
-  yaml,
+// Match Portal's CodeBlock: grammars load only when a preview actually uses them. INI also owns
+// Highlight.js's TOML alias, which this repository's README needs.
+const languageLoaders: Record<string, () => Promise<{ default: (highlighter: typeof hljs) => unknown }>> = {
+  bash: () => import("highlight.js/lib/languages/bash"),
+  cpp: () => import("highlight.js/lib/languages/cpp"),
+  csharp: () => import("highlight.js/lib/languages/csharp"),
+  css: () => import("highlight.js/lib/languages/css"),
+  diff: () => import("highlight.js/lib/languages/diff"),
+  go: () => import("highlight.js/lib/languages/go"),
+  ini: () => import("highlight.js/lib/languages/ini"),
+  java: () => import("highlight.js/lib/languages/java"),
+  javascript: () => import("highlight.js/lib/languages/javascript"),
+  json: () => import("highlight.js/lib/languages/json"),
+  kotlin: () => import("highlight.js/lib/languages/kotlin"),
+  markdown: () => import("highlight.js/lib/languages/markdown"),
+  php: () => import("highlight.js/lib/languages/php"),
+  python: () => import("highlight.js/lib/languages/python"),
+  ruby: () => import("highlight.js/lib/languages/ruby"),
+  rust: () => import("highlight.js/lib/languages/rust"),
+  sql: () => import("highlight.js/lib/languages/sql"),
+  typescript: () => import("highlight.js/lib/languages/typescript"),
+  xml: () => import("highlight.js/lib/languages/xml"),
+  yaml: () => import("highlight.js/lib/languages/yaml"),
 };
-for (const [name, language] of Object.entries(languages)) hljs.registerLanguage(name, language);
+
+const languageAliases: Record<string, string> = {
+  c: "cpp",
+  cc: "cpp",
+  cs: "csharp",
+  h: "cpp",
+  hpp: "cpp",
+  html: "xml",
+  htm: "xml",
+  js: "javascript",
+  jsx: "javascript",
+  kt: "kotlin",
+  md: "markdown",
+  mdx: "markdown",
+  py: "python",
+  rb: "ruby",
+  rs: "rust",
+  shell: "bash",
+  sh: "bash",
+  svg: "xml",
+  toml: "ini",
+  ts: "typescript",
+  tsx: "typescript",
+  yml: "yaml",
+  zsh: "bash",
+};
+const pendingLanguages = new Map<string, Promise<void>>();
+
+function loadLanguage(language: string): Promise<void> {
+  const requested = language.toLowerCase();
+  const name = languageAliases[requested] ?? requested;
+  if (hljs.getLanguage(requested)) return Promise.resolve();
+  const loader = languageLoaders[name];
+  if (!loader) return Promise.resolve();
+  const pending = pendingLanguages.get(name);
+  if (pending) return pending;
+  const task = loader()
+    .then(({ default: grammar }) => hljs.registerLanguage(name, grammar as Parameters<typeof hljs.registerLanguage>[1]))
+    .catch(() => {
+      pendingLanguages.delete(name);
+    });
+  pendingLanguages.set(name, task);
+  return task;
+}
 
 const extensionLanguages: Record<string, string> = {
   bash: "bash",
@@ -71,6 +98,7 @@ const extensionLanguages: Record<string, string> = {
   js: "javascript",
   json: "json",
   jsx: "javascript",
+  ini: "ini",
   kt: "kotlin",
   md: "markdown",
   mdx: "markdown",
@@ -82,6 +110,7 @@ const extensionLanguages: Record<string, string> = {
   sql: "sql",
   ts: "typescript",
   tsx: "typescript",
+  toml: "toml",
   svg: "xml",
   xml: "xml",
   yaml: "yaml",
@@ -96,7 +125,22 @@ function highlighted(source: string, language?: string) {
 }
 
 function HighlightedCode({ source, language, className }: { source: string; language?: string; className?: string }) {
-  const html = useMemo(() => highlighted(source, language), [source, language]);
+  const [ready, setReady] = useState(() => !language || Boolean(hljs.getLanguage(language)));
+  useEffect(() => {
+    if (!language || hljs.getLanguage(language)) {
+      setReady(true);
+      return;
+    }
+    setReady(false);
+    let cancelled = false;
+    void loadLanguage(language).then(() => {
+      if (!cancelled) setReady(Boolean(hljs.getLanguage(language)));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [language]);
+  const html = useMemo(() => highlighted(source, ready ? language : undefined), [source, language, ready]);
   return <code className={`hljs ${className ?? ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
