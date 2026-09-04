@@ -23,6 +23,8 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { lazy, useMemo } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
 // The editor is the heavier half of this file's imports and only an open file needs it, so it loads
@@ -114,14 +116,23 @@ function LineNumbers({ count }: { count: number }) {
   );
 }
 
-export function MarkdownPreview({ source, className = "" }: { source: string; className?: string }) {
+export function MarkdownPreview({
+  source,
+  className = "",
+  onOpenPath,
+}: {
+  source: string;
+  className?: string;
+  onOpenPath?: (path: string) => void;
+}) {
   return (
     <article className={`markdown-viewer max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, rehypeSanitize]}
         components={{
           a({ href, children }) {
-            return href?.startsWith("http://") || href?.startsWith("https://") ? (
+            return href && /^https?:\/\//i.test(href) ? (
               <a
                 href={href}
                 onClick={(event) => {
@@ -131,8 +142,18 @@ export function MarkdownPreview({ source, className = "" }: { source: string; cl
               >
                 {children}
               </a>
+            ) : href && onOpenPath ? (
+              <a
+                href={href}
+                onClick={(event) => {
+                  event.preventDefault();
+                  onOpenPath(href);
+                }}
+              >
+                {children}
+              </a>
             ) : (
-              <span className="text-foreground underline">{children}</span>
+              <span className="text-[var(--syntax-constant)] underline">{children}</span>
             );
           },
           code({ className, children, ...props }) {
@@ -144,8 +165,8 @@ export function MarkdownPreview({ source, className = "" }: { source: string; cl
               <code {...props}>{children}</code>
             );
           },
-          img({ alt }) {
-            return <span className="text-muted-foreground">[Image: {alt}]</span>;
+          img({ node: _node, alt = "", ...props }) {
+            return <img alt={alt} loading="lazy" decoding="async" {...props} />;
           },
         }}
       >
@@ -163,6 +184,7 @@ export default function CodePreview({
   baseline,
   fontSize,
   onChange,
+  onOpenPath,
 }: {
   path: string;
   source: string;
@@ -171,10 +193,11 @@ export default function CodePreview({
   baseline?: string;
   fontSize?: number;
   onChange?: (source: string) => void;
+  onOpenPath?: (path: string) => void;
 }) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (rendered && (extension === "md" || extension === "mdx")) {
-    return <MarkdownPreview source={source} className="px-6 py-5" />;
+    return <MarkdownPreview source={source} className="px-6 py-5" onOpenPath={onOpenPath} />;
   }
   if (rendered && ["htm", "html", "svg"].includes(extension)) {
     return (

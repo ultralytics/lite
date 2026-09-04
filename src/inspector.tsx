@@ -878,6 +878,7 @@ function FileViewer({
   loading,
   fontSize,
   onBack,
+  onOpenPath,
   onDraftChange,
   onSave,
 }: {
@@ -889,6 +890,7 @@ function FileViewer({
   loading: boolean;
   fontSize: number;
   onBack: () => void;
+  onOpenPath: (path: string) => void;
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
@@ -1017,7 +1019,12 @@ function FileViewer({
               <ScrollArea className="size-full">
                 <div style={contentZoomStyle(fontSize)}>
                   <Suspense fallback={<Loading label="Opening preview…" />}>
-                    <CodePreview path={entry.path} source={draft} rendered />
+                    <CodePreview
+                      path={entry.path}
+                      source={draft}
+                      rendered
+                      onOpenPath={dirty ? undefined : onOpenPath}
+                    />
                   </Suspense>
                 </div>
               </ScrollArea>
@@ -1140,6 +1147,19 @@ function FilesPanel({
     setSelected(null);
   }
 
+  function openLinkedFile(href: string) {
+    if (!selected) return;
+    try {
+      const current = selected.path.replace(/\\/g, "/");
+      const target = new URL(href, `file://${current.startsWith("/") ? "" : "/"}${current}`);
+      if (target.protocol !== "file:") return;
+      const path = decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+      void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false });
+    } catch {
+      // A malformed link is shown as authored but cannot name a local file.
+    }
+  }
+
   // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
   // folders exactly as they were left — expanded, loaded, and scrolled — without rereading the disk.
   // A new root grant is a different tree, so it starts over the way a first open does; the open file
@@ -1157,6 +1177,7 @@ function FilesPanel({
           loading={loading}
           fontSize={fontSize}
           onBack={closeFile}
+          onOpenPath={openLinkedFile}
           onDraftChange={changeDraft}
           onSave={saveFile}
         />

@@ -105,45 +105,121 @@ html[data-session-dragging] * {
   background-color: var(--syntax-deletion-background);
 }
 
+.markdown-viewer {
+  overflow-wrap: break-word;
+}
+
+.markdown-viewer > :first-child {
+  margin-top: 0;
+}
+
+.markdown-viewer > :last-child {
+  margin-bottom: 0;
+}
+
 .markdown-viewer h1,
 .markdown-viewer h2,
-.markdown-viewer h3 {
-  margin: 1.5em 0 0.6em;
+.markdown-viewer h3,
+.markdown-viewer h4,
+.markdown-viewer h5,
+.markdown-viewer h6 {
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
   font-weight: 600;
   line-height: 1.25;
 }
 
 .markdown-viewer h1 {
-  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+  font-size: 2em;
 }
 .markdown-viewer h2 {
-  font-size: 1.25em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--border);
+  font-size: 1.5em;
 }
 .markdown-viewer h3 {
-  font-size: 1.05em;
+  font-size: 1.25em;
+}
+.markdown-viewer h4 {
+  font-size: 1em;
+}
+.markdown-viewer h5 {
+  font-size: 0.875em;
+}
+.markdown-viewer h6 {
+  color: var(--muted-foreground);
+  font-size: 0.85em;
 }
 .markdown-viewer p,
 .markdown-viewer ul,
 .markdown-viewer ol,
-.markdown-viewer blockquote {
-  margin: 0.8em 0;
+.markdown-viewer dl,
+.markdown-viewer blockquote,
+.markdown-viewer details,
+.markdown-viewer pre,
+.markdown-viewer table {
+  margin-top: 0;
+  margin-bottom: 1rem;
 }
 .markdown-viewer ul {
   list-style: disc;
-  padding-left: 1.4rem;
+  padding-left: 2em;
 }
 .markdown-viewer ol {
   list-style: decimal;
-  padding-left: 1.4rem;
+  padding-left: 2em;
+}
+.markdown-viewer ul ul,
+.markdown-viewer ol ul {
+  list-style-type: circle;
+}
+.markdown-viewer ol ol,
+.markdown-viewer ul ol {
+  list-style-type: lower-roman;
+}
+.markdown-viewer li + li {
+  margin-top: 0.25em;
+}
+.markdown-viewer li > p {
+  margin-top: 1rem;
+}
+.markdown-viewer li > ul,
+.markdown-viewer li > ol {
+  margin-bottom: 0;
 }
 .markdown-viewer a {
-  text-decoration: underline;
+  color: var(--syntax-constant);
+  text-decoration: none;
   text-underline-offset: 3px;
 }
+.markdown-viewer a:hover {
+  text-decoration: underline;
+}
+.markdown-viewer img {
+  display: inline-block;
+  box-sizing: content-box;
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
 .markdown-viewer blockquote {
-  border-left: 2px solid var(--border);
-  padding-left: 1rem;
+  border-left: 0.25em solid var(--border);
+  padding: 0 1em;
   color: var(--muted-foreground);
+}
+.markdown-viewer blockquote > :first-child {
+  margin-top: 0;
+}
+.markdown-viewer blockquote > :last-child {
+  margin-bottom: 0;
+}
+.markdown-viewer hr {
+  height: 0.25em;
+  margin: 1.5rem 0;
+  border: 0;
+  background: var(--border);
 }
 .markdown-viewer pre {
   overflow: auto;
@@ -159,13 +235,50 @@ html[data-session-dragging] * {
   padding: 0.1rem 0.3rem;
   font-size: 0.85em;
 }
+.markdown-viewer kbd {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 0.3rem;
+  background: var(--muted);
+  padding: 0.1rem 0.35rem;
+  font-size: 0.8em;
+  line-height: 1;
+  vertical-align: middle;
+}
 .markdown-viewer table {
-  width: 100%;
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-spacing: 0;
   border-collapse: collapse;
 }
 .markdown-viewer th,
 .markdown-viewer td {
   border: 1px solid var(--border);
-  padding: 0.4rem 0.6rem;
+  padding: 0.4rem 0.8rem;
   text-align: left;
+}
+.markdown-viewer th {
+  font-weight: 600;
+}
+.markdown-viewer tr:nth-child(2n) {
+  background: color-mix(in oklab, var(--muted) 55%, transparent);
+}
+.markdown-viewer summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.markdown-viewer .contains-task-list {
+  padding-left: 0;
+  list-style: none;
+}
+.markdown-viewer .task-list-item {
+  list-style: none;
+}
+.markdown-viewer .task-list-item input {
+  margin: 0 0.4em 0.25em 0;
+  vertical-align: middle;
+  accent-color: var(--syntax-constant);
 }
