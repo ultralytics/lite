@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import hljs from "highlight.js/lib/core";
-import { lazy, useEffect, useMemo, useState } from "react";
+import { type ImgHTMLAttributes, lazy, useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
@@ -144,6 +144,36 @@ function HighlightedCode({ source, language, className }: { source: string; lang
   return <code className={`hljs ${className ?? ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
+function PreviewImage({
+  src,
+  alt = "",
+  onReadPath,
+  ...props
+}: ImgHTMLAttributes<HTMLImageElement> & { onReadPath?: (path: string) => Promise<ArrayBuffer> }) {
+  const local = Boolean(src && onReadPath && !/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(src));
+  const [resolved, setResolved] = useState<string>();
+  useEffect(() => {
+    setResolved(undefined);
+    if (!local || !src || !onReadPath) return;
+    let active = true;
+    let objectUrl: string | undefined;
+    void onReadPath(src)
+      .then((bytes) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(
+          new Blob([bytes], { type: /\.svg(?:[?#]|$)/i.test(src) ? "image/svg+xml" : "" }),
+        );
+        setResolved(objectUrl);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [local, onReadPath, src]);
+  return <img src={local ? resolved : src} alt={alt} loading="lazy" decoding="async" {...props} />;
+}
+
 // A gutter beside the source rather than a number on each line: a highlighted span may open on one line
 // and close on another, so the markup cannot be cut per line without tearing. Nothing here wraps, so a
 // column of numbers on the same leading stays level with the code, and it is skipped by a copy and by a
@@ -164,10 +194,12 @@ export function MarkdownPreview({
   source,
   className = "",
   onOpenPath,
+  onReadPath,
 }: {
   source: string;
   className?: string;
   onOpenPath?: (path: string) => void;
+  onReadPath?: (path: string) => Promise<ArrayBuffer>;
 }) {
   return (
     <article className={`markdown-viewer max-w-none ${className}`}>
@@ -187,7 +219,7 @@ export function MarkdownPreview({
               >
                 {children}
               </a>
-            ) : href?.startsWith("#") || (href && /^[a-z][a-z\d+.-]*:/i.test(href)) ? (
+            ) : href?.startsWith("#") || href?.startsWith("?") || (href && /^[a-z][a-z\d+.-]*:/i.test(href)) ? (
               <a href={href}>{children}</a>
             ) : href && onOpenPath ? (
               <a
@@ -213,7 +245,7 @@ export function MarkdownPreview({
             );
           },
           img({ node: _node, alt = "", ...props }) {
-            return <img alt={alt} loading="lazy" decoding="async" {...props} />;
+            return <PreviewImage alt={alt} onReadPath={onReadPath} {...props} />;
           },
         }}
       >
@@ -232,6 +264,7 @@ export default function CodePreview({
   fontSize,
   onChange,
   onOpenPath,
+  onReadPath,
 }: {
   path: string;
   source: string;
@@ -241,10 +274,11 @@ export default function CodePreview({
   fontSize?: number;
   onChange?: (source: string) => void;
   onOpenPath?: (path: string) => void;
+  onReadPath?: (path: string) => Promise<ArrayBuffer>;
 }) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (rendered && (extension === "md" || extension === "mdx")) {
-    return <MarkdownPreview source={source} className="px-6 py-5" onOpenPath={onOpenPath} />;
+    return <MarkdownPreview source={source} className="px-6 py-5" onOpenPath={onOpenPath} onReadPath={onReadPath} />;
   }
   if (rendered && ["htm", "html", "svg"].includes(extension)) {
     return (

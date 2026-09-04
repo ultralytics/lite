@@ -34,6 +34,7 @@ use objc2_user_notifications::{
 };
 
 const MAX_FILE_BYTES: u64 = 500_000;
+const MAX_IMAGE_BYTES: u64 = 10_000_000;
 const DIRECTORY_PAGE_SIZE: usize = 250;
 const MAX_GIT_CHANGES: usize = 500;
 const MAX_GIT_DIFF_BYTES: u64 = 1_000_000;
@@ -4617,6 +4618,50 @@ async fn read_text_file(
 }
 
 #[tauri::command]
+async fn read_image_file(
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+) -> Result<tauri::ipc::Response, String> {
+    let bytes = if let Some(root) = ssh_root(&roots, &root_id)? {
+        tauri::async_runtime::spawn_blocking(move || {
+            let script = scoped_ssh_script(
+                &root,
+                &path,
+                &format!("head -c {} -- \"$path\"", MAX_IMAGE_BYTES + 1),
+            )?;
+            let mut bytes = Vec::new();
+            ssh_stream(&root, &script, None, |chunk| {
+                if bytes.len() + chunk.len() > MAX_IMAGE_BYTES as usize {
+                    return Err("Image is larger than 10 MB".into());
+                }
+                bytes.extend_from_slice(chunk);
+                Ok(())
+            })?;
+            Ok::<Vec<u8>, String>(bytes)
+        })
+        .await
+        .map_err(|error| error.to_string())??
+    } else {
+        let root = root_path(&roots, &root_id)?;
+        let path = scoped_path(&root, &path)?;
+        tauri::async_runtime::spawn_blocking(move || {
+            let mut bytes = Vec::new();
+            fs::File::open(path)
+                .and_then(|file| file.take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes))
+                .map_err(|error| error.to_string())?;
+            if bytes.len() > MAX_IMAGE_BYTES as usize {
+                return Err("Image is larger than 10 MB".into());
+            }
+            Ok::<Vec<u8>, String>(bytes)
+        })
+        .await
+        .map_err(|error| error.to_string())??
+    };
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[tauri::command]
 async fn write_text_file(
     roots: State<'_, Roots>,
     root_id: String,
@@ -6223,6 +6268,7 @@ pub fn run() {
             delete_session_data,
             list_directory,
             read_text_file,
+            read_image_file,
             write_text_file,
             delete_entry,
             hide_hidden_files,

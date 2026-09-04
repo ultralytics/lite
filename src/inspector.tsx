@@ -786,6 +786,17 @@ function FileTree({
 
 const RENDERED_FILE = /\.(?:html?|mdx?|svg)$/i;
 
+function linkedFilePath(currentPath: string, href: string) {
+  try {
+    const current = currentPath.replace(/\\/g, "/");
+    const encoded = current.split("/").map(encodeURIComponent).join("/");
+    const target = new URL(href, `file://${current.startsWith("/") ? "" : "/"}${encoded}`);
+    if (target.protocol === "file:") return decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+  } catch {
+    // A malformed link is shown as authored but cannot name a local file.
+  }
+}
+
 function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
   const viewer = useRef<T>(null);
 
@@ -879,6 +890,7 @@ function FileViewer({
   fontSize,
   onBack,
   onOpenPath,
+  onReadPath,
   onDraftChange,
   onSave,
 }: {
@@ -891,6 +903,7 @@ function FileViewer({
   fontSize: number;
   onBack: () => void;
   onOpenPath: (path: string) => void;
+  onReadPath: (path: string) => Promise<ArrayBuffer>;
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
@@ -1024,6 +1037,7 @@ function FileViewer({
                       source={draft}
                       rendered
                       onOpenPath={dirty ? undefined : onOpenPath}
+                      onReadPath={onReadPath}
                     />
                   </Suspense>
                 </div>
@@ -1149,17 +1163,20 @@ function FilesPanel({
 
   function openLinkedFile(href: string) {
     if (!selected) return;
-    try {
-      const current = selected.path.replace(/\\/g, "/");
-      const encoded = current.split("/").map(encodeURIComponent).join("/");
-      const target = new URL(href, `file://${current.startsWith("/") ? "" : "/"}${encoded}`);
-      if (target.protocol !== "file:") return;
-      const path = decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
-      void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false });
-    } catch {
-      // A malformed link is shown as authored but cannot name a local file.
-    }
+    const path = linkedFilePath(selected.path, href);
+    if (path) void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false });
   }
+
+  const readLinkedImage = useCallback(
+    async (href: string) => {
+      if (!selected) throw new Error("No file is selected");
+      const path = linkedFilePath(selected.path, href);
+      if (!path) throw new Error("Image path is invalid");
+      const bytes = await invoke<ArrayBuffer | number[]>("read_image_file", { rootId, path });
+      return bytes instanceof ArrayBuffer ? bytes : Uint8Array.from(bytes).buffer;
+    },
+    [rootId, selected],
+  );
 
   // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
   // folders exactly as they were left — expanded, loaded, and scrolled — without rereading the disk.
@@ -1179,6 +1196,7 @@ function FilesPanel({
           fontSize={fontSize}
           onBack={closeFile}
           onOpenPath={openLinkedFile}
+          onReadPath={readLinkedImage}
           onDraftChange={changeDraft}
           onSave={saveFile}
         />
