@@ -206,6 +206,7 @@ export function TerminalView({
       fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
       fontSize: fontSizeRef.current,
       lineHeight: 1.25,
+      minimumContrastRatio: 4.5,
       overviewRuler: { width: 6 },
       linkHandler: {
         activate: (event, url) => {

@@ -14,8 +14,8 @@ export interface Session {
   // Provider model chosen when the session was created; absent for providers that own model choice.
   model?: string;
   reasoningEffort?: string;
-  // A sign-in session runs the provider's own login command; it is never stored or resumed.
-  mode?: "login";
+  // Sign-in and rebuild commands are temporary sessions; neither is stored or resumed.
+  mode?: "login" | "rebuild";
   name: string;
   // A name the user typed is theirs, so nothing the session says about itself overwrites it again.
   renamed?: boolean;

@@ -32,6 +32,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -506,45 +507,55 @@ function FileTree({
     setExpanded(next);
   }
 
-  // "Expand all" and search walk the same tree: the one loads it to open it, the other to look
-  // through it, and neither disturbs which folders were open once a search is cleared.
-  const walked = useRef(false);
+  const walkController = useRef<AbortController | null>(null);
+  const [limited, setLimited] = useState(false);
   async function walk(expand: boolean) {
+    walkController.current?.abort();
+    const controller = new AbortController();
+    walkController.current = controller;
+    const { signal } = controller;
     setExpandingAll(true);
-    const nextChildren = { ...children };
+    setLimited(false);
+    const nextChildren: typeof children = {};
     const directories = new Set<string>();
     const pending = [root];
+    const limit = 10_000;
+    let count = 0;
     try {
-      while (pending.length) {
-        const path = pending.shift();
-        if (!path || directories.has(path)) continue;
+      for (let index = 0; index < pending.length && count < limit; index++) {
+        const path = pending[index];
+        if (directories.has(path)) continue;
         directories.add(path);
-        // A directory is walked through every page it has: a walk that silently stopped at the first
-        // 250 entries would answer "No matches" about a file that exists.
-        let listing = nextChildren[path];
+        let listing = children[path];
         if (!listing || listing.after || listing.nextCursor) {
-          let entries: FileEntry[] = [];
+          const entries: FileEntry[] = [];
           let cursor: DirectoryCursor | null = null;
           do {
+            signal.throwIfAborted();
             const page: DirectoryListing = await invoke("list_directory", { rootId, path, after: cursor });
-            entries = entries.concat(page.entries);
-            cursor = page.nextCursor;
-          } while (cursor);
-          listing = { entries, nextCursor: null, after: null };
-          nextChildren[path] = listing;
+            signal.throwIfAborted();
+            const loaded = page.entries.slice(0, limit - count - entries.length);
+            entries.push(...loaded);
+            cursor = loaded.length < page.entries.length ? (loaded[loaded.length - 1] ?? null) : page.nextCursor;
+          } while (cursor && count + entries.length < limit);
+          listing = { entries, nextCursor: cursor, after: null };
         }
-        pending.push(
-          ...listing.entries.filter((entry) => entry.isDirectory && !entry.isSymlink).map((entry) => entry.path),
-        );
+        const entries = listing.entries.slice(0, limit - count);
+        count += entries.length;
+        nextChildren[path] =
+          entries.length < listing.entries.length
+            ? { ...listing, entries, nextCursor: entries[entries.length - 1] }
+            : listing;
+        pending.push(...entries.filter((entry) => entry.isDirectory && !entry.isSymlink).map((entry) => entry.path));
       }
-      setChildren(nextChildren);
+      setChildren((current) => ({ ...current, ...nextChildren }));
       if (expand) setExpanded(directories);
-      walked.current = true;
+      setLimited(count >= limit);
       setError("");
     } catch (reason) {
-      setError(String(reason));
+      if (!signal.aborted) setError(String(reason));
     } finally {
-      setExpandingAll(false);
+      if (!signal.aborted) setExpandingAll(false);
     }
   }
 
@@ -586,17 +597,18 @@ function FileTree({
     }
   }
 
-  // A search has to see the whole tree, so the first searching keystroke loads it and the next query
-  // — not the render a failure causes — retries a walk that failed; one that succeeded is not
-  // repeated, and a cleared search forgets the failure so the same query asks again.
-  const attempted = useRef("");
+  const searchFiles = useEffectEvent(() => void walk(false));
   useEffect(() => {
-    if (!lowered) attempted.current = "";
-    else if (lowered !== attempted.current && !walked.current && !expandingAll) {
-      attempted.current = lowered;
-      void walk(false);
+    if (!lowered) {
+      setExpandingAll(false);
+      setLimited(false);
     }
-  });
+    const timer = lowered ? window.setTimeout(searchFiles, 150) : undefined;
+    return () => {
+      window.clearTimeout(timer);
+      walkController.current?.abort();
+    };
+  }, [lowered]);
 
   // A folder is worth showing while searching if anything under it matches; only loaded listings can
   // answer, which is what the walk above is for. One pass marks every such folder, because the answer
@@ -774,9 +786,13 @@ function FileTree({
           <ChevronsDownUp />
         </ActionIconButton>
       </div>
-      {/* A walk that failed searched a partial tree, so its error shows over whatever it did find. */}
+      {limited ? (
+        <p className="p-3 text-xs text-muted-foreground">
+          Showing up to 10,000 entries. Open a smaller folder to search further.
+        </p>
+      ) : null}
       {lowered && error ? <p className="p-3 text-xs text-destructive">{error}</p> : null}
-      {lowered && !error && !expandingAll && children[root] && !matching.has(root) ? (
+      {lowered && !limited && !error && !expandingAll && children[root] && !matching.has(root) ? (
         <p className="px-3 py-2 text-xs text-muted-foreground">No matches</p>
       ) : null}
       {rootOpen ? rows(root, 1) : null}
@@ -1017,7 +1033,7 @@ function FileViewer({
             </Suspense>
           </TabsContent>
           {renderable ? (
-            <TabsContent value="preview" keepMounted className="min-h-0 overflow-hidden">
+            <TabsContent value="preview" className="min-h-0 overflow-hidden">
               <ScrollArea className="size-full">
                 <div style={contentZoomStyle(fontSize)}>
                   <Suspense fallback={<Loading label="Opening preview…" />}>
@@ -1058,6 +1074,11 @@ interface TextFile {
 }
 
 const fileEditorsBySession = new Map<string, FileEditorState>();
+
+export function unsavedFile(sessionId?: string) {
+  for (const [id, editor] of fileEditorsBySession)
+    if ((!sessionId || id === sessionId) && editor.draft !== editor.source) return editor.selected.path;
+}
 
 function FilesPanel({
   root,
@@ -1130,7 +1151,7 @@ function FilesPanel({
     const entry = selectedRef.current;
     if (!entry) return;
     const id = request.current;
-    await invoke("write_text_file", { rootId, path: entry.path, contents });
+    await invoke("write_text_file", { rootId, path: entry.path, contents, original: source });
     if (request.current !== id) return;
     const current = fileEditorsBySession.get(sessionId);
     if (current?.rootId === rootId && current.selected.path === entry.path)
@@ -1585,7 +1606,6 @@ function GitPanel({
         <ScrollArea className="min-h-0 flex-1">
           <div className="flex flex-col gap-3 p-3" style={contentZoomStyle(fontSize)}>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            {!error && status === undefined ? <Loading label="Reading Git status…" /> : null}
             {shown.map((repository) => (
               <RepositoryCard
                 key={(repository.url ?? repository.path)?.toLowerCase()}
@@ -1881,7 +1901,7 @@ export const Inspector = memo(function Inspector({
                 disabled={refreshing === tab}
                 onClick={() => refreshTab(tab as keyof typeof reload)}
               >
-                {refreshing === tab ? <Spinner /> : <RefreshCw />}
+                <RefreshCw className={refreshing === tab ? "animate-spin" : undefined} />
               </ActionIconButton>
             )}
           </div>

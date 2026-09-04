@@ -404,7 +404,7 @@ export function SettingsDialog({
                                 : "Use API key"}
                             </Button>
                           ) : null}
-                          {status?.keyHint || status?.cliKeyHint ? (
+                          {status?.keyHint ? (
                             <ActionIconButton
                               size="icon-sm"
                               className="hover:text-destructive"

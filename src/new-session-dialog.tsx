@@ -716,7 +716,15 @@ export function NewSessionDialog({
                           disabled={Boolean(installing)}
                           onClick={() => void install(option)}
                         >
-                          {busy ? <Spinner /> : action.label === "Install" ? <Download /> : <RefreshCw />}
+                          {action.label === "Install" ? (
+                            busy ? (
+                              <Spinner />
+                            ) : (
+                              <Download />
+                            )
+                          ) : (
+                            <RefreshCw className={busy ? "animate-spin" : undefined} />
+                          )}
                         </ActionIconButton>
                       ) : null}
                     </div>

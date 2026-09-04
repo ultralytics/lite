@@ -59,7 +59,7 @@ export const AUTH_PROVIDERS = {
     provider: undefined,
     label: "Moonshot AI",
     variable: "MOONSHOT_API_KEY",
-    configured: "Signed in through Kimi Code",
+    configured: "Configured through Kimi Code",
     signIn: true,
   },
   qwen: {
@@ -88,7 +88,6 @@ export interface ProviderAuth {
   name: string;
   keyHint: string | null;
   cliAuthMethod: "provider" | "apiKey" | null;
-  cliKeyHint: string | null;
 }
 
 export function ProviderAuthDescription({
@@ -98,8 +97,8 @@ export function ProviderAuthDescription({
   provider: (typeof AUTH_PROVIDERS)[keyof typeof AUTH_PROVIDERS];
   status?: ProviderAuth;
 }) {
-  const hint = status?.keyHint ?? status?.cliKeyHint;
-  const configured = status?.keyHint || status?.cliKeyHint ? "Using API key" : provider.configured;
+  const hint = status?.keyHint;
+  const configured = status?.keyHint ? "Using API key" : provider.configured;
   return (
     <ItemDescription className="truncate text-xs leading-4">
       {status && (hint || status.cliAuthMethod) ? (

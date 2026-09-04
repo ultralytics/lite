@@ -111,6 +111,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   let path = "";
   let activity: boolean | undefined;
   let notification = false;
+  let rebuildFinished = false;
   OSC_OR_BELL.lastIndex = 0;
   for (let match = OSC_OR_BELL.exec(text); !notification && match; match = OSC_OR_BELL.exec(text)) {
     const sequence = match[0];
@@ -125,6 +126,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     if (match[1] === "7") {
       if (match[2].startsWith("file://")) path = reportedPath(match[2]);
     } else if (match[1] === "6973") {
+      if (match[2] === "lite-rebuild-finished") rebuildFinished = true;
       const working = match[2] === "lite-working";
       if (working || match[2] === "lite-idle") activity = working;
     } else title = match[2];
@@ -142,6 +144,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     activityChanged,
     backgroundActivity: buffer.backgroundActivity,
     notification,
+    rebuildFinished,
   };
 }
 
