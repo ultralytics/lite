@@ -186,6 +186,8 @@ export function MarkdownPreview({
               >
                 {children}
               </a>
+            ) : href?.startsWith("#") ? (
+              <a href={href}>{children}</a>
             ) : href && onOpenPath ? (
               <a
                 href={href}
