@@ -8,6 +8,7 @@ import csharp from "highlight.js/lib/languages/csharp";
 import css from "highlight.js/lib/languages/css";
 import diff from "highlight.js/lib/languages/diff";
 import go from "highlight.js/lib/languages/go";
+import ini from "highlight.js/lib/languages/ini";
 import java from "highlight.js/lib/languages/java";
 import javascript from "highlight.js/lib/languages/javascript";
 import json from "highlight.js/lib/languages/json";
@@ -21,8 +22,10 @@ import sql from "highlight.js/lib/languages/sql";
 import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
-import { lazy, useMemo } from "react";
+import { type ImgHTMLAttributes, lazy, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
 
 // The editor is the heavier half of this file's imports and only an open file needs it, so it loads
@@ -36,6 +39,7 @@ const languages = {
   css,
   diff,
   go,
+  ini,
   java,
   javascript,
   json,
@@ -53,41 +57,32 @@ const languages = {
 for (const [name, language] of Object.entries(languages)) hljs.registerLanguage(name, language);
 
 const extensionLanguages: Record<string, string> = {
-  bash: "bash",
   c: "cpp",
   cc: "cpp",
-  cpp: "cpp",
   cs: "csharp",
-  css: "css",
-  diff: "diff",
-  go: "go",
   h: "cpp",
   hpp: "cpp",
   htm: "xml",
   html: "xml",
-  java: "java",
   js: "javascript",
-  json: "json",
   jsx: "javascript",
   kt: "kotlin",
   md: "markdown",
   mdx: "markdown",
-  php: "php",
   py: "python",
   rb: "ruby",
   rs: "rust",
   sh: "bash",
-  sql: "sql",
+  shell: "bash",
   ts: "typescript",
   tsx: "typescript",
   svg: "xml",
-  xml: "xml",
-  yaml: "yaml",
   yml: "yaml",
   zsh: "bash",
 };
 
 function highlighted(source: string, language?: string) {
+  language = language && (extensionLanguages[language.toLowerCase()] ?? language.toLowerCase());
   if (source.length <= 200_000 && language && hljs.getLanguage(language))
     return hljs.highlight(source, { language }).value;
   return source.replace(/[&<>]/g, (character) => (character === "&" ? "&amp;" : character === "<" ? "&lt;" : "&gt;"));
@@ -96,6 +91,57 @@ function highlighted(source: string, language?: string) {
 function HighlightedCode({ source, language, className }: { source: string; language?: string; className?: string }) {
   const html = useMemo(() => highlighted(source, language), [source, language]);
   return <code className={`hljs ${className ?? ""}`} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function linkedFilePath(currentPath: string, href: string) {
+  try {
+    const current = currentPath.replace(/\\/g, "/");
+    const encoded = current.split("/").map(encodeURIComponent).join("/");
+    const target = new URL(href, `file://${current.startsWith("/") ? "" : "/"}${encoded}`);
+    if (target.protocol === "file:") return decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
+  } catch {
+    // A malformed link is shown as authored but cannot name a local file.
+  }
+}
+
+function PreviewImage({
+  src,
+  alt = "",
+  path,
+  rootId,
+  ...props
+}: ImgHTMLAttributes<HTMLImageElement> & { path: string; rootId?: string }) {
+  const local = Boolean(src && rootId && path && !/^(?:[a-z][a-z\d+.-]*:|\/\/|#)/i.test(src));
+  const image = useRef<HTMLImageElement>(null);
+  const [resolved, setResolved] = useState<string>();
+  useEffect(() => {
+    setResolved(undefined);
+    if (!local || !src || !rootId) return;
+    let active = true;
+    let objectUrl: string | undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (!entries[0]?.isIntersecting) return;
+      observer.disconnect();
+      void invoke<ArrayBuffer | number[]>("read_image_file", { rootId, path: linkedFilePath(path, src) })
+        .then((bytes) => {
+          if (!active) return;
+          objectUrl = URL.createObjectURL(
+            new Blob([bytes instanceof ArrayBuffer ? bytes : Uint8Array.from(bytes)], {
+              type: /\.svg(?:[?#]|$)/i.test(src) ? "image/svg+xml" : "",
+            }),
+          );
+          setResolved(objectUrl);
+        })
+        .catch(() => {});
+    });
+    if (image.current) observer.observe(image.current);
+    return () => {
+      active = false;
+      observer.disconnect();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [local, path, rootId, src]);
+  return <img ref={image} src={local ? resolved : src} alt={alt} loading="lazy" decoding="async" {...props} />;
 }
 
 // A gutter beside the source rather than a number on each line: a highlighted span may open on one line
@@ -114,25 +160,51 @@ function LineNumbers({ count }: { count: number }) {
   );
 }
 
-export function MarkdownPreview({ source, className = "" }: { source: string; className?: string }) {
+export function MarkdownPreview({
+  source,
+  className = "",
+  path = "",
+  onOpenPath,
+  rootId,
+}: {
+  source: string;
+  className?: string;
+  path?: string;
+  onOpenPath?: (path: string) => void;
+  rootId?: string;
+}) {
   return (
     <article className={`markdown-viewer max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, rehypeSanitize]}
         components={{
           a({ href, children }) {
-            return href?.startsWith("http://") || href?.startsWith("https://") ? (
+            if (!href) return <span>{children}</span>;
+            const external = /^(?:https?:)?\/\//i.test(href);
+            const local = !/^(?:[a-z][a-z\d+.-]*:|[?#])/i.test(href) && !external;
+            if (local && !onOpenPath)
+              return <span className="text-[var(--syntax-constant)] underline">{children}</span>;
+            return (
               <a
                 href={href}
                 onClick={(event) => {
+                  if (href.startsWith("?")) event.preventDefault();
+                  if (!external && !local) return;
                   event.preventDefault();
-                  void invoke("open_url", { url: href });
+                  if (external) {
+                    const url = href.startsWith("//")
+                      ? `https:${href}`
+                      : href.replace(/^https?:/i, (scheme) => scheme.toLowerCase());
+                    void invoke("open_url", { url });
+                  } else {
+                    const target = linkedFilePath(path, href);
+                    if (target) onOpenPath?.(target);
+                  }
                 }}
               >
                 {children}
               </a>
-            ) : (
-              <span className="text-foreground underline">{children}</span>
             );
           },
           code({ className, children, ...props }) {
@@ -144,8 +216,8 @@ export function MarkdownPreview({ source, className = "" }: { source: string; cl
               <code {...props}>{children}</code>
             );
           },
-          img({ alt }) {
-            return <span className="text-muted-foreground">[Image: {alt}]</span>;
+          img({ node: _node, alt = "", ...props }) {
+            return <PreviewImage alt={alt} rootId={rootId} path={path} {...props} />;
           },
         }}
       >
@@ -163,6 +235,8 @@ export default function CodePreview({
   baseline,
   fontSize,
   onChange,
+  onOpenPath,
+  rootId,
 }: {
   path: string;
   source: string;
@@ -171,10 +245,14 @@ export default function CodePreview({
   baseline?: string;
   fontSize?: number;
   onChange?: (source: string) => void;
+  onOpenPath?: (path: string) => void;
+  rootId?: string;
 }) {
   const extension = path.split(".").pop()?.toLowerCase() ?? "";
   if (rendered && (extension === "md" || extension === "mdx")) {
-    return <MarkdownPreview source={source} className="px-6 py-5" />;
+    return (
+      <MarkdownPreview source={source} className="px-6 py-5" onOpenPath={onOpenPath} rootId={rootId} path={path} />
+    );
   }
   if (rendered && ["htm", "html", "svg"].includes(extension)) {
     return (
@@ -192,7 +270,11 @@ export default function CodePreview({
   return (
     <pre className="flex min-h-full overflow-auto font-mono">
       <LineNumbers count={source.split("\n").length} />
-      <HighlightedCode source={source} language={extensionLanguages[extension]} className="py-4 pr-4 pl-3" />
+      <HighlightedCode
+        source={source}
+        language={extensionLanguages[extension] ?? extension}
+        className="py-4 pr-4 pl-3"
+      />
     </pre>
   );
 }

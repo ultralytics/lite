@@ -878,6 +878,8 @@ function FileViewer({
   loading,
   fontSize,
   onBack,
+  onOpenPath,
+  rootId,
   onDraftChange,
   onSave,
 }: {
@@ -889,6 +891,8 @@ function FileViewer({
   loading: boolean;
   fontSize: number;
   onBack: () => void;
+  onOpenPath: (path: string) => void;
+  rootId: string;
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
@@ -1017,7 +1021,13 @@ function FileViewer({
               <ScrollArea className="size-full">
                 <div style={contentZoomStyle(fontSize)}>
                   <Suspense fallback={<Loading label="Opening preview…" />}>
-                    <CodePreview path={entry.path} source={draft} rendered />
+                    <CodePreview
+                      path={entry.path}
+                      source={draft}
+                      rendered
+                      onOpenPath={dirty ? undefined : onOpenPath}
+                      rootId={rootId}
+                    />
                   </Suspense>
                 </div>
               </ScrollArea>
@@ -1157,6 +1167,8 @@ function FilesPanel({
           loading={loading}
           fontSize={fontSize}
           onBack={closeFile}
+          onOpenPath={(path) => void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false })}
+          rootId={rootId}
           onDraftChange={changeDraft}
           onSave={saveFile}
         />
