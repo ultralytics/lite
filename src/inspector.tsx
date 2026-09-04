@@ -786,17 +786,6 @@ function FileTree({
 
 const RENDERED_FILE = /\.(?:html?|mdx?|svg)$/i;
 
-function linkedFilePath(currentPath: string, href: string) {
-  try {
-    const current = currentPath.replace(/\\/g, "/");
-    const encoded = current.split("/").map(encodeURIComponent).join("/");
-    const target = new URL(href, `file://${current.startsWith("/") ? "" : "/"}${encoded}`);
-    if (target.protocol === "file:") return decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
-  } catch {
-    // A malformed link is shown as authored but cannot name a local file.
-  }
-}
-
 function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
   const viewer = useRef<T>(null);
 
@@ -890,7 +879,7 @@ function FileViewer({
   fontSize,
   onBack,
   onOpenPath,
-  onReadPath,
+  rootId,
   onDraftChange,
   onSave,
 }: {
@@ -903,7 +892,7 @@ function FileViewer({
   fontSize: number;
   onBack: () => void;
   onOpenPath: (path: string) => void;
-  onReadPath: (path: string) => Promise<ArrayBuffer>;
+  rootId: string;
   onDraftChange: (contents: string) => void;
   onSave: (contents: string) => Promise<void>;
 }) {
@@ -1037,7 +1026,7 @@ function FileViewer({
                       source={draft}
                       rendered
                       onOpenPath={dirty ? undefined : onOpenPath}
-                      onReadPath={onReadPath}
+                      rootId={rootId}
                     />
                   </Suspense>
                 </div>
@@ -1161,23 +1150,6 @@ function FilesPanel({
     setSelected(null);
   }
 
-  function openLinkedFile(href: string) {
-    if (!selected) return;
-    const path = linkedFilePath(selected.path, href);
-    if (path) void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false });
-  }
-
-  const readLinkedImage = useCallback(
-    async (href: string) => {
-      if (!selected) throw new Error("No file is selected");
-      const path = linkedFilePath(selected.path, href);
-      if (!path) throw new Error("Image path is invalid");
-      const bytes = await invoke<ArrayBuffer | number[]>("read_image_file", { rootId, path });
-      return bytes instanceof ArrayBuffer ? bytes : Uint8Array.from(bytes).buffer;
-    },
-    [rootId, selected],
-  );
-
   // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
   // folders exactly as they were left — expanded, loaded, and scrolled — without rereading the disk.
   // A new root grant is a different tree, so it starts over the way a first open does; the open file
@@ -1195,8 +1167,8 @@ function FilesPanel({
           loading={loading}
           fontSize={fontSize}
           onBack={closeFile}
-          onOpenPath={openLinkedFile}
-          onReadPath={readLinkedImage}
+          onOpenPath={(path) => void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false })}
+          rootId={rootId}
           onDraftChange={changeDraft}
           onSave={saveFile}
         />
