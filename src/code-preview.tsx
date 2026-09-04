@@ -1,5 +1,6 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+import { invoke } from "@tauri-apps/api/core";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import cpp from "highlight.js/lib/languages/cpp";
@@ -113,27 +114,19 @@ function LineNumbers({ count }: { count: number }) {
   );
 }
 
-export function MarkdownPreview({
-  source,
-  className = "",
-  onOpenLink,
-}: {
-  source: string;
-  className?: string;
-  onOpenLink?: (url: string) => void;
-}) {
+export function MarkdownPreview({ source, className = "" }: { source: string; className?: string }) {
   return (
     <article className={`markdown-viewer max-w-none ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           a({ href, children }) {
-            return href && onOpenLink ? (
+            return href?.startsWith("http://") || href?.startsWith("https://") ? (
               <a
                 href={href}
                 onClick={(event) => {
                   event.preventDefault();
-                  onOpenLink(href);
+                  void invoke("open_url", { url: href });
                 }}
               >
                 {children}

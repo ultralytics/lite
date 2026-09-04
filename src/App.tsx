@@ -1401,7 +1401,7 @@ function SessionRow({
       }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`relative cursor-pointer flex-nowrap transition-[color,background-color,opacity] data-[shifted]:transition-transform data-[shifted]:duration-150 data-[shifted]:ease-out motion-reduce:data-[shifted]:transition-none after:pointer-events-none after:absolute after:inset-x-1 after:z-10 after:hidden after:h-0.5 after:rounded-full after:bg-primary data-[drop=before]:after:-top-0.5 data-[drop=before]:after:block data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:block active:opacity-70 ${reorderable ? "select-none active:cursor-grabbing" : ""} ${active ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60"}`}
+      className={`relative cursor-pointer flex-nowrap transition-[color,background-color,opacity] data-[shifted]:transition-transform data-[shifted]:duration-150 data-[shifted]:ease-out motion-reduce:data-[shifted]:transition-none after:pointer-events-none after:absolute after:inset-x-1 after:z-10 after:hidden after:h-0.5 after:rounded-full after:bg-primary data-[drop=before]:after:-top-0.5 data-[drop=before]:after:block data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:block active:opacity-70 ${reorderable ? "select-none active:cursor-grabbing" : ""} ${active ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground dark:border-transparent" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge
@@ -3177,7 +3177,9 @@ function App() {
                                 aria-label={attention.includes(session.id) ? `${session.name}; ready` : session.name}
                                 data-context-session={session.id}
                                 className={
-                                  session.id === selectedId ? "bg-sidebar-accent" : "hover:bg-sidebar-accent/60"
+                                  session.id === selectedId
+                                    ? "border-sidebar-border bg-sidebar-accent dark:border-transparent"
+                                    : "hover:bg-sidebar-accent/60"
                                 }
                                 onClick={() => openRef.current(session)}
                               />
@@ -3590,7 +3592,6 @@ function App() {
                     <ReleaseNotes
                       source={friendlyReleaseNotes(releaseNotes)}
                       className="mt-4 border-t pt-3 text-sm [&>h2:first-child]:mt-0"
-                      onOpenLink={(url) => void invoke("open_url", { url })}
                     />
                   </Suspense>
                 ) : null}
