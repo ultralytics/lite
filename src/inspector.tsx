@@ -1151,7 +1151,8 @@ function FilesPanel({
     if (!selected) return;
     try {
       const current = selected.path.replace(/\\/g, "/");
-      const target = new URL(href, `file://${current.startsWith("/") ? "" : "/"}${current}`);
+      const encoded = current.split("/").map(encodeURIComponent).join("/");
+      const target = new URL(href, `file://${current.startsWith("/") ? "" : "/"}${encoded}`);
       if (target.protocol !== "file:") return;
       const path = decodeURIComponent(target.pathname).replace(/^\/([A-Za-z]:\/)/, "$1");
       void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false });

@@ -176,17 +176,18 @@ export function MarkdownPreview({
         rehypePlugins={[rehypeRaw, rehypeSanitize]}
         components={{
           a({ href, children }) {
-            return href && /^https?:\/\//i.test(href) ? (
+            const external = href && (/^https?:\/\//i.test(href) || href.startsWith("//"));
+            return external ? (
               <a
                 href={href}
                 onClick={(event) => {
                   event.preventDefault();
-                  void invoke("open_url", { url: href });
+                  void invoke("open_url", { url: href.startsWith("//") ? `https:${href}` : href });
                 }}
               >
                 {children}
               </a>
-            ) : href?.startsWith("#") ? (
+            ) : href?.startsWith("#") || (href && /^[a-z][a-z\d+.-]*:/i.test(href)) ? (
               <a href={href}>{children}</a>
             ) : href && onOpenPath ? (
               <a
