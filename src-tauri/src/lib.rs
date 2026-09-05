@@ -3478,10 +3478,7 @@ async fn install_agent(agent: String) -> Result<String, String> {
             let path = resolve_executable(executable)
                 .ok_or_else(|| format!("Installed {agent}, but could not find it in your PATH"))?;
             let mut probe = Command::new(path);
-            probe
-                .arg("--version")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::null());
+            probe.arg("--version").stderr(Stdio::null());
             if let Some(path) = user_path() {
                 probe.env("PATH", path);
             }
