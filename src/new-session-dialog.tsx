@@ -378,8 +378,8 @@ export function NewSessionDialog({
       );
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === option.id)?.[1];
-      if (result && !result.available && result.installable) throw new Error(result.detail);
-      setUpdates((current) => ({ ...current, [option.agent]: false }));
+      if (result && !result.available && result.installable) setError(`Could not refresh ${label}: ${result.detail}`);
+      else setUpdates((current) => ({ ...current, [option.agent]: false }));
     } catch (reason) {
       setError(String(reason));
     } finally {
