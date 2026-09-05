@@ -2403,8 +2403,8 @@ fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>,
         .collect())
 }
 
-// A new Codex thread reports its full ID before it is saved. Only shortened titles need
-// saved-thread discovery; a full ID already identifies the conversation owned by this PTY.
+// Before saving a new thread, Codex reports "shortened-id | full-id". Keep both parts
+// so that this complete identity report can be recorded without saved-thread discovery.
 #[tauri::command]
 async fn record_codex_session(
     app: AppHandle,
@@ -2433,10 +2433,8 @@ async fn record_codex_session(
         {
             return Ok(());
         }
-        let id = if let Some(id) = [identity, name]
-            .into_iter()
-            .filter(|id| id.starts_with(prefix))
-            .find_map(|id| uuid::Uuid::parse_str(id).ok())
+        let id = if name.starts_with(prefix)
+            && let Ok(id) = uuid::Uuid::parse_str(name)
         {
             id.to_string()
         } else {
