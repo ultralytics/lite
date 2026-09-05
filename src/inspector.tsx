@@ -990,14 +990,14 @@ function FileViewer({
         {!error && !loading ? (
           <ActionIconButton
             size="icon-sm"
-            tooltip={saving ? "Saving file…" : dirty ? "Save file" : "Saved to disk"}
-            aria-label={saving ? "Saving file" : dirty ? "Save file" : "Saved to disk"}
+            tooltip={saving ? "Saving file…" : saveError ? "Save failed" : dirty ? "Save file" : "Saved to disk"}
+            aria-label={saving ? "Saving file" : saveError ? "Save failed" : dirty ? "Save file" : "Saved to disk"}
             disabled={saving || draft === source}
             onClick={() => void onSave()}
           >
             {saving ? (
               <Spinner aria-hidden="true" />
-            ) : dirty ? (
+            ) : dirty || saveError ? (
               <Save aria-hidden="true" />
             ) : (
               <CircleCheck aria-hidden="true" />
