@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { toast } from "@/components/ui/toast";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
 import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
@@ -345,10 +346,24 @@ export function NewSessionDialog({
   }
 
   async function install(option: (typeof SESSION_CHOICES)[number] = choice) {
+    const updating = !availability[option.id]?.installable;
+    const label = sessionLabel({ agent: option.agent });
     setInstalling(option.id);
     setError("");
     try {
-      await invoke("install_agent", { agent: option.agent });
+      const version = await invoke<string>("install_agent", { agent: option.agent }).catch((reason) => {
+        toast.add({
+          title: `${label} ${updating ? "update" : "installation"} failed`,
+          description: String(reason),
+          type: "error",
+        });
+        throw reason;
+      });
+      toast.add({
+        title: `${label} ${updating ? "update" : "installation"} complete`,
+        description: `${version ? `${version}. ` : ""}New sessions will use this version.`,
+        type: "success",
+      });
       const results = await Promise.all(
         SESSION_CHOICES.filter((candidate) => candidate.agent === option.agent).map(
           async (candidate) =>
@@ -363,7 +378,7 @@ export function NewSessionDialog({
       );
       setAvailability((current) => ({ ...current, ...Object.fromEntries(results) }));
       const result = results.find(([id]) => id === option.id)?.[1];
-      if (result && !result.available && result.installable) setError(result.detail);
+      if (result && !result.available && result.installable) setError(`Could not refresh ${label}: ${result.detail}`);
       else setUpdates((current) => ({ ...current, [option.agent]: false }));
     } catch (reason) {
       setError(String(reason));

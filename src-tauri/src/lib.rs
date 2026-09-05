@@ -2403,8 +2403,8 @@ fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>,
         .collect())
 }
 
-// Codex reports its thread in this PTY's title. Resolve a shortened title only against
-// matching IDs, never against whichever conversation appeared next in the same folder.
+// Before saving a new thread, Codex reports "shortened-id | full-id". Keep both parts
+// so that this complete identity report can be recorded without saved-thread discovery.
 #[tauri::command]
 async fn record_codex_session(
     app: AppHandle,
@@ -2414,7 +2414,8 @@ async fn record_codex_session(
     title: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let prefix = title.strip_suffix("...").unwrap_or(&title);
+        let (identity, name) = title.split_once(" | ").unwrap_or((&title, ""));
+        let prefix = identity.strip_suffix("...").unwrap_or(identity);
         if !(20..=36).contains(&prefix.len())
             || !prefix
                 .bytes()
@@ -2432,19 +2433,26 @@ async fn record_codex_session(
         {
             return Ok(());
         }
-        let roots = app.state::<Roots>();
-        let ids = if let Some(root) = ssh_root(&roots, &root_id)? {
-            ssh_provider_session_ids(&root, "codex")?
+        let id = if name.starts_with(prefix)
+            && let Ok(id) = uuid::Uuid::parse_str(name)
+        {
+            id.to_string()
         } else {
-            codex_thread_ids(&app.state::<CodexServer>(), &root_path(&roots, &root_id)?)?
+            let roots = app.state::<Roots>();
+            let ids = if let Some(root) = ssh_root(&roots, &root_id)? {
+                ssh_provider_session_ids(&root, "codex")?
+            } else {
+                codex_thread_ids(&app.state::<CodexServer>(), &root_path(&roots, &root_id)?)?
+            };
+            let mut matching = ids.iter().filter(|id| id.starts_with(prefix));
+            let id = matching
+                .next()
+                .ok_or("Codex has not saved the reported conversation")?;
+            if matching.next().is_some() {
+                return Err("Codex reported an ambiguous conversation ID".into());
+            }
+            id.clone()
         };
-        let mut matching = ids.iter().filter(|id| id.starts_with(prefix));
-        let id = matching
-            .next()
-            .ok_or("Codex has not saved the reported conversation")?;
-        if matching.next().is_some() {
-            return Err("Codex reported an ambiguous conversation ID".into());
-        }
         // Serialize the association with stopping/replacing its owning PTY.
         let sessions = app.state::<Sessions>();
         let running = sessions.0.lock().map_err(|error| error.to_string())?;
@@ -2452,7 +2460,7 @@ async fn record_codex_session(
             .get(&session_id)
             .is_some_and(|session| session.run_id == run_id)
         {
-            update_provider_session(&app, &provider_sessions, &session_id, Some(id.clone()))?;
+            update_provider_session(&app, &provider_sessions, &session_id, Some(id))?;
         }
         Ok(())
     })
@@ -3401,7 +3409,7 @@ async fn agent_availability(
 }
 
 #[tauri::command]
-async fn install_agent(agent: String) -> Result<(), String> {
+async fn install_agent(agent: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut command = if agent == "kimi" || agent == "claude" {
             let url = if agent == "kimi" {
@@ -3468,18 +3476,17 @@ async fn install_agent(agent: String) -> Result<(), String> {
             let path = resolve_executable(executable)
                 .ok_or_else(|| format!("Installed {agent}, but could not find it in your PATH"))?;
             let mut probe = Command::new(path);
-            probe
-                .arg("--version")
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
+            probe.arg("--version").stderr(Stdio::null());
             if let Some(path) = user_path() {
                 probe.env("PATH", path);
             }
-            return probe
-                .status()
-                .map_err(|error| format!("Installed {agent}, but could not run it: {error}"))?
+            let output = probe
+                .output()
+                .map_err(|error| format!("Installed {agent}, but could not run it: {error}"))?;
+            return output
+                .status
                 .success()
-                .then_some(())
+                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
                 .ok_or_else(|| {
                     format!(
                         "Installed {agent}, but it cannot run with the current system requirements"
