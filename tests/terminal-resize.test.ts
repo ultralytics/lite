@@ -52,3 +52,19 @@ test("growing an alternate screen keeps its cursor and contents", async () => {
     terminal.dispose();
   }
 });
+
+test("growing after reflow with no scrollback scans only existing lines", async () => {
+  const terminal = new Terminal({ cols: 99, rows: 46, scrollback: 0 });
+  try {
+    await write(terminal, `${"line ".repeat(30)}\r\nprompt> \r\nfooter\r\n\x1b[2A`);
+    terminal.resize(4, 27);
+    await write(terminal, "\x1b[26;1H");
+    terminal.resize(4, 53);
+    expect(terminal.rows).toBe(53);
+    await write(terminal, "ok");
+    const buffer = terminal.buffer.active;
+    expect(buffer.getLine(buffer.baseY + buffer.cursorY)?.translateToString(true)).toStartWith("ok");
+  } finally {
+    terminal.dispose();
+  }
+});
