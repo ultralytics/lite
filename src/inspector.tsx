@@ -987,7 +987,7 @@ function FileViewer({
             </TabsTrigger>
           </TabsList>
         ) : null}
-        {!error ? (
+        {!error && !loading ? (
           <ActionIconButton
             size="icon-sm"
             tooltip={saving ? "Saving file…" : dirty ? "Save file" : "Saved to disk"}
@@ -1073,7 +1073,8 @@ const fileEditorsBySession = new Map<string, FileEditorState>();
 
 export function unsavedFile(sessionId?: string) {
   for (const [id, editor] of fileEditorsBySession)
-    if ((!sessionId || id === sessionId) && editor.draft !== editor.source) return editor.selected.path;
+    if ((!sessionId || id === sessionId) && (editor.saving || editor.draft !== editor.source))
+      return editor.selected.path;
 }
 
 function FilesPanel({
@@ -1103,7 +1104,7 @@ function FilesPanel({
   const [draft, setDraft] = useState(cached?.draft ?? "");
   const [baseline, setBaseline] = useState<string | null>(cached?.baseline ?? null);
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(cached && !cached.saving && cached.draft === cached.source));
   const [saving, setSaving] = useState(Boolean(cached?.saving));
   const [saveError, setSaveError] = useState(cached?.saveError ?? "");
   const [query, setQuery] = useState("");
@@ -1149,7 +1150,10 @@ function FilesPanel({
       }
     };
     if (cached?.saving) void cached.saving.then(sync);
-    else if (cached && cached.draft === cached.source) void openFile(cached.selected);
+    else {
+      sync();
+      if (cached && cached.draft === cached.source) void openFile(cached.selected);
+    }
     return () => {
       request.current++;
     };
@@ -1586,9 +1590,14 @@ function GitPanel({
     });
   }
 
+  const refreshDiff = useEffectEvent(() => {
+    if (diffPath) void openDiff(diffPath);
+  });
   useEffect(() => {
+    if (!active) return;
     void refresh();
-  }, [refresh]);
+    refreshDiff();
+  }, [active, refresh]);
 
   useEffect(() => {
     if (status !== undefined || error) onLoad("git");
@@ -1830,7 +1839,7 @@ export const Inspector = memo(function Inspector({
     inspectorTabsBySession.set(session.id, next);
     setTab(next);
     setVisited((current) => including(current, next));
-    refreshTab(next);
+    if (next !== "git") refreshTab(next);
   }
 
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens

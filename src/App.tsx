@@ -1838,7 +1838,7 @@ function App() {
   const canCloseEditors = useCallback((sessionId?: string) => {
     const path = unsavedFile(sessionId);
     if (!path) return true;
-    setError(`Save or discard your changes to “${path}” before continuing.`);
+    setError(`Wait for saving to finish, or save/discard your changes to “${path}” before continuing.`);
     return false;
   }, []);
 
