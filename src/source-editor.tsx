@@ -100,6 +100,17 @@ class ChangeMarker extends GutterMarker {
     if (this.roundedStart) marker.classList.add("cm-changeMarker-start");
     if (this.roundedEnd) marker.classList.add("cm-changeMarker-end");
     marker.dataset.contextChange = "";
+    marker.addEventListener("click", (event) => {
+      marker.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: event.clientX,
+          clientY: event.clientY,
+          button: 2,
+        }),
+      );
+    });
     if (this.lines) marker.style.height = `calc(${this.lines * 1.5}em + 2px)`;
     marker.title = `${this.kind[0].toUpperCase()}${this.kind.slice(1)} lines`;
     return marker;

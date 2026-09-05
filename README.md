@@ -27,7 +27,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 - Undo a restart or close for eight seconds before Lite stops the terminal
 - Authenticate once with each provider and reuse its existing local credentials
 - Or save API keys for supported providers in Lite and skip their sign-in flows entirely
-- Browse files on demand with language icons, then edit them with search, replace, and multi-cursor
+- Browse files on demand with language icons, then edit them with automatic saving, search, replace, multi-cursor, and clickable Git change bars
 - Preview rendered Markdown safely alongside source files
 - See the active Git branch, worktree, and changed files
 - Inspect per-session context and provider usage reported by Claude or Codex

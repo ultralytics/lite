@@ -892,6 +892,8 @@ function FileViewer({
   baseline,
   error,
   loading,
+  saving,
+  saveError,
   fontSize,
   onBack,
   onOpenPath,
@@ -905,36 +907,21 @@ function FileViewer({
   baseline: string | null;
   error: string;
   loading: boolean;
+  saving: boolean;
+  saveError: string;
   fontSize: number;
   onBack: () => void;
   onOpenPath: (path: string) => void;
   rootId: string;
   onDraftChange: (contents: string) => void;
-  onSave: (contents: string) => Promise<void>;
+  onSave: () => Promise<void>;
 }) {
   const [view, setView] = useState<"source" | "preview">("source");
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState("");
   const [discardOpen, setDiscardOpen] = useState(false);
   const dirty = draft !== source;
   const renderable = RENDERED_FILE.test(entry.path);
   const lineEnding = source.includes("\r\n") ? "\r\n" : "\n";
-  const viewer = usePreviewViewer<HTMLDivElement>(() => {
-    if (dirty) setDiscardOpen(true);
-    else onBack();
-  });
-
-  async function save() {
-    setSaving(true);
-    setSaveError("");
-    try {
-      await onSave(draft);
-    } catch (reason) {
-      setSaveError(String(reason));
-    } finally {
-      setSaving(false);
-    }
-  }
+  const viewer = usePreviewViewer<HTMLDivElement>(closeFile);
 
   function closeFile() {
     if (saving) return;
@@ -950,7 +937,7 @@ function FileViewer({
       aria-label={entry.name}
       tabIndex={-1}
       className="flex min-h-0 flex-1 flex-col gap-0 outline-none"
-      onKeyDown={(event) => previewKeyDown(event, closeFile, () => !saving && dirty && void save())}
+      onKeyDown={(event) => previewKeyDown(event, closeFile, () => !saving && dirty && void onSave())}
     >
       <Dialog open={discardOpen} onOpenChange={setDiscardOpen}>
         <DialogContent>
@@ -1003,12 +990,18 @@ function FileViewer({
         {!error ? (
           <ActionIconButton
             size="icon-sm"
-            tooltip={saving ? "Saving file…" : "Save file"}
-            aria-label={saving ? "Saving file" : "Save file"}
+            tooltip={saving ? "Saving file…" : dirty ? "Save file" : "Saved to disk"}
+            aria-label={saving ? "Saving file" : dirty ? "Save file" : "Saved to disk"}
             disabled={saving || draft === source}
-            onClick={() => void save()}
+            onClick={() => void onSave()}
           >
-            {saving ? <Spinner aria-hidden="true" /> : <Save aria-hidden="true" />}
+            {saving ? (
+              <Spinner aria-hidden="true" />
+            ) : dirty ? (
+              <Save aria-hidden="true" />
+            ) : (
+              <CircleCheck aria-hidden="true" />
+            )}
           </ActionIconButton>
         ) : null}
       </PreviewHeader>
@@ -1026,9 +1019,10 @@ function FileViewer({
                 baseline={baseline ?? undefined}
                 editable
                 fontSize={fontSize}
-                onChange={(contents) =>
-                  onDraftChange(lineEnding === "\r\n" ? contents.replace(/\r?\n/g, "\r\n") : contents)
-                }
+                onChange={(contents) => {
+                  onDraftChange(lineEnding === "\r\n" ? contents.replace(/\r?\n/g, "\r\n") : contents);
+                  if (!saveError) void onSave();
+                }}
               />
             </Suspense>
           </TabsContent>
@@ -1066,6 +1060,8 @@ interface FileEditorState {
   source: string;
   draft: string;
   baseline: string | null;
+  saving?: Promise<void>;
+  saveError?: string;
 }
 
 interface TextFile {
@@ -1108,73 +1104,107 @@ function FilesPanel({
   const [baseline, setBaseline] = useState<string | null>(cached?.baseline ?? null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(Boolean(cached?.saving));
+  const [saveError, setSaveError] = useState(cached?.saveError ?? "");
   const [query, setQuery] = useState("");
   const request = useRef(0);
-  const selectedRef = useRef(selected);
-  selectedRef.current = selected;
 
-  useEffect(
-    () => () => {
-      request.current++;
+  const openFile = useCallback(
+    async (entry: FileEntry) => {
+      const id = ++request.current;
+      setSelected(entry);
+      setSource("");
+      setDraft("");
+      setBaseline(null);
+      setError("");
+      setSaveError("");
+      setLoading(true);
+      try {
+        const { contents, baseline } = await invoke<TextFile>("read_text_file", { rootId, path: entry.path });
+        if (request.current === id) {
+          setSource(contents);
+          setDraft(contents);
+          setBaseline(baseline);
+          fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents, baseline });
+        }
+      } catch (reason) {
+        if (request.current === id) {
+          setSource("");
+          setError(String(reason));
+        }
+      } finally {
+        if (request.current === id) setLoading(false);
+      }
     },
-    [],
+    [rootId, sessionId],
   );
 
-  async function openFile(entry: FileEntry) {
-    const id = ++request.current;
-    selectedRef.current = entry;
-    setSelected(entry);
-    setSource("");
-    setDraft("");
-    setBaseline(null);
-    setError("");
-    setLoading(true);
-    try {
-      const { contents, baseline } = await invoke<TextFile>("read_text_file", { rootId, path: entry.path });
-      if (request.current === id) {
-        setSource(contents);
-        setDraft(contents);
-        setBaseline(baseline);
-        fileEditorsBySession.set(sessionId, { rootId, selected: entry, source: contents, draft: contents, baseline });
-      }
-    } catch (reason) {
-      if (request.current === id) {
-        setSource("");
-        setError(String(reason));
-      }
-    } finally {
-      if (request.current === id) setLoading(false);
-    }
-  }
-
-  async function saveFile(contents: string) {
-    const entry = selectedRef.current;
-    if (!entry) return;
+  useEffect(() => {
     const id = request.current;
-    await invoke("write_text_file", { rootId, path: entry.path, contents, original: source });
-    if (request.current !== id) return;
-    const current = fileEditorsBySession.get(sessionId);
-    if (current?.rootId === rootId && current.selected.path === entry.path)
-      fileEditorsBySession.set(sessionId, { ...current, source: contents });
-    if (selectedRef.current?.path === entry.path) setSource(contents);
+    const sync = () => {
+      if (cached && request.current === id) {
+        setSource(cached.source);
+        setSaving(false);
+        setSaveError(cached.saveError ?? "");
+      }
+    };
+    if (cached?.saving) void cached.saving.then(sync);
+    else if (cached && cached.draft === cached.source) void openFile(cached.selected);
+    return () => {
+      request.current++;
+    };
+  }, [cached, openFile]);
+
+  async function saveFile() {
+    const editor = fileEditorsBySession.get(sessionId);
+    if (!editor) return;
+    const id = request.current;
+    setSaving(true);
+    setSaveError("");
+    editor.saveError = undefined;
+    // The cached editor owns the write so switching sessions cannot interrupt it or start a second one.
+    editor.saving ??= (async () => {
+      try {
+        while (editor.draft !== editor.source) {
+          const contents = editor.draft;
+          await invoke("write_text_file", {
+            rootId: editor.rootId,
+            path: editor.selected.path,
+            contents,
+            original: editor.source,
+          });
+          editor.source = contents;
+        }
+      } catch (reason) {
+        editor.saveError = String(reason);
+        toast.add({ title: `Could not save ${editor.selected.name}`, description: editor.saveError, type: "error" });
+      }
+    })().finally(() => {
+      editor.saving = undefined;
+    });
+    await editor.saving;
+    if (request.current === id) {
+      setSource(editor.source);
+      setSaving(false);
+      setSaveError(editor.saveError ?? "");
+    }
   }
 
   function changeDraft(contents: string) {
     setDraft(contents);
-    if (selected) fileEditorsBySession.set(sessionId, { rootId, selected, source, draft: contents, baseline });
+    const editor = fileEditorsBySession.get(sessionId);
+    if (editor) editor.draft = contents;
   }
 
   function closeFile() {
     request.current++;
     fileEditorsBySession.delete(sessionId);
-    selectedRef.current = null;
     setSelected(null);
   }
 
   // The tree is hidden behind an open file rather than thrown away, so stepping back returns to the
   // folders exactly as they were left — expanded, loaded, and scrolled — without rereading the disk.
-  // A new root grant is a different tree, so it starts over the way a first open does; the open file
-  // stays, since its content was already read.
+  // Revisiting Files refreshes the tree and clean open files; pending drafts stay in their session.
   return (
     <div className="flex h-full min-h-0 flex-col">
       {selected ? (
@@ -1186,6 +1216,8 @@ function FilesPanel({
           baseline={baseline}
           error={error}
           loading={loading}
+          saving={saving}
+          saveError={saveError}
           fontSize={fontSize}
           onBack={closeFile}
           onOpenPath={(path) => void openFile({ name: folderName(path), path, isDirectory: false, isSymlink: false })}
@@ -1780,17 +1812,13 @@ export const Inspector = memo(function Inspector({
   const gitSearch = useRef<HTMLInputElement>(null);
   const [visited, setVisited] = useState(() => new Set<string>([tab]));
   // A tab already names the panel it shows, so the panel does not name itself again. The refresh button
-  // rebuilds whichever is open, and every explicit Files visit rebuilds that disk snapshot as well.
+  // rebuilds whichever is open, and every explicit tab visit requests a fresh snapshot as well.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
   const [refreshing, setRefreshing] = useState<InspectorTab>();
 
   const finishRefresh = useCallback((value: InspectorTab) => {
     setRefreshing((current) => (current === value ? undefined : current));
   }, []);
-
-  function visitTab(value: string) {
-    setVisited((current) => including(current, value));
-  }
 
   function refreshTab(value: InspectorTab) {
     setRefreshing(value);
@@ -1801,13 +1829,12 @@ export const Inspector = memo(function Inspector({
     const next = value as InspectorTab;
     inspectorTabsBySession.set(session.id, next);
     setTab(next);
-    visitTab(next);
-    if (next === "files") refreshTab(next);
+    setVisited((current) => including(current, next));
+    refreshTab(next);
   }
 
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
-  // on. Hidden panels retain their state except Files, whose explicit visit requests a fresh disk
-  // snapshot. Hovering or focusing Git explicitly asks that panel to prepare before the click.
+  // on. Returning to a tab reads its current state without polling while it is hidden.
   const rail = (
     <div
       data-context-surface
@@ -1831,8 +1858,6 @@ export const Inspector = memo(function Inspector({
           tooltip={label}
           tooltipSide="left"
           aria-label={label}
-          onPointerEnter={value === "git" ? () => visitTab(value) : undefined}
-          onFocus={value === "git" ? () => visitTab(value) : undefined}
           onClick={() => {
             selectTab(value);
             onExpand();
@@ -1879,9 +1904,7 @@ export const Inspector = memo(function Inspector({
                       <TabsTrigger
                         value={value}
                         aria-label={label}
-                        onPointerEnter={value === "git" ? () => visitTab(value) : undefined}
-                        onFocus={value === "git" ? () => visitTab(value) : undefined}
-                        onClick={value === "files" && tab === "files" ? () => refreshTab("files") : undefined}
+                        onClick={tab === value ? () => refreshTab(value) : undefined}
                       />
                     }
                   >

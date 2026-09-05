@@ -125,7 +125,7 @@ export function NewSessionDialog({
   const [remoteSelected, setRemoteSelected] = useState(false);
   const remote = remoteSsh && remoteSelected;
   const [host, setHost] = useState(() => localStorage.getItem(SSH_HOST_KEY) ?? "");
-  const [availability, setAvailability] = useState<Record<string, Availability>>({});
+  const [availability, setAvailability] = useState<Record<string, Availability | null>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
   // Undefined while checking, null when the registry could not answer, otherwise whether an update exists.
@@ -232,7 +232,12 @@ export function NewSessionDialog({
           .then((result) => {
             if (!disposed) setAvailability((current) => ({ ...current, [option.id]: result }));
           })
-          .catch(() => {});
+          .catch((reason) => {
+            if (!disposed) {
+              setAvailability((current) => ({ ...current, [option.id]: null }));
+              setError(`Could not check ${sessionLabel(option)}: ${reason}`);
+            }
+          });
       }
     }
     return () => {
@@ -636,15 +641,17 @@ export function NewSessionDialog({
                           className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         >
                           <span className="block truncate">{sessionLabel(option)}</span>
-                          {unsupported || remote || (state && !state.available) ? (
+                          {unsupported || remote || state === null || (state && !state.available) ? (
                             <span className="block truncate text-xs font-normal text-muted-foreground">
                               {unsupported
                                 ? "Local workspace only"
                                 : remote
                                   ? `Runs on ${host.trim() || "SSH host"}`
-                                  : state?.installable
-                                    ? "Not installed"
-                                    : "Setup required"}
+                                  : state === null
+                                    ? "Check failed"
+                                    : state?.installable
+                                      ? "Not installed"
+                                      : "Setup required"}
                             </span>
                           ) : authProvider ? (
                             <ProviderAuthDescription provider={authProvider} status={authStatus} />

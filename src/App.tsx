@@ -469,7 +469,7 @@ function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
         element.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertFromPaste" }));
       } else document.execCommand("insertText", false, text);
     })
-    .catch(() => undefined);
+    .catch((error) => toast.add({ title: "Could not paste", description: String(error), type: "error" }));
 }
 
 function AppContextMenu({
