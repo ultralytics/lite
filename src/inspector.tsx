@@ -1534,15 +1534,6 @@ function GitPanel({
     };
   }, [references, sessionId]);
 
-  const refresh = useCallback(async () => {
-    setError("");
-    try {
-      setStatus(await invoke<GitStatus | null>("git_status", { rootId }));
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }, [rootId]);
-
   async function openDiff(path: string) {
     const request = ++diffRequest.current;
     setDiffPath(path);
@@ -1595,9 +1586,20 @@ function GitPanel({
   });
   useEffect(() => {
     if (!active) return;
-    void refresh();
+    let disposed = false;
+    setError("");
+    void invoke<GitStatus | null>("git_status", { rootId })
+      .then((status) => {
+        if (!disposed) setStatus(status);
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
     refreshDiff();
-  }, [active, refresh]);
+    return () => {
+      disposed = true;
+    };
+  }, [active, rootId]);
 
   useEffect(() => {
     if (status !== undefined || error) onLoad("git");
