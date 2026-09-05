@@ -1035,7 +1035,7 @@ function FileViewer({
                       path={entry.path}
                       source={draft}
                       rendered
-                      onOpenPath={dirty ? undefined : onOpenPath}
+                      onOpenPath={dirty || saving ? undefined : onOpenPath}
                       rootId={rootId}
                     />
                   </Suspense>
