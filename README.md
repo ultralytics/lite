@@ -47,6 +47,8 @@ Download Lite from the [latest GitHub Release](https://github.com/ultralytics/li
 2. Open the disk image and drag **Lite** into **Applications**.
 3. Open Lite from **Applications**. If macOS blocks the unsigned app, open **System Settings → Privacy & Security**, set **Allow applications from** to **App Store & Known Developers**, select **Open Anyway** for Lite, then confirm.
 
+To reopen Lite after restarting your Mac, leave it open and select **Reopen windows when logging back in** in the macOS restart or shutdown dialog. Lite restores its saved tabs when it opens. Quit Lite before shutting down if you do not want it to reopen. This uses [macOS's built-in app restoration](https://support.apple.com/en-us/102318).
+
 <div align="center">
   <img src="https://github.com/user-attachments/assets/a7d3a991-91f2-4d9b-ba57-a8d80bbc37f5" width="70%" alt="Approving Lite in macOS System Settings">
 </div>

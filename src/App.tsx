@@ -2128,8 +2128,8 @@ function App() {
         const session = sessionsRef.current.find((item) => item.id === sessionId);
         const [identity, ...name] = title.split(" | ");
         if (session?.agent === "codex" && /^[\da-f-]{20,36}(?:\.\.\.)?$/i.test(identity)) {
-          void invoke("record_codex_session", { sessionId, runId, rootId: session.rootId, title: identity }).catch(
-            (reason) => setError(String(reason)),
+          void invoke("record_codex_session", { sessionId, runId, rootId: session.rootId, title }).catch((reason) =>
+            setError(String(reason)),
           );
           if (name.length && !name[0].startsWith(identity.replace("...", ""))) markTitle(sessionId, name.join(" | "));
         } else markTitle(sessionId, title);
