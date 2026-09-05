@@ -351,7 +351,19 @@ export function NewSessionDialog({
     setInstalling(option.id);
     setError("");
     try {
-      const version = await invoke<string>("install_agent", { agent: option.agent });
+      const version = await invoke<string>("install_agent", { agent: option.agent }).catch((reason) => {
+        toast.add({
+          title: `${label} ${updating ? "update" : "installation"} failed`,
+          description: String(reason),
+          type: "error",
+        });
+        throw reason;
+      });
+      toast.add({
+        title: `${label} ${updating ? "update" : "installation"} complete`,
+        description: `${version ? `${version}. ` : ""}New sessions will use this version.`,
+        type: "success",
+      });
       const results = await Promise.all(
         SESSION_CHOICES.filter((candidate) => candidate.agent === option.agent).map(
           async (candidate) =>
@@ -368,18 +380,8 @@ export function NewSessionDialog({
       const result = results.find(([id]) => id === option.id)?.[1];
       if (result && !result.available && result.installable) throw new Error(result.detail);
       setUpdates((current) => ({ ...current, [option.agent]: false }));
-      toast.add({
-        title: `${label} ${updating ? "update" : "installation"} complete`,
-        description: `${version ? `${version}. ` : ""}New sessions will use this version.`,
-        type: "success",
-      });
     } catch (reason) {
       setError(String(reason));
-      toast.add({
-        title: `${label} ${updating ? "update" : "installation"} failed`,
-        description: String(reason),
-        type: "error",
-      });
     } finally {
       setInstalling("");
     }
