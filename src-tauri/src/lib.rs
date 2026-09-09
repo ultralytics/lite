@@ -66,6 +66,33 @@ const SUPPORTED_KEYS: [&str; 6] = [
 #[derive(Default)]
 struct PendingNotification(Mutex<Option<String>>);
 
+// The one harness installer that may run at a time, held here so a cancel can reach it. A cancel
+// that lands before the installer registers is kept, so registration can honor it.
+#[derive(Default)]
+enum InstallSlot {
+    #[default]
+    Idle,
+    Cancelled,
+    Running(std::process::Child),
+}
+
+#[derive(Default)]
+struct Installer(Mutex<InstallSlot>);
+
+// Installers are pipelines, so only the whole group ending releases the stderr pipe Lite reads.
+fn stop_installer(mut child: std::process::Child) {
+    #[cfg(unix)]
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{}", child.id())])
+        .status();
+    #[cfg(windows)]
+    let _ = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 #[cfg(target_os = "macos")]
 objc2::define_class!(
     #[unsafe(super(NSObject))]
@@ -3408,9 +3435,11 @@ async fn agent_availability(
     })
 }
 
+// Resolves to no version when the install was cancelled, which is not a failure to report.
 #[tauri::command]
-async fn install_agent(agent: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, String> {
+    let handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let mut command = if agent == "kimi" || agent == "claude" {
             let url = if agent == "kimi" {
                 "https://code.kimi.com/kimi-code/install"
@@ -3449,6 +3478,13 @@ async fn install_agent(agent: String) -> Result<String, String> {
             command.env("PATH", path);
         }
         command.stdout(Stdio::null()).stderr(Stdio::piped());
+        // A pipeline installer keeps stderr open through every process it spawned, so a cancel has
+        // to reach the whole group before this read can end.
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
         let mut child = command
             .spawn()
             .map_err(|error| format!("Could not run the installer: {error}"))?;
@@ -3456,6 +3492,14 @@ async fn install_agent(agent: String) -> Result<String, String> {
             .stderr
             .take()
             .ok_or("Could not read installer errors")?;
+        let installer = app.state::<Installer>();
+        let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+        if matches!(*slot, InstallSlot::Cancelled) {
+            stop_installer(child);
+            return Ok(None);
+        }
+        *slot = InstallSlot::Running(child);
+        drop(slot);
         let mut detail = Vec::with_capacity(16_384);
         let mut buffer = [0_u8; 4096];
         while let Ok(count) = stderr.read(&mut buffer) {
@@ -3467,6 +3511,11 @@ async fn install_agent(agent: String) -> Result<String, String> {
                 detail.drain(..detail.len() - 16_384);
             }
         }
+        let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+        let InstallSlot::Running(mut child) = std::mem::take(&mut *slot) else {
+            return Ok(None);
+        };
+        drop(slot);
         let status = child
             .wait()
             .map_err(|error| format!("Could not finish the installer: {error}"))?;
@@ -3486,7 +3535,7 @@ async fn install_agent(agent: String) -> Result<String, String> {
             return output
                 .status
                 .success()
-                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+                .then(|| Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()))
                 .ok_or_else(|| {
                     format!(
                         "Installed {agent}, but it cannot run with the current system requirements"
@@ -3502,7 +3551,22 @@ async fn install_agent(agent: String) -> Result<String, String> {
         })
     })
     .await
-    .map_err(|error| format!("Could not finish the install: {error}"))?
+    .map_err(|error| format!("Could not finish the install: {error}"))?;
+    // Every exit leaves the slot idle, so a cancel from this attempt cannot reach the next one.
+    if let Ok(mut slot) = handle.state::<Installer>().0.lock() {
+        *slot = InstallSlot::Idle;
+    }
+    result
+}
+
+#[tauri::command]
+fn cancel_install(installer: State<'_, Installer>) -> Result<(), String> {
+    let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+    if let InstallSlot::Running(child) = std::mem::replace(&mut *slot, InstallSlot::Cancelled) {
+        drop(slot);
+        stop_installer(child);
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -6248,6 +6312,7 @@ pub fn run() {
         .manage(Sessions::default())
         .manage(WakeLock::default())
         .manage(PendingNotification::default())
+        .manage(Installer::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             app.manage(load_roots(app.handle()));
@@ -6299,6 +6364,7 @@ pub fn run() {
             read_usage,
             agent_availability,
             agent_update_available,
+            cancel_install,
             install_agent,
             open_setup_docs,
             open_url,

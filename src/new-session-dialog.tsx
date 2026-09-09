@@ -356,7 +356,7 @@ export function NewSessionDialog({
     setInstalling(option.id);
     setError("");
     try {
-      const version = await invoke<string>("install_agent", { agent: option.agent }).catch((reason) => {
+      const version = await invoke<string | null>("install_agent", { agent: option.agent }).catch((reason) => {
         toast.add({
           title: `${label} ${updating ? "update" : "installation"} failed`,
           description: String(reason),
@@ -364,6 +364,7 @@ export function NewSessionDialog({
         });
         throw reason;
       });
+      if (version === null) return;
       toast.add({
         title: `${label} ${updating ? "update" : "installation"} complete`,
         description: `${version ? `${version}. ` : ""}New sessions will use this version.`,
@@ -758,8 +759,16 @@ export function NewSessionDialog({
             {error ? <p className="text-xs text-destructive">{error}</p> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="outline" disabled={Boolean(installing) || creating} onClick={() => changeOpen(false)}>
-              Cancel
+            <Button
+              variant="outline"
+              disabled={creating}
+              onClick={() =>
+                installing
+                  ? void invoke("cancel_install").catch((reason) => setError(String(reason)))
+                  : changeOpen(false)
+              }
+            >
+              {installing ? `Cancel ${availability[installing]?.installable ? "install" : "update"}` : "Cancel"}
             </Button>
             <Button type="submit" disabled={!ready}>
               {(!remote && !status) || (installing && missing?.installable) ? <Spinner /> : null}
