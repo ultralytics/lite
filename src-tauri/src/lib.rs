@@ -66,9 +66,32 @@ const SUPPORTED_KEYS: [&str; 6] = [
 #[derive(Default)]
 struct PendingNotification(Mutex<Option<String>>);
 
-// The one harness installer that may run at a time, held here so a cancel can reach it.
+// The one harness installer that may run at a time, held here so a cancel can reach it. A cancel
+// that lands before the installer registers is kept, so registration can honor it.
 #[derive(Default)]
-struct Installer(Mutex<Option<std::process::Child>>);
+enum InstallSlot {
+    #[default]
+    Idle,
+    Cancelled,
+    Running(std::process::Child),
+}
+
+#[derive(Default)]
+struct Installer(Mutex<InstallSlot>);
+
+// Installers are pipelines, so only the whole group ending releases the stderr pipe Lite reads.
+fn stop_installer(mut child: std::process::Child) {
+    #[cfg(unix)]
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{}", child.id())])
+        .status();
+    #[cfg(windows)]
+    let _ = Command::new("taskkill")
+        .args(["/T", "/F", "/PID", &child.id().to_string()])
+        .status();
+    let _ = child.kill();
+    let _ = child.wait();
+}
 
 #[cfg(target_os = "macos")]
 objc2::define_class!(
@@ -3415,7 +3438,8 @@ async fn agent_availability(
 // Resolves to no version when the install was cancelled, which is not a failure to report.
 #[tauri::command]
 async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    let handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let mut command = if agent == "kimi" || agent == "claude" {
             let url = if agent == "kimi" {
                 "https://code.kimi.com/kimi-code/install"
@@ -3469,7 +3493,13 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
             .take()
             .ok_or("Could not read installer errors")?;
         let installer = app.state::<Installer>();
-        *installer.0.lock().map_err(|error| error.to_string())? = Some(child);
+        let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+        if matches!(*slot, InstallSlot::Cancelled) {
+            stop_installer(child);
+            return Ok(None);
+        }
+        *slot = InstallSlot::Running(child);
+        drop(slot);
         let mut detail = Vec::with_capacity(16_384);
         let mut buffer = [0_u8; 4096];
         while let Ok(count) = stderr.read(&mut buffer) {
@@ -3481,14 +3511,11 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 detail.drain(..detail.len() - 16_384);
             }
         }
-        let Some(mut child) = installer
-            .0
-            .lock()
-            .map_err(|error| error.to_string())?
-            .take()
-        else {
+        let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+        let InstallSlot::Running(mut child) = std::mem::take(&mut *slot) else {
             return Ok(None);
         };
+        drop(slot);
         let status = child
             .wait()
             .map_err(|error| format!("Could not finish the installer: {error}"))?;
@@ -3524,30 +3551,21 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
         })
     })
     .await
-    .map_err(|error| format!("Could not finish the install: {error}"))?
+    .map_err(|error| format!("Could not finish the install: {error}"))?;
+    // Every exit leaves the slot idle, so a cancel from this attempt cannot reach the next one.
+    if let Ok(mut slot) = handle.state::<Installer>().0.lock() {
+        *slot = InstallSlot::Idle;
+    }
+    result
 }
 
 #[tauri::command]
 fn cancel_install(installer: State<'_, Installer>) -> Result<(), String> {
-    let Some(mut child) = installer
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .take()
-    else {
-        return Ok(());
-    };
-    let id = child.id().to_string();
-    #[cfg(unix)]
-    let _ = Command::new("kill")
-        .args(["-TERM", "--", &format!("-{id}")])
-        .status();
-    #[cfg(windows)]
-    let _ = Command::new("taskkill")
-        .args(["/T", "/F", "/PID", &id])
-        .status();
-    let _ = child.kill();
-    let _ = child.wait();
+    let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+    if let InstallSlot::Running(child) = std::mem::replace(&mut *slot, InstallSlot::Cancelled) {
+        drop(slot);
+        stop_installer(child);
+    }
     Ok(())
 }
 
