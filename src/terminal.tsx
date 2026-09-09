@@ -406,10 +406,10 @@ export function TerminalView({
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || terminal.options.fontSize === fontSize) return;
+    if (!active || !terminal || terminal.options.fontSize === fontSize) return;
     terminal.options.fontSize = fontSize;
-    requestAnimationFrame(() => resizeRef.current());
-  }, [fontSize]);
+    resizeRef.current();
+  }, [active, fontSize]);
 
   useEffect(() => {
     if (!searchOpen) return;
