@@ -52,7 +52,9 @@ Use the Bun version in `package.json`, stable Rust, and Tauri's platform prerequ
 
 ## Where to look
 
-- Frontend → `src/`.
+- Session launch and resume → `src/App.tsx` and `spawn_session`/`session_arguments` in `src-tauri/src/lib.rs`.
+- Harness and provider registration → `src/types.ts`, `src/provider-auth.tsx`, `src/brand-icons.tsx`, and the native launch/auth/SSH matches in `src-tauri/src/lib.rs`.
+- Terminal rendering → `src/terminal.tsx`; output/status → `src/output-store.ts`; files/Git → `src/inspector.tsx`.
 - Native commands and platform behavior → `src-tauri/src/`.
 - Shared UI primitives → `src/components/ui/`.
 - Terminal regression coverage → `tests/terminal-resize.test.ts`.
@@ -66,3 +68,5 @@ Use the Bun version in `package.json`, stable Rust, and Tauri's platform prerequ
 - **Private OSC 6973 must stay in sync** between the Rust emitters (`capture_claude_status`, the rebuild command) and the `METADATA` regex in `output-store.ts`; the "output activity" test in `tests/github-items.test.ts` pins the parsing.
 - **Codex identity depends on the title.** `CODEX_NOTIFICATION_ARGS` sets `tui.terminal_title=["session-id","thread"]`; `receiveOutput` recognizes the `<hex-id> | <name>` shape and calls `record_codex_session`. Removing or reordering those args breaks resume.
 - **`write_text_file` checks before it replaces.** It refuses when the bytes on disk differ from `original` (a check, not a lock: another writer can still land between check and write); the editor must send the contents it last loaded or last saved successfully (`FilesPanel` does). The same rule holds over SSH (`cmp -s`).
+
+Register new Tauri commands in `generate_handler!`, keep heavy work in `spawn_blocking`, and match the Serde payload to its TypeScript interface. Check both local and SSH launch paths when adding a harness or provider.
