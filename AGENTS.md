@@ -53,12 +53,12 @@ bun run format                   # biome check --write .  (TS/TSX/JS/JSON; CSS f
 bun test                         # Frontend unit tests in tests/*.test.ts (bun:test)
 bun test tests/shortcuts.test.ts # One file; filter by name with `bun test -t "<pattern>"`
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust unit tests: `mod tests` at the bottom of src-tauri/src/lib.rs
+cargo test --manifest-path src-tauri/Cargo.toml # Rust unit tests: `mod tests` at the bottom of src-tauri/src/lib.rs
 cargo check --manifest-path src-tauri/Cargo.toml
-bun run build                    # tsgo --noEmit && vite build → dist/ (both index.html and splash.html entries)
-bun run tauri build --debug --no-bundle   # What CI runs: compile and link, no installers
-bun run tauri build              # Native installer for the current operating system
-bun run local                    # "Lite Dev" app (identifier com.ultralytics.lite.dev, red icons, its own app data folder)
+bun run build                           # tsgo --noEmit && vite build → dist/ (both index.html and splash.html entries)
+bun run tauri build --debug --no-bundle # What CI runs: compile and link, no installers
+bun run tauri build                     # Native installer for the current operating system
+bun run local                           # "Lite Dev" app (identifier com.ultralytics.lite.dev, red icons, its own app data folder)
 ```
 
 CI (`.github/workflows/ci.yml`, matrix `macos-latest`/`ubuntu-latest`/`windows-latest`, on PRs and `main` pushes) runs `bun ci` → `bun run check` → `bun test` → `cargo fmt --check` → `cargo test` → `bun run tauri build --debug --no-bundle`. Lint failures fail CI, so run `bun run check` and `cargo fmt` locally before pushing. Biome (`biome.json`) enforces double quotes, semicolons, 120-column lines, the `recommended` rules with `noDangerouslySetInnerHtml` and `noArrayIndexKey` off, and relaxes a11y rules only under `src/components/ui/**`; it skips gitignored paths (`vcs.useIgnoreFile`).
@@ -124,14 +124,14 @@ Bridge conventions: commands return `Result<T, String>`; the frontend shows the 
 
 A harness runs a session and a model provider bills it: Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and the shell are harnesses; OpenAI, DeepSeek, and OpenRouter are providers on the Codex harness. Keep provider-specific behavior behind the existing Rust commands.
 
-| Agent    | Executable  | Session args                                                          | Provider session id source                                  | Usage source                                |
-| -------- | ----------- | --------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
-| `claude` | `claude`    | `--session-id`/`--resume`, `--settings <generated>`                   | Lite's uuid; `claude_launch_id` follows `/resume`           | `usage-<session>.json` from the status line |
-| `codex`  | `codex`     | `CODEX_NOTIFICATION_ARGS`, provider `-c` overrides, `resume <thread>` | terminal title → `record_codex_session`                     | app server (`codex_usage`)                  |
-| `gemini` | `gemini`    | `--session-id`/`--resume`                                             | Lite's uuid (`native_session_path` under `tmp/*/chats`)     | transcript tail (`native_context`)          |
-| `kimi`   | `kimi`      | `--session <id>` when known                                           | polled `kimi_current_session`                               | `kimi_context`                              |
-| `qwen`   | `qwen`      | `--session-id`/`--resume`                                             | Lite's uuid (`projects/*/chats/<id>.jsonl`)                 | transcript tail (`native_context`)          |
-| `shell`  | login shell | none                                                                  | none                                                        | none                                        |
+| Agent    | Executable  | Session args                                                          | Provider session id source                              | Usage source                                |
+| -------- | ----------- | --------------------------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------- |
+| `claude` | `claude`    | `--session-id`/`--resume`, `--settings <generated>`                   | Lite's uuid; `claude_launch_id` follows `/resume`       | `usage-<session>.json` from the status line |
+| `codex`  | `codex`     | `CODEX_NOTIFICATION_ARGS`, provider `-c` overrides, `resume <thread>` | terminal title → `record_codex_session`                 | app server (`codex_usage`)                  |
+| `gemini` | `gemini`    | `--session-id`/`--resume`                                             | Lite's uuid (`native_session_path` under `tmp/*/chats`) | transcript tail (`native_context`)          |
+| `kimi`   | `kimi`      | `--session <id>` when known                                           | polled `kimi_current_session`                           | `kimi_context`                              |
+| `qwen`   | `qwen`      | `--session-id`/`--resume`                                             | Lite's uuid (`projects/*/chats/<id>.jsonl`)             | transcript tail (`native_context`)          |
+| `shell`  | login shell | none                                                                  | none                                                    | none                                        |
 
 ## Where to look
 
