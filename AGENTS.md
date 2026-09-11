@@ -1,8 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to AI coding agents (Claude Code, etc.) when working with code in this repository. CLAUDE.md is a symlink to this file.
-
-Ultralytics Lite (AGPL-3.0) is a local-only desktop workspace for Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and shell sessions. It keeps agent sessions, files, and Git context in one window without repository indexing, telemetry, or a cloud service. It is built with Tauri 2, Rust, React 19, TypeScript, Tailwind CSS 4, and shadcn's Nova style with Base UI.
+Repository guidance for coding agents. `CLAUDE.md` is a symlink to this file.
 
 ## Core Principles (CRITICAL)
 
@@ -38,29 +36,37 @@ After opening a PR:
 4. Never fight other commits: Ultralytics Actions pushes auto-format and header commits, and multiple users may work on the same PR. `git pull --rebase` before pushing; never reset or revert commits you did not author.
 5. After the PR merges, clean up: remove local worktrees and branches for it, then `git checkout main && git pull`.
 
-## Commands
+## Commands and validation
 
 ```bash
 bun install
-bun run check  # Biome lint, native TypeScript check, and knip dead-code scan
-bun run format # Biome write
-bun run build  # type check and production bundle
+bun run tauri dev
+bun run check
+bun test
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
-cargo check --manifest-path src-tauri/Cargo.toml
-bun run tauri dev   # run the desktop app against the dev server
-bun run tauri build # native installer for the current operating system
+cargo test --manifest-path src-tauri/Cargo.toml
+bun run tauri build --debug --no-bundle
 ```
 
-## Architecture
+Use the Bun version in `package.json`, stable Rust, and Tauri's platform prerequisites. `bun install` applies the xterm patch before tests. `bun run local` builds a separate Lite Dev app with separate data. CI builds on macOS, Windows, and Linux; verify all affected platform branches. Terminal/UI changes also need desktop validation with background sessions and alternate screens.
 
-- `src/App.tsx` owns persisted tabs, session lifecycle, the top bar, and app-wide shortcuts.
-- `src/terminal.tsx` owns the active xterm instance and its theme; `src/output-store.ts` bounds buffered output for inactive tabs.
-- `src/inspector.tsx` owns the lazy file browser, Git status, and provider usage surface.
-- `src/code-preview.tsx` owns syntax-highlighted source and rendered Markdown previews.
-- `src/new-session-dialog.tsx` owns harness and provider choice, availability, and the project folder.
-- `src/settings-dialog.tsx` owns API keys, provider sign-in, and shortcut editing.
-- `src/shortcuts.tsx` owns every app shortcut: defaults, user overrides, matching, and display; handlers ask `matchesShortcut` rather than reading keys.
-- `src/file-icons.tsx` owns file and folder icons for the tree.
-- `src-tauri/src/lib.rs` owns PTYs, provider process launch/resume, session id discovery, file access, Git commands, credential storage, and usage adapters.
+## Where to look
 
-A harness runs a session and a model provider bills it: Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and the shell are harnesses; OpenAI, DeepSeek, and OpenRouter are providers on the Codex harness. Keep provider-specific behavior behind the existing Rust commands.
+- Session launch and resume → `src/App.tsx` and `spawn_session`/`session_arguments` in `src-tauri/src/lib.rs`.
+- Harness and provider registration → `src/types.ts`, `src/provider-auth.tsx`, `src/brand-icons.tsx`, and the native launch/auth/SSH matches in `src-tauri/src/lib.rs`.
+- Terminal rendering → `src/terminal.tsx`; output/status → `src/output-store.ts`; files/Git → `src/inspector.tsx`.
+- Native commands and platform behavior → `src-tauri/src/`.
+- Shared UI primitives → `src/components/ui/`.
+- Terminal regression coverage → `tests/terminal-resize.test.ts`.
+- Dependency patch → `patches/`.
+- Build and checks → `package.json`, `.github/workflows/ci.yml`.
+
+## Pitfalls
+
+- **The xterm patch is load-bearing.** `patches/@xterm%2Fxterm@6.0.0.patch` changes `Viewport.ts`/`Buffer.ts` sources _and_ the built `lib/xterm.mjs`, and switches the package `main` to the ESM build so `bun test` can import it. `@xterm/xterm` is pinned exactly to `6.0.0` for that reason; bumping it means regenerating the patch (`bun patch`) and re-running `tests/terminal-resize.test.ts`. `bun install` must have run before `bun test`.
+- **Output is a channel, not an event.** Session bytes arrive through the `Channel` passed to `spawn_session`. A page reload (or any later `spawn_session` for an id whose PTY is still alive) reattaches to the running PTY instead of respawning, and `launch()` returns early when `runs.current` already holds the session. Do not route terminal bytes through `emit`.
+- **Private OSC 6973 must stay in sync** between the Rust emitters (`capture_claude_status`, the rebuild command) and the `METADATA` regex in `output-store.ts`; the "output activity" test in `tests/github-items.test.ts` pins the parsing.
+- **Codex identity depends on the title.** `CODEX_NOTIFICATION_ARGS` sets `tui.terminal_title=["session-id","thread"]`; `receiveOutput` recognizes the `<hex-id> | <name>` shape and calls `record_codex_session`. Removing or reordering those args breaks resume.
+- **`write_text_file` checks before it replaces.** It refuses when the bytes on disk differ from `original` (a check, not a lock: another writer can still land between check and write); the editor must send the contents it last loaded or last saved successfully (`FilesPanel` does). The same rule holds over SSH (`cmp -s`).
+
+Register new Tauri commands in `generate_handler!`, keep heavy work in `spawn_blocking`, and match the Serde payload to its TypeScript interface. Check both local and SSH launch paths when adding a harness or provider.
