@@ -2158,7 +2158,7 @@ fn codex_executable() -> Result<PathBuf, String> {
     })
 }
 
-fn ensure_codex_server(server: &CodexServer) -> Result<(), String> {
+fn ensure_codex_server(server: &CodexServer, listen: &str) -> Result<(), String> {
     let mut server = server.0.lock().map_err(|error| error.to_string())?;
     let endpoint = server.endpoint.clone();
     if let Some(child) = server.child.as_mut() {
@@ -2202,9 +2202,12 @@ fn ensure_codex_server(server: &CodexServer) -> Result<(), String> {
     }
     let mut command = Command::new(codex_executable()?);
     #[cfg(unix)]
-    command.args(["app-server", "--listen", "unix://"]);
+    command.args(["app-server", "--listen", listen]);
     #[cfg(windows)]
-    command.args(["app-server", "--listen", &server.endpoint]);
+    {
+        let _ = listen;
+        command.args(["app-server", "--listen", &server.endpoint]);
+    }
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
@@ -2243,7 +2246,7 @@ fn codex_requests(
     server: &CodexServer,
     requests: &[(u64, &str, serde_json::Value)],
 ) -> Result<HashMap<u64, serde_json::Value>, String> {
-    ensure_codex_server(server)?;
+    ensure_codex_server(server, "unix://")?;
     let endpoint = server
         .0
         .lock()
@@ -2335,21 +2338,58 @@ fn codex_usage(
     thread_id: Option<&str>,
     account: bool,
 ) -> Result<UsageSnapshot, String> {
-    let mut requests = Vec::new();
+    let mut responses = HashMap::new();
     if account {
-        requests.extend([
-            (1, "account/rateLimits/read", serde_json::json!({})),
-            (2, "account/usage/read", serde_json::json!({})),
-        ]);
+        // Token refresh on a shared server refuses workspace changes. A fresh process reads
+        // the current login without Lite accessing credentials or disturbing active sessions.
+        #[cfg(unix)]
+        let socket_directory = {
+            use std::os::unix::fs::DirBuilderExt;
+            let directory = Path::new("/tmp")
+                .canonicalize()
+                .map_err(|error| error.to_string())?
+                .join(format!("lite-{}", uuid::Uuid::new_v4()));
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&directory)
+                .map_err(|error| error.to_string())?;
+            directory
+        };
+        #[cfg(unix)]
+        let socket_path = socket_directory.join("usage.sock");
+        #[cfg(unix)]
+        let endpoint = format!("unix://{}", path_text(&socket_path));
+        #[cfg(windows)]
+        let endpoint = String::new();
+        let account_server = CodexServer(Mutex::new(CodexServerState {
+            child: None,
+            endpoint: endpoint.clone(),
+        }));
+        let result = ensure_codex_server(&account_server, &endpoint).and_then(|()| {
+            let server = account_server.0.lock().map_err(|error| error.to_string())?;
+            codex_requests_once(
+                &server.endpoint,
+                &[
+                    (1, "account/rateLimits/read", serde_json::json!({})),
+                    (2, "account/usage/read", serde_json::json!({})),
+                ],
+            )
+        });
+        stop_codex_server(&account_server);
+        #[cfg(unix)]
+        let _ = fs::remove_dir_all(socket_directory);
+        responses.extend(result?);
     }
     if let Some(thread_id) = thread_id {
-        requests.push((
-            3,
-            "thread/read",
-            serde_json::json!({"threadId": thread_id, "includeTurns": false}),
-        ));
+        responses.extend(codex_requests(
+            server,
+            &[(
+                3,
+                "thread/read",
+                serde_json::json!({"threadId": thread_id, "includeTurns": false}),
+            )],
+        )?);
     }
-    let responses = codex_requests(server, &requests)?;
     let rates = responses.get(&1);
     let summary = responses.get(&2);
 
