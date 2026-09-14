@@ -3746,6 +3746,9 @@ fn configure_session_command(
         command.cwd(path_text(cwd));
     }
     command.env("TERM", "xterm-256color");
+    // Keep Claude output in native scrollback so terminal search can see the conversation, including
+    // Claude launched from a shell. Fullscreen rendering only sends the visible frame.
+    command.env("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "1");
     // A launched app inherits no locale, so a session copies its own UTF-8 as Mac Roman: `─` as `‚îÄ`.
     #[cfg(target_os = "macos")]
     command.env("LC_CTYPE", "UTF-8");
@@ -3766,10 +3769,10 @@ fn ssh_session_command(
     initial_prompt: Option<&str>,
 ) -> Result<CommandBuilder, String> {
     let remote = if launch.agent == "shell" {
-        ssh_script(&format!(
+        format!(
             "cd {} && exec \"${{SHELL:-/bin/sh}}\" -l",
             posix_quote(&root.path)
-        ))
+        )
     } else {
         let executable = agent_executable(launch.agent).ok_or("Unknown session type")?;
         let mut args = vec![executable.to_owned()];
@@ -3803,12 +3806,16 @@ fn ssh_session_command(
             .map(|argument| posix_quote(argument))
             .collect::<Vec<_>>()
             .join(" ");
-        ssh_script(&format!(
+        format!(
             "cd {} && exec \"${{SHELL:-/bin/sh}}\" -lc {}",
             posix_quote(&root.path),
             posix_quote(&format!("exec {command}"))
-        ))
+        )
     };
+    // SSH does not forward the local PTY environment to the remote shell.
+    let remote = ssh_script(&format!(
+        "export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1; {remote}"
+    ));
     let command = ssh_command(&root.host)?;
     let argv = std::iter::once(command.get_program().to_os_string())
         .chain(command.get_args().map(ToOwned::to_owned))

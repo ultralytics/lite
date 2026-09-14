@@ -423,6 +423,7 @@ export function TerminalView({
     const terminal = terminalRef.current;
     if (!term) {
       searchAddon.clearDecorations();
+      terminal?.clearSelection();
       if (terminal) terminal.options.theme = themes[themeRef.current];
       const result = { resultIndex: -1, resultCount: 0 };
       setSearchResult(result);
@@ -438,6 +439,7 @@ export function TerminalView({
 
   function closeSearch() {
     searchAddonRef.current?.clearDecorations();
+    terminalRef.current?.clearSelection();
     if (terminalRef.current) terminalRef.current.options.theme = themes[themeRef.current];
     setSearchOpen(false);
     setSearchQuery("");
