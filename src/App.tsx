@@ -1578,6 +1578,7 @@ function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [sessionView, setSessionView] = useState(loadSessionView);
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
+  const [sessionVisit, setSessionVisit] = useState(0);
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
   const [newSessionChoice, setNewSessionChoice] = useState<string>();
@@ -1759,6 +1760,7 @@ function App() {
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
     clearAttention(session.id);
     setSelectedId(session.id);
+    setSessionVisit((visit) => visit + 1);
     if (session.running) {
       recoveryFailures.current.delete(session.id);
       void recoverRef.current(session).catch(() => {});
@@ -3518,7 +3520,7 @@ function App() {
                         setInspectorFontSize((current) => zoomedFontSize(INSPECTOR_FONT_KEY, current, step))
                       }
                     />
-                    <PanelBoundary key={selected.id}>
+                    <PanelBoundary key={`${selected.id}:${sessionVisit}`}>
                       <Inspector
                         session={selected}
                         remote={remote}
