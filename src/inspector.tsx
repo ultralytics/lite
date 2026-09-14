@@ -1825,7 +1825,7 @@ export const Inspector = memo(function Inspector({
   // A tab already names the panel it shows, so the panel does not name itself again. The refresh button
   // rebuilds whichever is open, and every explicit tab visit requests a fresh snapshot as well.
   const [reload, setReload] = useState({ files: 0, git: 0, usage: 0 });
-  const [refreshing, setRefreshing] = useState<InspectorTab>();
+  const [refreshing, setRefreshing] = useState<InspectorTab | undefined>(tab);
 
   const finishRefresh = useCallback((value: InspectorTab) => {
     setRefreshing((current) => (current === value ? undefined : current));
