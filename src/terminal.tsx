@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { type ITheme, Terminal } from "@xterm/xterm";
+import { type ILink, type ITheme, Terminal } from "@xterm/xterm";
 import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
@@ -136,6 +136,56 @@ function renderedOutput(terminal: Terminal) {
   return text.slice(-MAX_OUTPUT_BYTES);
 }
 
+// xterm asks for links on hover. Inspect only the hovered logical line, including soft wraps.
+function localLinks(terminal: Terminal, y: number, activate: ILink["activate"]): ILink[] {
+  const buffer = terminal.buffer.active;
+  let start = y - 1;
+  let end = start;
+  const maxRows = Math.ceil(4096 / terminal.cols);
+  while (start > 0 && buffer.getLine(start)?.isWrapped && y - start <= maxRows) start--;
+  while (end - start < maxRows && buffer.getLine(end + 1)?.isWrapped) end++;
+  // A truncated logical line could turn part of a path into a different target.
+  if (buffer.getLine(start)?.isWrapped || buffer.getLine(end + 1)?.isWrapped) return [];
+  let text = "";
+  const positions: { x: number; y: number }[] = [];
+  for (let row = start; row <= end; row++) {
+    const line = buffer.getLine(row);
+    if (!line) return [];
+    for (let col = 0; col < terminal.cols; col++) {
+      const cell = line.getCell(col);
+      if (!cell?.getWidth()) continue;
+      // A wide character can wrap early, leaving an empty final cell behind it.
+      if (
+        col === terminal.cols - 1 &&
+        !cell.getChars() &&
+        buffer.getLine(row + 1)?.isWrapped &&
+        buffer
+          .getLine(row + 1)
+          ?.getCell(0)
+          ?.getWidth() === 2
+      )
+        continue;
+      const chars = cell.getChars() || " ";
+      text += chars;
+      for (let i = 0; i < chars.length; i++) positions.push({ x: col + 1, y: row + 1 });
+    }
+  }
+  const links: ILink[] = [];
+  // Delimiters cover prose, Markdown links, and quoted paths containing spaces.
+  const paths =
+    /(?:^|[\s([<{])((?:file:\/\/\/|\/|~\/|[A-Za-z]:[\\/])[^\s<>"'`|]*[^\s<>"'`|.,;:!?)}\]])|["'`]((?:\/|~\/|[A-Za-z]:[\\/])[^"'`]+)["'`]/g;
+  for (const match of text.matchAll(paths)) {
+    const path = match[1] ?? match[2];
+    const offset = match.index + match[0].indexOf(path);
+    links.push({
+      text: path,
+      range: { start: positions[offset], end: positions[offset + path.length - 1] },
+      activate,
+    });
+  }
+  return links;
+}
+
 export function TerminalView({
   sessionId,
   agent,
@@ -199,6 +249,10 @@ export function TerminalView({
     if (!container) return;
     setScrolledUp(false);
 
+    const openLink: ILink["activate"] = (event, url) => {
+      event.preventDefault();
+      void invoke("open_url", { url }).catch((reason) => console.error("Lite could not open the link:", reason));
+    };
     const terminal = new Terminal({
       // The official search addon uses xterm decorations to count and mark every match.
       allowProposedApi: true,
@@ -208,12 +262,7 @@ export function TerminalView({
       lineHeight: 1.25,
       minimumContrastRatio: 4.5,
       overviewRuler: { width: 6 },
-      linkHandler: {
-        activate: (event, url) => {
-          event.preventDefault();
-          void invoke("open_url", { url });
-        },
-      },
+      linkHandler: { activate: openLink },
       scrollback: 5000,
       theme: themes[themeRef.current],
     });
@@ -226,13 +275,10 @@ export function TerminalView({
     const searchResults = searchAddon.onDidChangeResults((result) => {
       setSearchResult(result);
     });
-    // Links go to the system browser, the way every other terminal handles them.
-    terminal.loadAddon(
-      new WebLinksAddon((event, url) => {
-        event.preventDefault();
-        void invoke("open_url", { url });
-      }),
-    );
+    terminal.loadAddon(new WebLinksAddon(openLink));
+    terminal.registerLinkProvider({
+      provideLinks: (y, callback) => callback(localLinks(terminal, y, openLink)),
+    });
     terminal.open(container);
     const scroll = terminal.onScroll((viewportY) => setScrolledUp(viewportY < terminal.buffer.active.baseY));
     const disconnectTerminalOutput = connectTerminalOutput(sessionId, () => renderedOutput(terminal));

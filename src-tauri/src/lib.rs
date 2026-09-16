@@ -3699,14 +3699,49 @@ async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), 
     open_external(url)
 }
 
-// Terminals make their links clickable, and a provider's sign-in URL is the reason people want that.
-// Only web schemes open, so terminal output cannot talk the browser into anything else.
+// Only explicit clicks reach this command; discovering terminal links never reads the filesystem.
 #[tauri::command]
-async fn open_url(url: String) -> Result<(), String> {
-    if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err("Only web links can be opened".into());
-    }
-    open_external(&url)
+async fn open_url(url: String, app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if url.starts_with("https://") || url.starts_with("http://") {
+            return open_external(&url);
+        }
+        let path = if url.starts_with("file:") {
+            let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
+            if parsed.host_str().is_some_and(|host| host != "localhost") {
+                return Err("Only local file links can be opened".into());
+            }
+            parsed
+                .to_file_path()
+                .map_err(|_| "Invalid local file link")?
+        } else if let Some(relative) = url.strip_prefix("~/") {
+            app.path()
+                .home_dir()
+                .map_err(|error| error.to_string())?
+                .join(relative)
+        } else {
+            PathBuf::from(&url)
+        };
+        if !path.is_absolute() {
+            return Err("Only web links and absolute local paths can be opened".into());
+        }
+        let path =
+            fs::canonicalize(path).map_err(|error| format!("Could not open the path: {error}"))?;
+        if !path.is_file() && !path.is_dir() {
+            return Err("The link must name a file or directory".into());
+        }
+        // Pass paths directly to the file manager on Windows, never through cmd.exe.
+        #[cfg(target_os = "windows")]
+        return Command::new("explorer.exe")
+            .arg(path_text(&path))
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| format!("Could not open the path: {error}"));
+        #[cfg(not(target_os = "windows"))]
+        open_external(&path_text(&path))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // A session root has already been chosen by the user and registered with Lite. Resolve that grant
