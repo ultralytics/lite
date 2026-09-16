@@ -164,6 +164,8 @@ export function TerminalView({
   onRecover: () => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const rootIdRef = useRef(rootId);
+  rootIdRef.current = rootId;
   // Held in a ref so a new prompt handler never rebuilds the terminal underneath the session.
   const promptRef = useRef(onPrompt);
   promptRef.current = onPrompt;
@@ -203,7 +205,7 @@ export function TerminalView({
 
     const openLink = (event: MouseEvent, url: string) => {
       event.preventDefault();
-      void invoke("open_url", { url, rootId }).catch((reason) =>
+      void invoke("open_url", { url, rootId: rootIdRef.current }).catch((reason) =>
         console.error("Lite could not open the link:", reason),
       );
     };
@@ -377,7 +379,7 @@ export function TerminalView({
       searchAddonRef.current = null;
       resizeRef.current = () => undefined;
     };
-  }, [sessionId, rootId]);
+  }, [sessionId]);
 
   useEffect(() => {
     if (active) terminalRef.current?.focus();
