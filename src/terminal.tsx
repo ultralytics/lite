@@ -138,7 +138,7 @@ function renderedOutput(terminal: Terminal) {
 
 export function TerminalView({
   sessionId,
-  host,
+  rootId,
   agent,
   theme,
   fontSize,
@@ -151,7 +151,7 @@ export function TerminalView({
   onRecover,
 }: {
   sessionId: string;
-  host?: string;
+  rootId: string;
   agent: Agent;
   theme: Theme;
   fontSize: number;
@@ -203,7 +203,7 @@ export function TerminalView({
 
     const openLink = (event: MouseEvent, url: string) => {
       event.preventDefault();
-      void invoke("open_url", { url, host: host ?? null }).catch((reason) =>
+      void invoke("open_url", { url, rootId }).catch((reason) =>
         console.error("Lite could not open the link:", reason),
       );
     };
@@ -377,7 +377,7 @@ export function TerminalView({
       searchAddonRef.current = null;
       resizeRef.current = () => undefined;
     };
-  }, [sessionId, host]);
+  }, [sessionId, rootId]);
 
   useEffect(() => {
     if (active) terminalRef.current?.focus();

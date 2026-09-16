@@ -3701,14 +3701,14 @@ async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), 
 
 // Only explicit clicks reach this command; discovering terminal links never reads the filesystem.
 #[tauri::command]
-async fn open_url(url: String, host: Option<String>, app: AppHandle) -> Result<(), String> {
+async fn open_url(url: String, root_id: Option<String>, app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         if url.starts_with("https://") || url.starts_with("http://") {
             return open_external(&url);
         }
-        if host.is_some() {
-            return Err("Remote file links cannot be opened locally".into());
-        }
+        // The registered root owns whether this terminal is local or remote.
+        let root_id = root_id.ok_or("Local file links require a local terminal")?;
+        root_path(&app.state::<Roots>(), &root_id)?;
         let path = if url.starts_with("file:") {
             let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
             if parsed.host_str().is_some_and(|host| host != "localhost") {
