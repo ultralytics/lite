@@ -29,16 +29,10 @@ export const SESSION_CHOICES = [
 ];
 const harnesses = [...new Set(SESSION_CHOICES.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 const CHOICE_KEY = "lite.newSession.choice.v1";
-const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
 const DEEPSEEK_REASONING_KEY = "lite.newSession.deepseekReasoning.v1";
 const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
-const DEEPSEEK_MODELS = [
-  { value: "deepseek-v4-flash", label: "Flash" },
-  { value: "deepseek-v4-pro", label: "Pro" },
-] as const;
-type DeepSeekModel = (typeof DEEPSEEK_MODELS)[number]["value"];
 const DEEPSEEK_REASONING = ["low", "high", "max"] as const;
 type DeepSeekReasoning = (typeof DEEPSEEK_REASONING)[number];
 
@@ -111,10 +105,6 @@ export function NewSessionDialog({
   const [choiceId, setChoiceId] = useState(() => {
     const stored = localStorage.getItem(CHOICE_KEY);
     return SESSION_CHOICES.find((option) => option.id === stored)?.id ?? SESSION_CHOICES[0].id;
-  });
-  const [deepseekModel, setDeepseekModel] = useState<DeepSeekModel>(() => {
-    const stored = localStorage.getItem(DEEPSEEK_MODEL_KEY);
-    return DEEPSEEK_MODELS.find(({ value }) => value === stored)?.value ?? DEEPSEEK_MODELS[0].value;
   });
   const [deepseekReasoning, setDeepseekReasoning] = useState<DeepSeekReasoning>(() => {
     const stored = localStorage.getItem(DEEPSEEK_REASONING_KEY);
@@ -330,7 +320,7 @@ export function NewSessionDialog({
         id: crypto.randomUUID(),
         agent: choice.agent,
         provider: choice.provider,
-        model: choice.provider === "deepseek" ? deepseekModel : undefined,
+        model: choice.provider === "deepseek" ? "deepseek-flash" : undefined,
         reasoningEffort: choice.provider === "deepseek" ? deepseekReasoning : undefined,
         cwd: folder.path,
         host: folder.host ?? undefined,
@@ -666,29 +656,8 @@ export function NewSessionDialog({
                       {active && deepseek ? (
                         <div className="space-y-1 border-t px-3 py-2">
                           <div className="flex items-center">
-                            <span id="deepseek-model-label" className="text-xs font-medium text-muted-foreground">
-                              Model
-                            </span>
-                            <fieldset
-                              className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
-                              aria-labelledby="deepseek-model-label"
-                            >
-                              {DEEPSEEK_MODELS.map((model) => (
-                                <Button
-                                  key={model.value}
-                                  type="button"
-                                  size="xs"
-                                  variant={deepseekModel === model.value ? "secondary" : "ghost"}
-                                  aria-pressed={deepseekModel === model.value}
-                                  onClick={() => {
-                                    localStorage.setItem(DEEPSEEK_MODEL_KEY, model.value);
-                                    setDeepseekModel(model.value);
-                                  }}
-                                >
-                                  {model.label}
-                                </Button>
-                              ))}
-                            </fieldset>
+                            <span className="text-xs font-medium text-muted-foreground">Model</span>
+                            <span className="ml-auto text-xs">V4.1 Flash</span>
                           </div>
                           <div className="flex items-center">
                             <span id="deepseek-reasoning-label" className="text-xs font-medium text-muted-foreground">

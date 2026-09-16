@@ -22,7 +22,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 ## ✨ Features
 
 - Run Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and shell sessions side by side
-- Run Codex against DeepSeek V4 Flash or Pro, or OpenRouter, without changing your default Codex provider
+- Run Codex against DeepSeek V4.1 Flash, or OpenRouter, without changing your default Codex provider
 - Resume session tabs automatically after closing Lite or restarting your computer
 - Undo a restart or close for eight seconds before Lite stops the terminal
 - Authenticate once with each provider and reuse its existing local credentials
@@ -89,10 +89,10 @@ If you would rather use API keys, open **Settings › API Keys** and paste one f
   <img src="https://github.com/user-attachments/assets/d3ccbfcf-bf4c-498a-8f7f-f0a134a90e92" width="100%" alt="Saving provider API keys in Lite">
 </div>
 
-**Codex · DeepSeek** runs the Codex harness against DeepSeek V4 Flash or Pro through its OpenAI Responses API. Saving a DeepSeek key in Lite is enough — Lite then defines the provider for that launch only. To configure it yourself instead, use your own [Codex configuration](https://api-docs.deepseek.com/quick_start/agent_integrations/codex); a `deepseek.config.toml` profile in `$CODEX_HOME` is cleanest:
+**Codex · DeepSeek** runs the Codex harness against DeepSeek V4.1 Flash through its OpenAI Responses API. Saving a DeepSeek key in Lite is enough — Lite then defines the provider for that launch only. To configure it yourself instead, use your own [Codex configuration](https://api-docs.deepseek.com/quick_start/agent_integrations/codex); a `deepseek.config.toml` profile in `$CODEX_HOME` is cleanest:
 
 ```toml
-model = "deepseek-v4-flash" # Or "deepseek-v4-pro" for the most capable model
+model = "deepseek-flash"
 model_provider = "deepseek"
 
 [model_providers.deepseek]
