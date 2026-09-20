@@ -283,7 +283,7 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         reasoning: "high",
         levels: &[
             ("low", "Fast responses with lighter reasoning"),
-            ("high", "Greater reasoning depth for complex problems"),
+            ("high", "Extra high reasoning depth for complex problems"),
             ("max", "Maximum reasoning depth for the hardest problems"),
         ],
         models: &[
