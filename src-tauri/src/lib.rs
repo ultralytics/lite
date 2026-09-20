@@ -3402,8 +3402,8 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                     }
                     _ => provider.model,
                 };
-                // A thinking level this provider does not offer would be rejected or ignored, so an
-                // unknown one falls back to the provider's default.
+                // A thinking level this provider does not offer would be rejected, so an unknown one falls
+                // back to high.
                 let reasoning_effort = match reasoning_effort {
                     Some(effort) if provider.levels.iter().any(|(level, _)| level == &effort) => {
                         Some(effort)
