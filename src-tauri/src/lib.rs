@@ -239,9 +239,7 @@ fn set_attention_badge(app: AppHandle, count: u32) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
-// A model a provider serves and Codex has no catalog entry for. Codex warns about, and guesses the
-// limits of, every model it cannot find, so these entries travel to Codex as a catalog file.
-#[derive(Clone, Copy)]
+// A model a provider serves and Codex has no catalog entry for.
 struct CodexModel {
     slug: &'static str,
     display_name: &'static str,
@@ -3446,8 +3444,7 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                         .replace('"', "\\\"")
                 });
                 if profile {
-                    // A profile the user wrote owns the provider; a model chosen for this session still
-                    // overrides its default, and the catalog, without changing the profile.
+                    // A model chosen for this session overrides the profile's default without changing it.
                     command.args(["--profile", provider.codex_key]);
                     if model_selected {
                         command.args(["-c", &format!("model=\"{model}\"")]);
@@ -3592,8 +3589,8 @@ async fn agent_availability(
                 String::new()
             } else {
                 format!(
-                    "Save a {} key in Lite's settings, or add a {} provider to your Codex configuration. Either way Lite launches `{}` through it.",
-                    codex_provider.name, codex_provider.name, codex_provider.model
+                    "Save a {} key in Lite's settings, or add a {} provider to your Codex configuration.",
+                    codex_provider.name, codex_provider.name
                 )
             },
         });

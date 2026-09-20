@@ -647,8 +647,6 @@ export function NewSessionDialog({
                   const active = choiceId === option.id;
                   const unsupported = remoteUnsupported(remote, option);
                   const panel = CODEX_PANELS[option.id];
-                  const chosenModel = panel ? codexChoices[panel.modelKey] : "";
-                  const chosenLevel = panel ? codexChoices[panel.levelKey] : "";
                   const state = availability[option.id];
                   const update = updates[option.agent];
                   const managed = option.agent !== "shell" && state && !state.installable;
@@ -727,8 +725,8 @@ export function NewSessionDialog({
                                   key={model.value}
                                   type="button"
                                   size="xs"
-                                  variant={chosenModel === model.value ? "secondary" : "ghost"}
-                                  aria-pressed={chosenModel === model.value}
+                                  variant={codexChoices[panel.modelKey] === model.value ? "secondary" : "ghost"}
+                                  aria-pressed={codexChoices[panel.modelKey] === model.value}
                                   onClick={() => chooseCodex(panel.modelKey, model.value)}
                                 >
                                   {model.label}
@@ -749,9 +747,9 @@ export function NewSessionDialog({
                                   key={effort}
                                   type="button"
                                   size="xs"
-                                  variant={chosenLevel === effort ? "secondary" : "ghost"}
+                                  variant={codexChoices[panel.levelKey] === effort ? "secondary" : "ghost"}
                                   className="capitalize"
-                                  aria-pressed={chosenLevel === effort}
+                                  aria-pressed={codexChoices[panel.levelKey] === effort}
                                   onClick={() => chooseCodex(panel.levelKey, effort)}
                                 >
                                   {effort}
