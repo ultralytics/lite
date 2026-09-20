@@ -100,7 +100,7 @@ experimental_bearer_token = "<你的 DeepSeek API key>"
 
 请不要写入 `preferred_auth_method` 和 `forced_login_method`。Codex 会全局应用这两项，一旦设置，下次运行时你会被登出 ChatGPT。Lite 只在每次启动时选择 DeepSeek provider，因此你的默认 Codex provider 和已有的 OpenAI 会话都不受影响，Lite 也不会读取或保存 DeepSeek key。
 
-**Codex · Z.ai** 同样通过 Z.ai 的 Responses API 运行 GLM-5.3 与 GLM-5.3 Flash：在 Lite 中保存 Z.ai key，或者自行配置一个 `zai` provider —— `base_url = "https://api.z.ai/api/v1"`、`wire_api = "responses"`，并与 `model = "glm-5.3"` 放在一起。Codex 自带 catalog 中并没有 DeepSeek 与 Z.ai 的模型，因此 Lite 还会把一份基于内置 catalog 生成的模型列表交给 Codex：模型会带上正确的上下文窗口、推理等级和工具支持，而不是只得到一条元数据警告；你自己配置的 `model_catalog_json` 不会被覆盖。
+**Codex · Z.ai** 同样通过 Z.ai 的 Responses API 运行 GLM-5.3 与 GLM-5.3 Flash：在 Lite 中保存 Z.ai key，或者自行配置一个 `ZAI` provider —— `base_url = "https://api.z.ai/api/v1"`、`wire_api = "responses"`，并与 `model = "glm-5.3"` 放在一起。Codex 自带 catalog 中并没有 DeepSeek 与 Z.ai 的模型，因此 Lite 还会把一份基于内置 catalog 生成的模型列表交给 Codex：模型会带上正确的上下文窗口、推理等级和工具支持，而不是只得到一条元数据警告；你自己配置的 `model_catalog_json` 不会被覆盖。
 
 选择一个项目文件夹，创建会话，然后开始工作。Lite 只保存恢复标签所需的本地元数据；provider 的对话历史仍归 provider CLI 所有。
 

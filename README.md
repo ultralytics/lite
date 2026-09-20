@@ -104,7 +104,7 @@ experimental_bearer_token = "<your DeepSeek API key>"
 
 Leave `preferred_auth_method` and `forced_login_method` out. Codex applies those globally, and setting them signs you out of ChatGPT the next time it runs. Lite selects the DeepSeek provider per launch, so your default Codex provider and existing OpenAI sessions are untouched, and it never reads or stores the DeepSeek key.
 
-**Codex · Z.ai** does the same with GLM-5.3 and GLM-5.3 Flash over Z.ai's Responses API: save a Z.ai key in Lite, or configure a `zai` Codex provider with `base_url = "https://api.z.ai/api/v1"` and `wire_api = "responses"` beside `model = "glm-5.3"`. Codex ships no entry for DeepSeek's or Z.ai's models, so Lite also hands it a catalog built from the bundled one — the models then carry the right context window, reasoning levels, and tool support instead of a metadata warning, and a `model_catalog_json` you configured yourself is left alone.
+**Codex · Z.ai** does the same with GLM-5.3 and GLM-5.3 Flash over Z.ai's Responses API: save a Z.ai key in Lite, or configure a `ZAI` Codex provider with `base_url = "https://api.z.ai/api/v1"` and `wire_api = "responses"` beside `model = "glm-5.3"`. Codex ships no entry for DeepSeek's or Z.ai's models, so Lite also hands it a catalog built from the bundled one — the models then carry the right context window, reasoning levels, and tool support instead of a metadata warning, and a `model_catalog_json` you configured yourself is left alone.
 
 **Codex · OpenRouter** works the same way: save an OpenRouter key in Lite or configure an `openrouter` Codex provider, and Lite launches OpenRouter's current OpenAI model route without changing your default Codex setup.
 

@@ -255,13 +255,19 @@ struct CodexModel {
 #[derive(Clone, Copy)]
 struct CodexProvider {
     id: &'static str,
+    // The name Codex knows this provider by: the `model_providers` key, the profile file beside
+    // `config.toml`, and the value of `model_provider`. It is the spelling the provider documents, so it
+    // is not always Lite's own id.
+    codex_key: &'static str,
     name: &'static str,
     base_url: &'static str,
     env_key: &'static str,
     // The model and thinking level a launch uses when the user has chosen neither.
     model: &'static str,
     reasoning: &'static str,
-    levels: &'static [&'static str],
+    // Each thinking level Codex offers here and the wording Codex shows beside it, both as the provider
+    // itself declares them.
+    levels: &'static [(&'static str, &'static str)],
     models: &'static [CodexModel],
     setup_url: &'static str,
 }
@@ -269,12 +275,17 @@ struct CodexProvider {
 const CODEX_PROVIDERS: [CodexProvider; 3] = [
     CodexProvider {
         id: "deepseek",
+        codex_key: "deepseek",
         name: "DeepSeek",
         base_url: "https://api.deepseek.com/",
         env_key: "DEEPSEEK_API_KEY",
         model: "deepseek-flash",
         reasoning: "high",
-        levels: &["low", "high", "max"],
+        levels: &[
+            ("low", "Fast responses with lighter reasoning"),
+            ("high", "Greater reasoning depth for complex problems"),
+            ("max", "Maximum reasoning depth for the hardest problems"),
+        ],
         models: &[
             CodexModel {
                 slug: "deepseek-flash",
@@ -297,12 +308,17 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
     },
     CodexProvider {
         id: "zai",
+        codex_key: "ZAI",
         name: "Z.ai",
         base_url: "https://api.z.ai/api/v1",
         env_key: "ZAI_API_KEY",
         model: "glm-5.3",
         reasoning: "max",
-        levels: &["low", "high", "max"],
+        levels: &[
+            ("low", "Light reasoning"),
+            ("high", "Enhanced reasoning"),
+            ("max", "Deep reasoning"),
+        ],
         models: &[
             CodexModel {
                 slug: "glm-5.3",
@@ -325,6 +341,7 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
     },
     CodexProvider {
         id: "openrouter",
+        codex_key: "openrouter",
         name: "OpenRouter",
         base_url: "https://openrouter.ai/api/v1",
         env_key: "OPENROUTER_API_KEY",
@@ -2746,13 +2763,12 @@ fn refresh_user_path() {
 // bundle and not the data directory. A key is handed to a session through the environment variable its
 // CLI already reads, so nothing is copied into provider configuration.
 // Codex only knows the models in its own catalog, and it warns about and guesses the limits of any
-// other one. It reads a replacement catalog from a file, so the bundled catalog is read back and this
-// provider's models appended to it: cloning an entry keeps whatever shape that Codex version expects,
-// and keeping the built-in models leaves the rest of Codex working. The bundled catalog is asked for
-// by name so a launch never waits on Codex refreshing its models over the network. Every failure here
-// returns None and leaves the warning in place, because a catalog Codex cannot parse would stop it
-// from starting.
-fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
+// other one. The bundled catalog is asked for by name so nothing waits on Codex refreshing its models
+// over the network, and it changes only when Codex is updated, so it is read once per run rather than
+// started again for every launch.
+static BUNDLED_CATALOG: std::sync::OnceLock<Option<serde_json::Value>> = std::sync::OnceLock::new();
+
+fn bundled_catalog() -> Option<serde_json::Value> {
     let mut probe = Command::new(resolve_executable("codex")?);
     probe.args(["debug", "models", "--bundled"]);
     // The CLI is a Node launcher, so without the user PATH its shebang cannot find Node.
@@ -2763,7 +2779,15 @@ fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
         .output()
         .ok()
         .filter(|output| output.status.success())?;
-    let mut catalog: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+// Codex reads a replacement catalog from a file, so the bundled catalog is cloned and this provider's
+// models are appended to it: cloning an entry keeps whatever shape that Codex version expects, and
+// keeping the built-in models leaves the rest of Codex working. Every failure here returns None and
+// leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
+fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
+    let mut catalog = BUNDLED_CATALOG.get_or_init(bundled_catalog).clone()?;
     let models = catalog.get_mut("models")?.as_array_mut()?;
     let template = models.first()?.clone();
     let mut changed = false;
@@ -2852,7 +2876,9 @@ fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
                 provider
                     .levels
                     .iter()
-                    .map(|effort| serde_json::json!({"effort": effort, "description": effort}))
+                    .map(|(effort, description)| {
+                        serde_json::json!({"effort": effort, "description": description})
+                    })
                     .collect(),
             ),
         );
@@ -3004,8 +3030,9 @@ fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
             .then_some(CliAuthMethod::Provider),
         name if CODEX_PROVIDERS.iter().any(|provider| provider.id == name) => {
             let provider = codex_provider(Some(name))?;
-            (codex_profile_exists(app, provider.id) || codex_declares_provider(app, provider.id))
-                .then_some(CliAuthMethod::ApiKey)
+            (codex_profile_exists(app, provider.codex_key)
+                || codex_declares_provider(app, provider.codex_key))
+            .then_some(CliAuthMethod::ApiKey)
         }
         "gemini" => gemini_home(app)
             .is_ok_and(|home| home.join("oauth_creds.json").is_file())
@@ -3169,21 +3196,18 @@ fn codex_declares_provider(app: &AppHandle, provider: &str) -> bool {
 }
 
 // A catalog is a replacement rather than a merge, so one the user configured is left to win. A profile
-// can carry the catalog for a launch that names it, so both files are asked.
-fn codex_declares_catalog(app: &AppHandle, provider: &str) -> bool {
+// carries its catalog only for a launch that names it, so its file is asked only then.
+fn codex_declares_catalog(app: &AppHandle, provider: &str, profile: bool) -> bool {
     let Ok(home) = codex_home(app) else {
         return false;
     };
-    [
-        home.join("config.toml"),
-        home.join(format!("{provider}.config.toml")),
-    ]
-    .iter()
-    .any(|path| {
-        codex_config_states(path, |line| {
-            line.trim_start().starts_with("model_catalog_json")
+    std::iter::once(home.join("config.toml"))
+        .chain(profile.then(|| home.join(format!("{provider}.config.toml"))))
+        .any(|path| {
+            codex_config_states(&path, |line| {
+                line.trim_start().starts_with("model_catalog_json")
+            })
         })
-    })
 }
 
 fn codex_profile_exists(app: &AppHandle, provider: &str) -> bool {
@@ -3406,15 +3430,20 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                 // A thinking level this provider does not offer would be rejected or ignored, so an
                 // unknown one falls back to the provider's default.
                 let reasoning_effort = match reasoning_effort {
-                    Some(effort) if provider.levels.contains(&effort) => Some(effort),
+                    Some(effort) if provider.levels.iter().any(|(level, _)| level == &effort) => {
+                        Some(effort)
+                    }
                     Some(_) if !provider.levels.is_empty() => Some(provider.reasoning),
                     _ => None,
                 };
+                // A profile the user wrote owns the provider only for a launch that names it, which is a
+                // launch Lite holds no key for.
+                let profile = !key && codex_profile_exists(app, provider.codex_key);
                 // Without a catalog of its own Codex warns about every model it cannot find and guesses
                 // the limits, so Lite hands over one unless the user has already configured their own. A
                 // provider serving only its own default model has nothing to declare.
                 let catalog = (!provider.models.is_empty()
-                    && !codex_declares_catalog(app, provider.id))
+                    && !codex_declares_catalog(app, provider.codex_key, profile))
                 .then(|| codex_catalog(app, &provider))
                 .flatten()
                 .map(|catalog| {
@@ -3423,10 +3452,10 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                         .replace('\\', "\\\\")
                         .replace('"', "\\\"")
                 });
-                if !key && codex_profile_exists(app, provider.id) {
+                if profile {
                     // A profile the user wrote owns the provider; a model chosen for this session still
                     // overrides its default, and the catalog, without changing the profile.
-                    command.args(["--profile", provider.id]);
+                    command.args(["--profile", provider.codex_key]);
                     if model_selected {
                         command.args(["-c", &format!("model=\"{model}\"")]);
                     }
@@ -3435,21 +3464,27 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                         // A key held by Lite defines the provider inline and is read from the
                         // environment, so no Codex configuration file has to exist or be written.
                         for override_value in [
-                            format!("model_providers.{}.name=\"{}\"", provider.id, provider.name),
+                            format!(
+                                "model_providers.{}.name=\"{}\"",
+                                provider.codex_key, provider.name
+                            ),
                             format!(
                                 "model_providers.{}.base_url=\"{}\"",
-                                provider.id, provider.base_url
+                                provider.codex_key, provider.base_url
                             ),
-                            format!("model_providers.{}.wire_api=\"responses\"", provider.id),
+                            format!(
+                                "model_providers.{}.wire_api=\"responses\"",
+                                provider.codex_key
+                            ),
                             format!(
                                 "model_providers.{}.env_key=\"{}\"",
-                                provider.id, provider.env_key
+                                provider.codex_key, provider.env_key
                             ),
                         ] {
                             command.args(["-c", &override_value]);
                         }
                     }
-                    command.args(["-c", &format!("model_provider=\"{}\"", provider.id)]);
+                    command.args(["-c", &format!("model_provider=\"{}\"", provider.codex_key)]);
                     command.args(["-c", &format!("model=\"{model}\"")]);
                 }
                 if let Some(catalog) = catalog {
@@ -3555,8 +3590,8 @@ async fn agent_availability(
         && let Some(codex_provider) = codex_provider(provider.as_deref())
     {
         let configured = saved_api_key(&app, &agent, provider.as_deref()).is_some()
-            || codex_profile_exists(&app, codex_provider.id)
-            || codex_declares_provider(&app, codex_provider.id);
+            || codex_profile_exists(&app, codex_provider.codex_key)
+            || codex_declares_provider(&app, codex_provider.codex_key);
         return Ok(Availability {
             available: configured,
             installable: false,
