@@ -312,8 +312,8 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         name: "Z.ai",
         base_url: "https://api.z.ai/api/v1",
         env_key: "ZAI_API_KEY",
-        model: "glm-5.3",
-        reasoning: "max",
+        model: "glm-5.3-flash",
+        reasoning: "high",
         levels: &[
             ("low", "Light reasoning"),
             ("high", "Enhanced reasoning"),
@@ -2762,13 +2762,14 @@ fn refresh_user_path() {
 // CLIs already do with their own credentials, and it survives updates because the updater replaces the
 // bundle and not the data directory. A key is handed to a session through the environment variable its
 // CLI already reads, so nothing is copied into provider configuration.
-// Codex only knows the models in its own catalog, and it warns about and guesses the limits of any
-// other one. The bundled catalog is asked for by name so nothing waits on Codex refreshing its models
-// over the network, and it changes only when Codex is updated, so it is read once per run rather than
-// started again for every launch.
-static BUNDLED_CATALOG: std::sync::OnceLock<Option<serde_json::Value>> = std::sync::OnceLock::new();
-
-fn bundled_catalog() -> Option<serde_json::Value> {
+// Codex only knows the models in its own catalog, and it warns and guesses the limits for any other
+// one. It reads a replacement catalog from a file, so the bundled catalog is read back and this
+// provider's models appended to it: cloning an entry keeps whatever shape that Codex version expects,
+// and keeping the built-in models leaves the rest of Codex working. The bundled catalog is asked for by
+// name so a launch never waits on Codex refreshing its models over the network. Every failure here
+// returns None and leaves the warning in place, because a catalog Codex cannot parse would stop it from
+// starting.
+fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
     let mut probe = Command::new(resolve_executable("codex")?);
     probe.args(["debug", "models", "--bundled"]);
     // The CLI is a Node launcher, so without the user PATH its shebang cannot find Node.
@@ -2779,15 +2780,7 @@ fn bundled_catalog() -> Option<serde_json::Value> {
         .output()
         .ok()
         .filter(|output| output.status.success())?;
-    serde_json::from_slice(&output.stdout).ok()
-}
-
-// Codex reads a replacement catalog from a file, so the bundled catalog is cloned and this provider's
-// models are appended to it: cloning an entry keeps whatever shape that Codex version expects, and
-// keeping the built-in models leaves the rest of Codex working. Every failure here returns None and
-// leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
-fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
-    let mut catalog = BUNDLED_CATALOG.get_or_init(bundled_catalog).clone()?;
+    let mut catalog: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
     let models = catalog.get_mut("models")?.as_array_mut()?;
     let template = models.first()?.clone();
     let mut changed = false;

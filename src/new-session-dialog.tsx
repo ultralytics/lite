@@ -58,11 +58,11 @@ const CODEX_PANELS: Record<string, CodexPanel> = {
   },
   zai: {
     models: [
-      { value: "glm-5.3", label: "GLM-5.3" },
       { value: "glm-5.3-flash", label: "Flash" },
+      { value: "glm-5.3", label: "GLM-5.3" },
     ],
     levels: ["low", "high", "max"],
-    level: "max",
+    level: "high",
     modelKey: "lite.newSession.zaiModel.v1",
     levelKey: "lite.newSession.zaiReasoning.v1",
   },
@@ -76,7 +76,7 @@ function storedCodexChoice(key: string, values: readonly string[], fallback: str
 // Every choice the panels remember, keyed by the storage key that holds it.
 function storedCodexChoices() {
   return Object.fromEntries(
-    Object.entries(CODEX_PANELS).flatMap(([, panel]) => [
+    Object.values(CODEX_PANELS).flatMap((panel) => [
       [
         panel.modelKey,
         storedCodexChoice(
