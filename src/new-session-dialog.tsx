@@ -29,18 +29,66 @@ export const SESSION_CHOICES = [
 ];
 const harnesses = [...new Set(SESSION_CHOICES.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 const CHOICE_KEY = "lite.newSession.choice.v1";
-const DEEPSEEK_MODEL_KEY = "lite.newSession.deepseekModel.v1";
-const DEEPSEEK_REASONING_KEY = "lite.newSession.deepseekReasoning.v1";
 const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
-const DEEPSEEK_MODELS = [
-  { value: "deepseek-flash", label: "Flash" },
-  { value: "deepseek-v4-pro", label: "Pro" },
-] as const;
-type DeepSeekModel = (typeof DEEPSEEK_MODELS)[number]["value"];
-const DEEPSEEK_REASONING = ["low", "high", "max"] as const;
-type DeepSeekReasoning = (typeof DEEPSEEK_REASONING)[number];
+// A Codex provider serving several models offers the choice here, remembered per provider so each keeps
+// its own model and thinking level. The catalog Lite hands Codex lists the same models and a level Codex
+// was not told about would be rejected, so both stay in step with it.
+type CodexPanel = {
+  models: readonly { value: string; label: string }[];
+  levels: readonly string[];
+  level: string;
+  modelKey: string;
+  levelKey: string;
+  // A chooser Codex cannot act on is shown read-only rather than left out.
+  modelDisabled?: boolean;
+};
+const CODEX_PANELS: Record<string, CodexPanel> = {
+  deepseek: {
+    models: [
+      { value: "deepseek-flash", label: "Flash" },
+      { value: "deepseek-v4-pro", label: "Pro" },
+    ],
+    levels: ["low", "high", "max"],
+    level: "high",
+    modelKey: "lite.newSession.deepseekModel.v1",
+    levelKey: "lite.newSession.deepseekReasoning.v1",
+    modelDisabled: true,
+  },
+  zai: {
+    models: [
+      { value: "glm-5.3", label: "GLM-5.3" },
+      { value: "glm-5.3-flash", label: "Flash" },
+    ],
+    levels: ["low", "high", "max"],
+    level: "max",
+    modelKey: "lite.newSession.zaiModel.v1",
+    levelKey: "lite.newSession.zaiReasoning.v1",
+  },
+};
+
+function storedCodexChoice(key: string, values: readonly string[], fallback: string) {
+  const stored = localStorage.getItem(key);
+  return stored && values.includes(stored) ? stored : fallback;
+}
+
+// Every choice the panels remember, keyed by the storage key that holds it.
+function storedCodexChoices() {
+  return Object.fromEntries(
+    Object.entries(CODEX_PANELS).flatMap(([, panel]) => [
+      [
+        panel.modelKey,
+        storedCodexChoice(
+          panel.modelKey,
+          panel.models.map(({ value }) => value),
+          panel.models[0].value,
+        ),
+      ],
+      [panel.levelKey, storedCodexChoice(panel.levelKey, panel.levels, panel.level)],
+    ]),
+  );
+}
 
 function remoteUnsupported(remote: boolean, choice: (typeof SESSION_CHOICES)[number]) {
   return remote && choice.agent === "codex" && choice.provider !== "openai";
@@ -112,14 +160,11 @@ export function NewSessionDialog({
     const stored = localStorage.getItem(CHOICE_KEY);
     return SESSION_CHOICES.find((option) => option.id === stored)?.id ?? SESSION_CHOICES[0].id;
   });
-  const [deepseekModel, setDeepseekModel] = useState<DeepSeekModel>(() => {
-    const stored = localStorage.getItem(DEEPSEEK_MODEL_KEY);
-    return DEEPSEEK_MODELS.find(({ value }) => value === stored)?.value ?? DEEPSEEK_MODELS[0].value;
-  });
-  const [deepseekReasoning, setDeepseekReasoning] = useState<DeepSeekReasoning>(() => {
-    const stored = localStorage.getItem(DEEPSEEK_REASONING_KEY);
-    return DEEPSEEK_REASONING.find((effort) => effort === stored) ?? "high";
-  });
+  const [codexChoices, setCodexChoices] = useState(storedCodexChoices);
+  function chooseCodex(key: string, value: string) {
+    localStorage.setItem(key, value);
+    setCodexChoices((current) => ({ ...current, [key]: value }));
+  }
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
   const [remoteSelected, setRemoteSelected] = useState(false);
@@ -326,12 +371,13 @@ export function NewSessionDialog({
         }
       }
       const name = title?.trim() ?? "";
+      const panel = choice.provider ? CODEX_PANELS[choice.provider] : undefined;
       onCreate({
         id: crypto.randomUUID(),
         agent: choice.agent,
         provider: choice.provider,
-        model: choice.provider === "deepseek" ? deepseekModel : undefined,
-        reasoningEffort: choice.provider === "deepseek" ? deepseekReasoning : undefined,
+        model: panel ? codexChoices[panel.modelKey] : undefined,
+        reasoningEffort: panel ? codexChoices[panel.levelKey] : undefined,
         cwd: folder.path,
         host: folder.host ?? undefined,
         rootId: folder.id,
@@ -600,7 +646,9 @@ export function NewSessionDialog({
                 {SESSION_CHOICES.map((option) => {
                   const active = choiceId === option.id;
                   const unsupported = remoteUnsupported(remote, option);
-                  const deepseek = option.id === "deepseek";
+                  const panel = CODEX_PANELS[option.id];
+                  const chosenModel = panel ? codexChoices[panel.modelKey] : "";
+                  const chosenLevel = panel ? codexChoices[panel.levelKey] : "";
                   const state = availability[option.id];
                   const update = updates[option.agent];
                   const managed = option.agent !== "shell" && state && !state.installable;
@@ -619,13 +667,13 @@ export function NewSessionDialog({
                   return (
                     <div
                       key={option.id}
-                      className={`relative min-w-0 ${active && deepseek ? "rounded-lg bg-secondary" : ""}`}
+                      className={`relative min-w-0 ${active && panel ? "rounded-lg bg-secondary" : ""}`}
                     >
                       <Button
                         type="button"
                         size="lg"
-                        variant={active && !deepseek ? "secondary" : active ? "ghost" : "outline"}
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && deepseek ? "rounded-b-none" : ""}`}
+                        variant={active && !panel ? "secondary" : active ? "ghost" : "outline"}
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && panel ? "rounded-b-none" : ""}`}
                         aria-pressed={active}
                         disabled={Boolean(installing) || unsupported}
                         title={"note" in option ? option.note : sessionLabel(option)}
@@ -663,28 +711,25 @@ export function NewSessionDialog({
                           )}
                         </div>
                       </Button>
-                      {active && deepseek ? (
+                      {active && panel ? (
                         <div className="space-y-1 border-t px-3 py-2">
                           <div className="flex items-center">
-                            <span id="deepseek-model-label" className="text-xs font-medium text-muted-foreground">
+                            <span id="codex-model-label" className="text-xs font-medium text-muted-foreground">
                               Model
                             </span>
                             <fieldset
                               className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
-                              aria-labelledby="deepseek-model-label"
-                              disabled
+                              aria-labelledby="codex-model-label"
+                              disabled={panel.modelDisabled}
                             >
-                              {DEEPSEEK_MODELS.map((model) => (
+                              {panel.models.map((model) => (
                                 <Button
                                   key={model.value}
                                   type="button"
                                   size="xs"
-                                  variant={deepseekModel === model.value ? "secondary" : "ghost"}
-                                  aria-pressed={deepseekModel === model.value}
-                                  onClick={() => {
-                                    localStorage.setItem(DEEPSEEK_MODEL_KEY, model.value);
-                                    setDeepseekModel(model.value);
-                                  }}
+                                  variant={chosenModel === model.value ? "secondary" : "ghost"}
+                                  aria-pressed={chosenModel === model.value}
+                                  onClick={() => chooseCodex(panel.modelKey, model.value)}
                                 >
                                   {model.label}
                                 </Button>
@@ -692,25 +737,22 @@ export function NewSessionDialog({
                             </fieldset>
                           </div>
                           <div className="flex items-center">
-                            <span id="deepseek-reasoning-label" className="text-xs font-medium text-muted-foreground">
+                            <span id="codex-reasoning-label" className="text-xs font-medium text-muted-foreground">
                               Thinking
                             </span>
                             <fieldset
                               className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
-                              aria-labelledby="deepseek-reasoning-label"
+                              aria-labelledby="codex-reasoning-label"
                             >
-                              {DEEPSEEK_REASONING.map((effort) => (
+                              {panel.levels.map((effort) => (
                                 <Button
                                   key={effort}
                                   type="button"
                                   size="xs"
-                                  variant={deepseekReasoning === effort ? "secondary" : "ghost"}
+                                  variant={chosenLevel === effort ? "secondary" : "ghost"}
                                   className="capitalize"
-                                  aria-pressed={deepseekReasoning === effort}
-                                  onClick={() => {
-                                    localStorage.setItem(DEEPSEEK_REASONING_KEY, effort);
-                                    setDeepseekReasoning(effort);
-                                  }}
+                                  aria-pressed={chosenLevel === effort}
+                                  onClick={() => chooseCodex(panel.levelKey, effort)}
                                 >
                                   {effort}
                                 </Button>
@@ -724,7 +766,7 @@ export function NewSessionDialog({
                           type="button"
                           size="icon"
                           variant="outline"
-                          className={`absolute right-2 ${active && deepseek ? "top-3" : "top-1/2 -mt-4"}`}
+                          className={`absolute right-2 ${active && panel ? "top-3" : "top-1/2 -mt-4"}`}
                           tooltip={
                             busy
                               ? `${action.working} ${sessionLabel(option)}…`

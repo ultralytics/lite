@@ -34,6 +34,16 @@ export const AUTH_PROVIDERS = {
     signIn: false,
     note: "Runs Codex against DeepSeek. Usage bills DeepSeek, not OpenAI.",
   },
+  zai: {
+    id: "zai",
+    agent: "codex",
+    provider: "zai",
+    label: "Z.ai",
+    variable: "ZAI_API_KEY",
+    configured: "Using API key",
+    signIn: false,
+    note: "Runs Codex against Z.ai. Usage bills Z.ai, not OpenAI.",
+  },
   openrouter: {
     id: "openrouter",
     agent: "codex",

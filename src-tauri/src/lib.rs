@@ -45,7 +45,6 @@ const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const DEEPSEEK_MODEL: &str = "deepseek-flash";
 const CODEX_NOTIFICATION_ARGS: [&str; 6] = [
     "-c",
     r#"tui.notification_method="osc9""#,
@@ -54,10 +53,11 @@ const CODEX_NOTIFICATION_ARGS: [&str; 6] = [
     "-c",
     r#"tui.terminal_title=["session-id","thread"]"#,
 ];
-const SUPPORTED_KEYS: [&str; 6] = [
+const SUPPORTED_KEYS: [&str; 7] = [
     "claude",
     "codex",
     "deepseek",
+    "zai",
     "openrouter",
     "gemini",
     "kimi",
@@ -239,24 +239,89 @@ fn set_attention_badge(app: AppHandle, count: u32) -> Result<(), String> {
         .map_err(|error| error.to_string())
 }
 
+// A model a provider serves and Codex has no catalog entry for. Codex warns about, and guesses the
+// limits of, every model it cannot find, so these entries travel to Codex as a catalog file.
+#[derive(Clone, Copy)]
+struct CodexModel {
+    slug: &'static str,
+    display_name: &'static str,
+    description: &'static str,
+    context_window: u32,
+    images: bool,
+    // How the provider measures the output it truncates, either "tokens" or "bytes".
+    truncation: &'static str,
+}
+
 #[derive(Clone, Copy)]
 struct CodexProvider {
     id: &'static str,
     name: &'static str,
     base_url: &'static str,
     env_key: &'static str,
+    // The model and thinking level a launch uses when the user has chosen neither.
     model: &'static str,
+    reasoning: &'static str,
+    levels: &'static [&'static str],
+    models: &'static [CodexModel],
     setup_url: &'static str,
 }
 
-const CODEX_PROVIDERS: [CodexProvider; 2] = [
+const CODEX_PROVIDERS: [CodexProvider; 3] = [
     CodexProvider {
         id: "deepseek",
         name: "DeepSeek",
         base_url: "https://api.deepseek.com/",
         env_key: "DEEPSEEK_API_KEY",
-        model: DEEPSEEK_MODEL,
+        model: "deepseek-flash",
+        reasoning: "high",
+        levels: &["low", "high", "max"],
+        models: &[
+            CodexModel {
+                slug: "deepseek-flash",
+                display_name: "DeepSeek-V4.1-Flash",
+                description: "DeepSeek V4.1 Flash, served by the DeepSeek API.",
+                context_window: 1_048_576,
+                images: true,
+                truncation: "tokens",
+            },
+            CodexModel {
+                slug: "deepseek-v4-pro",
+                display_name: "DeepSeek-V4-Pro",
+                description: "DeepSeek V4 Pro, served by the DeepSeek API.",
+                context_window: 1_048_576,
+                images: false,
+                truncation: "tokens",
+            },
+        ],
         setup_url: "https://api-docs.deepseek.com/quick_start/agent_integrations/codex",
+    },
+    CodexProvider {
+        id: "zai",
+        name: "Z.ai",
+        base_url: "https://api.z.ai/api/v1",
+        env_key: "ZAI_API_KEY",
+        model: "glm-5.3",
+        reasoning: "max",
+        levels: &["low", "high", "max"],
+        models: &[
+            CodexModel {
+                slug: "glm-5.3",
+                display_name: "GLM-5.3",
+                description: "Z.ai GLM-5.3, served by the Z.ai API.",
+                context_window: 1_048_576,
+                images: false,
+                truncation: "bytes",
+            },
+            CodexModel {
+                slug: "glm-5.3-flash",
+                display_name: "GLM-5.3-Flash",
+                description: "Z.ai GLM-5.3 Flash, served by the Z.ai API.",
+                context_window: 1_048_576,
+                images: true,
+                truncation: "bytes",
+            },
+        ],
+        setup_url: "https://docs.z.ai/devpack/tool/codex",
     },
     CodexProvider {
         id: "openrouter",
@@ -264,6 +329,9 @@ const CODEX_PROVIDERS: [CodexProvider; 2] = [
         base_url: "https://openrouter.ai/api/v1",
         env_key: "OPENROUTER_API_KEY",
         model: "~openai/gpt-latest",
+        reasoning: "",
+        levels: &[],
+        models: &[],
         setup_url: "https://openrouter.ai/docs/cookbook/coding-agents/codex-cli",
     },
 ];
@@ -2677,13 +2745,14 @@ fn refresh_user_path() {
 // CLIs already do with their own credentials, and it survives updates because the updater replaces the
 // bundle and not the data directory. A key is handed to a session through the environment variable its
 // CLI already reads, so nothing is copied into provider configuration.
-// Codex only knows the models in its own catalog, and it warns and guesses the limits for any other
-// one. It reads a replacement catalog from a file, so the bundled catalog is read back and the DeepSeek
-// model appended to it: cloning an entry keeps whatever shape that Codex version expects, and keeping
-// the built-in models leaves the rest of Codex working. The bundled catalog is asked for by name so a
-// launch never waits on Codex refreshing its models over the network. Every failure here returns None
-// and leaves the warning in place, because a catalog Codex cannot parse would stop it from starting.
-fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
+// Codex only knows the models in its own catalog, and it warns about and guesses the limits of any
+// other one. It reads a replacement catalog from a file, so the bundled catalog is read back and this
+// provider's models appended to it: cloning an entry keeps whatever shape that Codex version expects,
+// and keeping the built-in models leaves the rest of Codex working. The bundled catalog is asked for
+// by name so a launch never waits on Codex refreshing its models over the network. Every failure here
+// returns None and leaves the warning in place, because a catalog Codex cannot parse would stop it
+// from starting.
+fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
     let mut probe = Command::new(resolve_executable("codex")?);
     probe.args(["debug", "models", "--bundled"]);
     // The CLI is a Node launcher, so without the user PATH its shebang cannot find Node.
@@ -2698,41 +2767,52 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
     let models = catalog.get_mut("models")?.as_array_mut()?;
     let template = models.first()?.clone();
     let mut changed = false;
-    for (slug, display_name, description) in [
-        (
-            DEEPSEEK_MODEL,
-            "DeepSeek-V4.1-Flash",
-            "DeepSeek V4.1 Flash, served by the DeepSeek API.",
-        ),
-        (
-            "deepseek-v4-pro",
-            "DeepSeek-V4-Pro",
-            "DeepSeek V4 Pro, served by the DeepSeek API.",
-        ),
-    ] {
+    for model in provider.models {
         if models
             .iter()
-            .any(|model| model.get("slug").and_then(serde_json::Value::as_str) == Some(slug))
+            .any(|entry| entry.get("slug").and_then(serde_json::Value::as_str) == Some(model.slug))
         {
             continue;
         }
-        let mut model = template.clone();
-        let entry = model.as_object_mut()?;
+        let mut entry = template.clone();
+        let fields = entry.as_object_mut()?;
         for (key, value) in [
-            ("slug", serde_json::json!(slug)),
-            ("display_name", serde_json::json!(display_name)),
-            ("description", serde_json::json!(description)),
-            ("context_window", serde_json::json!(1_048_576)),
-            ("max_context_window", serde_json::json!(1_048_576)),
-            ("default_reasoning_level", serde_json::json!("high")),
+            ("slug", serde_json::json!(model.slug)),
+            ("display_name", serde_json::json!(model.display_name)),
+            ("description", serde_json::json!(model.description)),
+            ("context_window", serde_json::json!(model.context_window)),
+            (
+                "max_context_window",
+                serde_json::json!(model.context_window),
+            ),
+            ("effective_context_window_percent", serde_json::json!(95)),
+            (
+                "default_reasoning_level",
+                serde_json::json!(provider.reasoning),
+            ),
             ("visibility", serde_json::json!("list")),
             (
                 "input_modalities",
-                if slug == DEEPSEEK_MODEL {
+                if model.images {
                     serde_json::json!(["text", "image"])
                 } else {
                     serde_json::json!(["text"])
                 },
+            ),
+            (
+                "truncation_policy",
+                serde_json::json!({"mode": model.truncation, "limit": 10000}),
+            ),
+            // How the provider itself declares the tools Codex offers it.
+            ("apply_patch_tool_type", serde_json::json!("freeform")),
+            ("shell_type", serde_json::json!("shell_command")),
+            ("web_search_tool_type", serde_json::json!("text")),
+            ("supports_parallel_tool_calls", serde_json::json!(true)),
+            ("supports_reasoning_summaries", serde_json::json!(true)),
+            ("default_reasoning_summary", serde_json::json!("none")),
+            (
+                "supports_image_detail_original",
+                serde_json::json!(model.images),
             ),
             // Capabilities and cache keys that belong to the model this entry was cloned from.
             ("comp_hash", serde_json::Value::Null),
@@ -2740,20 +2820,15 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
             ("upgrade", serde_json::Value::Null),
             ("tool_mode", serde_json::Value::Null),
             ("multi_agent_version", serde_json::Value::Null),
+            ("multi_agent_reasoning_effort", serde_json::Value::Null),
             ("use_responses_lite", serde_json::json!(false)),
             ("supports_search_tool", serde_json::json!(false)),
-            ("support_verbosity", serde_json::json!(false)),
-            ("default_verbosity", serde_json::Value::Null),
-            (
-                "supports_image_detail_original",
-                serde_json::json!(slug == DEEPSEEK_MODEL),
-            ),
             (
                 "supports_reasoning_summary_parameter",
                 serde_json::json!(false),
             ),
-            ("default_reasoning_summary", serde_json::json!("none")),
-            ("web_search_tool_type", serde_json::json!("text")),
+            ("support_verbosity", serde_json::json!(false)),
+            ("default_verbosity", serde_json::Value::Null),
             (
                 "include_skills_usage_instructions",
                 serde_json::json!(false),
@@ -2763,29 +2838,33 @@ fn deepseek_catalog(app: &AppHandle) -> Option<PathBuf> {
                 serde_json::json!(false),
             ),
             ("include_apps_usage_instructions", serde_json::json!(false)),
-            // DeepSeek documents parallel tool calls, and the entry states that rather than inheriting it.
-            ("supports_parallel_tool_calls", serde_json::json!(true)),
             ("additional_speed_tiers", serde_json::json!([])),
             ("service_tiers", serde_json::json!([])),
         ] {
-            if entry.contains_key(key) {
-                entry.insert(key.to_owned(), value);
+            if fields.contains_key(key) {
+                fields.insert(key.to_owned(), value);
             }
         }
-        // Reasoning levels describe DeepSeek, not the model this entry was cloned from.
-        entry.insert(
+        // Reasoning levels describe the provider, not the model this entry was cloned from.
+        fields.insert(
             "supported_reasoning_levels".to_owned(),
-            serde_json::json!([
-                {"effort": "low", "description": "Fast responses with lighter reasoning"},
-                {"effort": "high", "description": "Greater reasoning depth for complex problems"},
-                {"effort": "max", "description": "Maximum reasoning depth for the hardest problems"},
-            ]),
+            serde_json::Value::Array(
+                provider
+                    .levels
+                    .iter()
+                    .map(|effort| serde_json::json!({"effort": effort, "description": effort}))
+                    .collect(),
+            ),
         );
-        models.push(model);
+        models.push(entry);
         changed = true;
     }
     changed.then_some(())?;
-    let path = app.path().app_data_dir().ok()?.join("codex-models.json");
+    let path = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join(format!("codex-models-{}.json", provider.id));
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).ok()?;
     }
@@ -3071,11 +3150,8 @@ fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
 // Whether Codex's own configuration states something, asked line by line so the file is never parsed
 // and never held in memory. Only section headers and key names are ever looked for; provider
 // credentials in that file are never read.
-fn codex_config_states(app: &AppHandle, stated: impl Fn(&str) -> bool) -> bool {
-    let Ok(home) = codex_home(app) else {
-        return false;
-    };
-    let Ok(file) = fs::File::open(home.join("config.toml")) else {
+fn codex_config_states(path: &Path, stated: impl Fn(&str) -> bool) -> bool {
+    let Ok(file) = fs::File::open(path) else {
         return false;
     };
     BufReader::new(file)
@@ -3085,14 +3161,28 @@ fn codex_config_states(app: &AppHandle, stated: impl Fn(&str) -> bool) -> bool {
 }
 
 fn codex_declares_provider(app: &AppHandle, provider: &str) -> bool {
+    let Ok(home) = codex_home(app) else {
+        return false;
+    };
     let header = format!("[model_providers.{provider}]");
-    codex_config_states(app, |line| line.trim() == header)
+    codex_config_states(&home.join("config.toml"), |line| line.trim() == header)
 }
 
-// A catalog is a replacement rather than a merge, so one the user configured is left to win.
-fn codex_declares_catalog(app: &AppHandle) -> bool {
-    codex_config_states(app, |line| {
-        line.trim_start().starts_with("model_catalog_json")
+// A catalog is a replacement rather than a merge, so one the user configured is left to win. A profile
+// can carry the catalog for a launch that names it, so both files are asked.
+fn codex_declares_catalog(app: &AppHandle, provider: &str) -> bool {
+    let Ok(home) = codex_home(app) else {
+        return false;
+    };
+    [
+        home.join("config.toml"),
+        home.join(format!("{provider}.config.toml")),
+    ]
+    .iter()
+    .any(|path| {
+        codex_config_states(path, |line| {
+            line.trim_start().starts_with("model_catalog_json")
+        })
     })
 }
 
@@ -3305,29 +3395,39 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
             if let Some(provider) = codex_provider(provider) {
                 let key = saved_api_key(app, agent, Some(provider.id)).is_some();
                 let model_selected = model.is_some();
-                let model = if provider.id == "deepseek" {
-                    match model {
-                        Some("deepseek-v4-pro") => "deepseek-v4-pro",
-                        _ => DEEPSEEK_MODEL,
+                let model = match model {
+                    Some(selected)
+                        if provider.models.iter().any(|entry| entry.slug == selected) =>
+                    {
+                        selected
                     }
-                } else {
-                    provider.model
+                    _ => provider.model,
                 };
-                let reasoning_effort = if provider.id == "deepseek" {
-                    match reasoning_effort {
-                        Some("low") => Some("low"),
-                        Some("max") => Some("max"),
-                        Some(_) => Some("high"),
-                        None => None,
-                    }
-                } else {
-                    None
+                // A thinking level this provider does not offer would be rejected or ignored, so an
+                // unknown one falls back to the provider's default.
+                let reasoning_effort = match reasoning_effort {
+                    Some(effort) if provider.levels.contains(&effort) => Some(effort),
+                    Some(_) if !provider.levels.is_empty() => Some(provider.reasoning),
+                    _ => None,
                 };
+                // Without a catalog of its own Codex warns about every model it cannot find and guesses
+                // the limits, so Lite hands over one unless the user has already configured their own. A
+                // provider serving only its own default model has nothing to declare.
+                let catalog = (!provider.models.is_empty()
+                    && !codex_declares_catalog(app, provider.id))
+                .then(|| codex_catalog(app, &provider))
+                .flatten()
+                .map(|catalog| {
+                    // A Windows path is full of backslashes, which TOML reads as escapes.
+                    path_text(&catalog)
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                });
                 if !key && codex_profile_exists(app, provider.id) {
-                    // A profile the user wrote owns the provider and catalog; a model chosen for this
-                    // DeepSeek session still overrides its default without changing the profile.
+                    // A profile the user wrote owns the provider; a model chosen for this session still
+                    // overrides its default, and the catalog, without changing the profile.
                     command.args(["--profile", provider.id]);
-                    if provider.id == "deepseek" && model_selected {
+                    if model_selected {
                         command.args(["-c", &format!("model=\"{model}\"")]);
                     }
                 } else {
@@ -3351,17 +3451,9 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                     }
                     command.args(["-c", &format!("model_provider=\"{}\"", provider.id)]);
                     command.args(["-c", &format!("model=\"{model}\"")]);
-                    if let Some(catalog) = (provider.id == "deepseek"
-                        && !codex_declares_catalog(app))
-                    .then(|| deepseek_catalog(app))
-                    .flatten()
-                    {
-                        // A Windows path is full of backslashes, which TOML reads as escapes.
-                        let catalog = path_text(&catalog)
-                            .replace('\\', "\\\\")
-                            .replace('"', "\\\"");
-                        command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
-                    }
+                }
+                if let Some(catalog) = catalog {
+                    command.args(["-c", &format!("model_catalog_json=\"{catalog}\"")]);
                 }
                 if let Some(reasoning_effort) = reasoning_effort {
                     command.args([
