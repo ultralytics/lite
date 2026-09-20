@@ -257,9 +257,8 @@ struct CodexProvider {
     name: &'static str,
     base_url: &'static str,
     env_key: &'static str,
-    // The model and thinking level a launch uses when the user has chosen neither.
+    // The model a launch uses when the user has chosen none.
     model: &'static str,
-    reasoning: &'static str,
     // Each thinking level Codex offers here and the wording Codex shows beside it, both as the provider
     // itself declares them.
     levels: &'static [(&'static str, &'static str)],
@@ -277,7 +276,6 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         base_url: "https://api.deepseek.com/",
         env_key: "DEEPSEEK_API_KEY",
         model: "deepseek-flash",
-        reasoning: "high",
         levels: &[
             ("low", "Fast responses with lighter reasoning"),
             ("high", "Extra high reasoning depth for complex problems"),
@@ -307,7 +305,6 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         base_url: "https://api.z.ai/api/v1",
         env_key: "ZAI_API_KEY",
         model: "glm-5.3-flash",
-        reasoning: "high",
         levels: &[
             ("low", "Light reasoning"),
             ("high", "Enhanced reasoning"),
@@ -337,7 +334,6 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         base_url: "https://openrouter.ai/api/v1",
         env_key: "OPENROUTER_API_KEY",
         model: "~openai/gpt-latest",
-        reasoning: "",
         levels: &[],
         truncation: "",
         models: &[],
@@ -2792,10 +2788,7 @@ fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
             ("context_window", serde_json::json!(1_048_576)),
             ("max_context_window", serde_json::json!(1_048_576)),
             ("effective_context_window_percent", serde_json::json!(95)),
-            (
-                "default_reasoning_level",
-                serde_json::json!(provider.reasoning),
-            ),
+            ("default_reasoning_level", serde_json::json!("high")),
             ("visibility", serde_json::json!("list")),
             (
                 "input_modalities",
@@ -3415,7 +3408,7 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                     Some(effort) if provider.levels.iter().any(|(level, _)| level == &effort) => {
                         Some(effort)
                     }
-                    Some(_) if !provider.levels.is_empty() => Some(provider.reasoning),
+                    Some(_) if !provider.levels.is_empty() => Some("high"),
                     _ => None,
                 };
                 // A profile the user wrote owns the provider only for a launch that names it, which is a

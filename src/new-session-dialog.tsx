@@ -35,10 +35,9 @@ const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
 // A Codex provider serving several models offers the choice here, remembered per provider so each keeps
 // its own model and thinking level. The catalog Lite hands Codex lists the same models and a level Codex
 // was not told about would be rejected, so both stay in step with it.
+const CODEX_LEVELS = ["low", "high", "max"];
 type CodexPanel = {
   models: readonly { value: string; label: string }[];
-  levels: readonly string[];
-  level: string;
   modelKey: string;
   levelKey: string;
   modelDisabled?: boolean;
@@ -49,8 +48,6 @@ const CODEX_PANELS: Record<string, CodexPanel> = {
       { value: "deepseek-flash", label: "Flash" },
       { value: "deepseek-v4-pro", label: "Pro" },
     ],
-    levels: ["low", "high", "max"],
-    level: "high",
     modelKey: "lite.newSession.deepseekModel.v1",
     levelKey: "lite.newSession.deepseekReasoning.v1",
     modelDisabled: true,
@@ -60,8 +57,6 @@ const CODEX_PANELS: Record<string, CodexPanel> = {
       { value: "glm-5.3-flash", label: "Flash" },
       { value: "glm-5.3", label: "GLM-5.3" },
     ],
-    levels: ["low", "high", "max"],
-    level: "high",
     modelKey: "lite.newSession.zaiModel.v1",
     levelKey: "lite.newSession.zaiReasoning.v1",
   },
@@ -84,7 +79,7 @@ function storedCodexChoices() {
           panel.models[0].value,
         ),
       ],
-      [panel.levelKey, storedCodexChoice(panel.levelKey, panel.levels, panel.level)],
+      [panel.levelKey, storedCodexChoice(panel.levelKey, CODEX_LEVELS, "high")],
     ]),
   );
 }
@@ -741,7 +736,7 @@ export function NewSessionDialog({
                               className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
                               aria-labelledby="codex-reasoning-label"
                             >
-                              {panel.levels.map((effort) => (
+                              {CODEX_LEVELS.map((effort) => (
                                 <Button
                                   key={effort}
                                   type="button"
