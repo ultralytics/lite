@@ -147,7 +147,7 @@ const ClaudeLogomark = ({ className = "size-4" }: { className?: string }) => (
 const ZaiLogomark = ({ className = "size-4" }: { className?: string }) => (
   <svg className={className} viewBox="0 0 30 30" role="img" aria-label="Z.ai" fill="currentColor">
     <title>Z.ai</title>
-    <rect x="1.49" y="1.49" width="27.02" height="27.02" rx="4" stroke="var(--background)" strokeWidth="0.63" />
+    <rect x="1.49" y="1.49" width="27.02" height="27.02" rx="4" />
     <path
       fill="var(--background)"
       d="m15.47 7.1-1.3 1.85c-.2.29-.54.47-.9.47h-7.1V7.09zm8.83 0L13.14 22.91H5.7L16.86 7.1Zm-9.77 15.81 1.31-1.86c.2-.29.54-.47.9-.47h7.09v2.33Z"

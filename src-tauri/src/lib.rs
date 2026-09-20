@@ -244,10 +244,7 @@ struct CodexModel {
     slug: &'static str,
     display_name: &'static str,
     description: &'static str,
-    context_window: u32,
     images: bool,
-    // How the provider measures the output it truncates, either "tokens" or "bytes".
-    truncation: &'static str,
 }
 
 #[derive(Clone, Copy)]
@@ -266,6 +263,8 @@ struct CodexProvider {
     // Each thinking level Codex offers here and the wording Codex shows beside it, both as the provider
     // itself declares them.
     levels: &'static [(&'static str, &'static str)],
+    // How the provider measures the output it truncates, either "tokens" or "bytes".
+    truncation: &'static str,
     models: &'static [CodexModel],
     setup_url: &'static str,
 }
@@ -284,22 +283,19 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
             ("high", "Extra high reasoning depth for complex problems"),
             ("max", "Maximum reasoning depth for the hardest problems"),
         ],
+        truncation: "tokens",
         models: &[
             CodexModel {
                 slug: "deepseek-flash",
                 display_name: "DeepSeek-V4.1-Flash",
                 description: "DeepSeek V4.1 Flash, served by the DeepSeek API.",
-                context_window: 1_048_576,
                 images: true,
-                truncation: "tokens",
             },
             CodexModel {
                 slug: "deepseek-v4-pro",
                 display_name: "DeepSeek-V4-Pro",
                 description: "DeepSeek V4 Pro, served by the DeepSeek API.",
-                context_window: 1_048_576,
                 images: false,
-                truncation: "tokens",
             },
         ],
         setup_url: "https://api-docs.deepseek.com/quick_start/agent_integrations/codex",
@@ -317,22 +313,19 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
             ("high", "Enhanced reasoning"),
             ("max", "Deep reasoning"),
         ],
+        truncation: "bytes",
         models: &[
             CodexModel {
                 slug: "glm-5.3",
                 display_name: "GLM-5.3",
                 description: "Z.ai GLM-5.3, served by the Z.ai API.",
-                context_window: 1_048_576,
                 images: false,
-                truncation: "bytes",
             },
             CodexModel {
                 slug: "glm-5.3-flash",
                 display_name: "GLM-5.3-Flash",
                 description: "Z.ai GLM-5.3 Flash, served by the Z.ai API.",
-                context_window: 1_048_576,
                 images: true,
-                truncation: "bytes",
             },
         ],
         setup_url: "https://docs.z.ai/devpack/tool/codex",
@@ -346,6 +339,7 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         model: "~openai/gpt-latest",
         reasoning: "",
         levels: &[],
+        truncation: "",
         models: &[],
         setup_url: "https://openrouter.ai/docs/cookbook/coding-agents/codex-cli",
     },
@@ -2795,11 +2789,8 @@ fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
             ("slug", serde_json::json!(model.slug)),
             ("display_name", serde_json::json!(model.display_name)),
             ("description", serde_json::json!(model.description)),
-            ("context_window", serde_json::json!(model.context_window)),
-            (
-                "max_context_window",
-                serde_json::json!(model.context_window),
-            ),
+            ("context_window", serde_json::json!(1_048_576)),
+            ("max_context_window", serde_json::json!(1_048_576)),
             ("effective_context_window_percent", serde_json::json!(95)),
             (
                 "default_reasoning_level",
@@ -2816,7 +2807,7 @@ fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
             ),
             (
                 "truncation_policy",
-                serde_json::json!({"mode": model.truncation, "limit": 10000}),
+                serde_json::json!({"mode": provider.truncation, "limit": 10000}),
             ),
             // How the provider itself declares the tools Codex offers it.
             ("apply_patch_tool_type", serde_json::json!("freeform")),

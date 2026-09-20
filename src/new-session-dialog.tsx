@@ -41,7 +41,6 @@ type CodexPanel = {
   level: string;
   modelKey: string;
   levelKey: string;
-  // A chooser Codex cannot act on is shown read-only rather than left out.
   modelDisabled?: boolean;
 };
 const CODEX_PANELS: Record<string, CodexPanel> = {
@@ -371,7 +370,7 @@ export function NewSessionDialog({
         }
       }
       const name = title?.trim() ?? "";
-      const panel = choice.provider ? CODEX_PANELS[choice.provider] : undefined;
+      const panel = CODEX_PANELS[choice.id];
       onCreate({
         id: crypto.randomUUID(),
         agent: choice.agent,
