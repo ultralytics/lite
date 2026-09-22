@@ -1152,7 +1152,7 @@ function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void;
           nothing leaves this computer.
         </p>
       </div>
-      <div className="grid w-full max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
+      <div className="grid w-full max-w-2xl grid-cols-2 gap-2 sm:grid-cols-3">
         {SESSION_CHOICES.map((option) => (
           <Item
             key={option.id}
