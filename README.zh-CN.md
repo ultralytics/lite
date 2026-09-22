@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI、[DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)、[Z.ai](https://docs.z.ai/devpack/tool/codex) 或 [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli) 的 [Codex](https://learn.chatgpt.com/docs/codex/cli)、[Gemini CLI](https://google-gemini.github.io/gemini-cli/)、[Kimi Code](https://www.kimi.com/code)、[Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
+Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI、[DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)、[Z.ai](https://docs.z.ai/devpack/tool/codex)、[小米 MiMo](https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration) 或 [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli) 的 [Codex](https://learn.chatgpt.com/docs/codex/cli)、[Gemini CLI](https://google-gemini.github.io/gemini-cli/)、[Kimi Code](https://www.kimi.com/code)、[Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
 
 <div align="center">
   <br>
@@ -22,7 +22,7 @@ Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claud
 ## ✨ 功能
 
 - 并排运行 Claude Code、Codex、Gemini CLI、Kimi Code、Qwen Code 和 shell 会话
-- 通过 Codex 使用 DeepSeek V4.1 Flash、Z.ai GLM-5.3 或 OpenRouter，而无需更改默认的 Codex provider
+- 通过 Codex 使用 DeepSeek V4.1 Flash、Z.ai GLM-5.3、小米 MiMo-V2.6 或 OpenRouter，而无需更改默认的 Codex provider
 - 重启或关闭后有八秒钟可以撤销，之后 Lite 才会停止终端
 - 关闭 Lite 或重启电脑后，会话标签自动恢复
 - 每个 provider 只需登录一次，之后复用其已有的本地凭据
@@ -79,7 +79,7 @@ chmod +x Lite_*_linux_amd64.AppImage
 
 在 Lite 中打开每个 provider 并完成一次常规登录。每个 CLI 都把凭据保存在自己的本地存储中，因此之后的 Lite 会话会复用同一份认证信息。Lite 从不读取或复制这些存储。当某个 CLI 缺失时，新建会话对话框会提示你，并给出对应的安装指引。
 
-如果你更愿意使用 API key，打开 **设置 › API Keys**，为每个 provider 粘贴一个 key。Lite 会把它们保存在自己数据目录下仅属主可读的文件中——与 Codex 和 Kimi 保存自身凭据的方式一致——并通过该 CLI 本来就会读取的环境变量（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`ZAI_API_KEY`、`OPENROUTER_API_KEY`、`GEMINI_API_KEY` 或 `MOONSHOT_API_KEY`）把 key 传给会话。Qwen Code 自行负责其区域 provider 与认证设置。不会写入任何 provider 配置文件；删除 key 会在下次启动时生效；应用更新也不会丢失该文件，因为更新程序替换的是应用包而不是你的数据。
+如果你更愿意使用 API key，打开 **设置 › API Keys**，为每个 provider 粘贴一个 key。Lite 会把它们保存在自己数据目录下仅属主可读的文件中——与 Codex 和 Kimi 保存自身凭据的方式一致——并通过该 CLI 本来就会读取的环境变量（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`ZAI_API_KEY`、`MIMO_API_KEY`、`OPENROUTER_API_KEY`、`GEMINI_API_KEY` 或 `MOONSHOT_API_KEY`）把 key 传给会话。Qwen Code 自行负责其区域 provider 与认证设置。不会写入任何 provider 配置文件；删除 key 会在下次启动时生效；应用更新也不会丢失该文件，因为更新程序替换的是应用包而不是你的数据。
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/d3ccbfcf-bf4c-498a-8f7f-f0a134a90e92" width="100%" alt="在 Lite 中保存 provider API key">
@@ -100,7 +100,9 @@ experimental_bearer_token = "<你的 DeepSeek API key>"
 
 请不要写入 `preferred_auth_method` 和 `forced_login_method`。Codex 会全局应用这两项，一旦设置，下次运行时你会被登出 ChatGPT。Lite 只在每次启动时选择 DeepSeek provider，因此你的默认 Codex provider 和已有的 OpenAI 会话都不受影响，Lite 也不会读取或保存 DeepSeek key。
 
-**Codex · Z.ai** 同样通过 Z.ai 的 Responses API 运行 GLM-5.3 与 GLM-5.3 Flash：在 Lite 中保存 Z.ai key，或者自行配置一个 `ZAI` provider —— `base_url = "https://api.z.ai/api/v1"`、`wire_api = "responses"`，并与 `model = "glm-5.3"` 放在一起。Codex 自带 catalog 中并没有 DeepSeek 与 Z.ai 的模型，因此 Lite 还会把一份基于内置 catalog 生成的模型列表交给 Codex：模型会带上正确的上下文窗口、推理等级和工具支持，而不是只得到一条元数据警告；你自己配置的 `model_catalog_json` 不会被覆盖。
+**Codex · Z.ai** 同样通过 Z.ai 的 Responses API 运行 GLM-5.3 与 GLM-5.3 Flash：在 Lite 中保存 Z.ai key，或者自行配置一个 `ZAI` provider —— `base_url = "https://api.z.ai/api/v1"`、`wire_api = "responses"`，并与 `model = "glm-5.3"` 放在一起。
+
+**Codex · 小米 MiMo** 通过 MiMo 的 Responses API 运行 MiMo-V2.6-Flash 与 MiMo-V2.6-Pro：在 Lite 中保存 MiMo key，或者自行配置一个 `mimo` provider —— `base_url = "https://api.xiaomimimo.com/v1"`、`wire_api = "responses"`，并与 `model = "mimo-v2.6-pro"` 放在一起。Codex 自带 catalog 中并没有这些 provider 所提供的模型，因此 Lite 还会把一份基于内置 catalog 生成的模型列表交给 Codex：模型会带上正确的上下文窗口、推理等级和工具支持，而不是只得到一条元数据警告；你自己配置的 `model_catalog_json` 不会被覆盖。
 
 选择一个项目文件夹，创建会话，然后开始工作。Lite 只保存恢复标签所需的本地元数据；provider 的对话历史仍归 provider CLI 所有。
 

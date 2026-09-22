@@ -44,6 +44,16 @@ export const AUTH_PROVIDERS = {
     signIn: false,
     note: "Runs Codex against Z.ai. Usage bills Z.ai, not OpenAI.",
   },
+  mimo: {
+    id: "mimo",
+    agent: "codex",
+    provider: "mimo",
+    label: "Xiaomi MiMo",
+    variable: "MIMO_API_KEY",
+    configured: "Using API key",
+    signIn: false,
+    note: "Runs Codex against Xiaomi MiMo. Usage bills Xiaomi, not OpenAI.",
+  },
   openrouter: {
     id: "openrouter",
     agent: "codex",

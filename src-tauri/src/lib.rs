@@ -53,11 +53,12 @@ const CODEX_NOTIFICATION_ARGS: [&str; 6] = [
     "-c",
     r#"tui.terminal_title=["session-id","thread"]"#,
 ];
-const SUPPORTED_KEYS: [&str; 7] = [
+const SUPPORTED_KEYS: [&str; 8] = [
     "claude",
     "codex",
     "deepseek",
     "zai",
+    "mimo",
     "openrouter",
     "gemini",
     "kimi",
@@ -264,11 +265,16 @@ struct CodexProvider {
     levels: &'static [(&'static str, &'static str)],
     // How the provider measures the output it truncates, either "tokens" or "bytes".
     truncation: &'static str,
+    // The tool surface the provider declares: the shell tool Codex offers it, the tool mode it accepts,
+    // and whether it needs the trimmed Responses shape.
+    shell_type: &'static str,
+    tool_mode: Option<&'static str>,
+    responses_lite: bool,
     models: &'static [CodexModel],
     setup_url: &'static str,
 }
 
-const CODEX_PROVIDERS: [CodexProvider; 3] = [
+const CODEX_PROVIDERS: [CodexProvider; 4] = [
     CodexProvider {
         id: "deepseek",
         codex_key: "deepseek",
@@ -282,6 +288,9 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
             ("max", "Maximum reasoning depth for the hardest problems"),
         ],
         truncation: "tokens",
+        shell_type: "shell_command",
+        tool_mode: None,
+        responses_lite: false,
         models: &[
             CodexModel {
                 slug: "deepseek-flash",
@@ -311,6 +320,9 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
             ("max", "Deep reasoning"),
         ],
         truncation: "bytes",
+        shell_type: "shell_command",
+        tool_mode: None,
+        responses_lite: false,
         models: &[
             CodexModel {
                 slug: "glm-5.3",
@@ -328,6 +340,43 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         setup_url: "https://docs.z.ai/devpack/tool/codex",
     },
     CodexProvider {
+        id: "mimo",
+        codex_key: "mimo",
+        name: "Xiaomi MiMo",
+        base_url: "https://api.xiaomimimo.com/v1",
+        env_key: "MIMO_API_KEY",
+        model: "mimo-v2.6-flash",
+        levels: &[
+            ("none", "No extra reasoning for faster responses"),
+            ("low", "Fast responses with lighter reasoning"),
+            (
+                "medium",
+                "Balances speed and reasoning depth for everyday tasks",
+            ),
+            ("high", "Greater reasoning depth for complex problems"),
+        ],
+        truncation: "tokens",
+        // MiMo drives its tools through code and rejects custom tools outside the lite Responses shape.
+        shell_type: "unified_exec",
+        tool_mode: Some("code_mode_only"),
+        responses_lite: true,
+        models: &[
+            CodexModel {
+                slug: "mimo-v2.6-flash",
+                display_name: "MiMo-V2.6-Flash",
+                description: "Xiaomi MiMo-V2.6-Flash, served by the MiMo API.",
+                images: true,
+            },
+            CodexModel {
+                slug: "mimo-v2.6-pro",
+                display_name: "MiMo-V2.6-Pro",
+                description: "Xiaomi MiMo-V2.6-Pro, served by the MiMo API.",
+                images: true,
+            },
+        ],
+        setup_url: "https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration",
+    },
+    CodexProvider {
         id: "openrouter",
         codex_key: "openrouter",
         name: "OpenRouter",
@@ -336,6 +385,9 @@ const CODEX_PROVIDERS: [CodexProvider; 3] = [
         model: "~openai/gpt-latest",
         levels: &[],
         truncation: "",
+        shell_type: "",
+        tool_mode: None,
+        responses_lite: false,
         models: &[],
         setup_url: "https://openrouter.ai/docs/cookbook/coding-agents/codex-cli",
     },
@@ -2804,9 +2856,8 @@ fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
             ),
             // How the provider itself declares the tools Codex offers it.
             ("apply_patch_tool_type", serde_json::json!("freeform")),
-            ("shell_type", serde_json::json!("shell_command")),
+            ("shell_type", serde_json::json!(provider.shell_type)),
             ("web_search_tool_type", serde_json::json!("text")),
-            ("supports_parallel_tool_calls", serde_json::json!(true)),
             ("supports_reasoning_summaries", serde_json::json!(true)),
             ("default_reasoning_summary", serde_json::json!("none")),
             (
@@ -2817,10 +2868,13 @@ fn codex_catalog(app: &AppHandle, provider: &CodexProvider) -> Option<PathBuf> {
             ("comp_hash", serde_json::Value::Null),
             ("availability_nux", serde_json::Value::Null),
             ("upgrade", serde_json::Value::Null),
-            ("tool_mode", serde_json::Value::Null),
+            ("tool_mode", serde_json::json!(provider.tool_mode)),
             ("multi_agent_version", serde_json::Value::Null),
             ("multi_agent_reasoning_effort", serde_json::Value::Null),
-            ("use_responses_lite", serde_json::json!(false)),
+            (
+                "use_responses_lite",
+                serde_json::json!(provider.responses_lite),
+            ),
             ("supports_search_tool", serde_json::json!(false)),
             (
                 "supports_reasoning_summary_parameter",

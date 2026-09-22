@@ -33,11 +33,11 @@ const NAME_KEY = "lite.newSession.name.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
 // A Codex provider serving several models offers the choice here, remembered per provider so each keeps
-// its own model and thinking level. The catalog Lite hands Codex lists the same models and a level Codex
-// was not told about would be rejected, so both stay in step with it.
-const CODEX_LEVELS = ["low", "high", "max"];
+// its own model and thinking level. The catalog Lite hands Codex lists the same models and every level a
+// provider declares, so a panel offers a level only if that catalog also carries it.
 type CodexPanel = {
   models: readonly { value: string; label: string }[];
+  levels: readonly string[];
   modelKey: string;
   levelKey: string;
   modelDisabled?: boolean;
@@ -48,6 +48,7 @@ const CODEX_PANELS: Record<string, CodexPanel> = {
       { value: "deepseek-flash", label: "Flash" },
       { value: "deepseek-v4-pro", label: "Pro" },
     ],
+    levels: ["low", "high", "max"],
     modelKey: "lite.newSession.deepseekModel.v1",
     levelKey: "lite.newSession.deepseekReasoning.v1",
     modelDisabled: true,
@@ -57,8 +58,18 @@ const CODEX_PANELS: Record<string, CodexPanel> = {
       { value: "glm-5.3-flash", label: "Flash" },
       { value: "glm-5.3", label: "GLM-5.3" },
     ],
+    levels: ["low", "high", "max"],
     modelKey: "lite.newSession.zaiModel.v1",
     levelKey: "lite.newSession.zaiReasoning.v1",
+  },
+  mimo: {
+    models: [
+      { value: "mimo-v2.6-flash", label: "Flash" },
+      { value: "mimo-v2.6-pro", label: "Pro" },
+    ],
+    levels: ["low", "medium", "high"],
+    modelKey: "lite.newSession.mimoModel.v1",
+    levelKey: "lite.newSession.mimoReasoning.v1",
   },
 };
 
@@ -79,7 +90,7 @@ function storedCodexChoices() {
           panel.models[0].value,
         ),
       ],
-      [panel.levelKey, storedCodexChoice(panel.levelKey, CODEX_LEVELS, "high")],
+      [panel.levelKey, storedCodexChoice(panel.levelKey, panel.levels, "high")],
     ]),
   );
 }
@@ -736,7 +747,7 @@ export function NewSessionDialog({
                               className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
                               aria-labelledby="codex-reasoning-label"
                             >
-                              {CODEX_LEVELS.map((effort) => (
+                              {panel.levels.map((effort) => (
                                 <Button
                                   key={effort}
                                   type="button"

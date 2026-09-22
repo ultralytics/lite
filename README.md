@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli) on OpenAI, [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), [Z.ai](https://docs.z.ai/devpack/tool/codex), or [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli), [Gemini CLI](https://google-gemini.github.io/gemini-cli/), [Kimi Code](https://www.kimi.com/code), [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
+Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli) on OpenAI, [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), [Z.ai](https://docs.z.ai/devpack/tool/codex), [Xiaomi MiMo](https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration), or [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli), [Gemini CLI](https://google-gemini.github.io/gemini-cli/), [Kimi Code](https://www.kimi.com/code), [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
 
 <div align="center">
   <br>
@@ -22,7 +22,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 ## ✨ Features
 
 - Run Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and shell sessions side by side
-- Run Codex against DeepSeek V4.1 Flash, Z.ai GLM-5.3, or OpenRouter, without changing your default Codex provider
+- Run Codex against DeepSeek V4.1 Flash, Z.ai GLM-5.3, Xiaomi MiMo-V2.6, or OpenRouter, without changing your default Codex provider
 - Resume session tabs automatically after closing Lite or restarting your computer
 - Undo a restart or close for eight seconds before Lite stops the terminal
 - Authenticate once with each provider and reuse its existing local credentials
@@ -83,7 +83,7 @@ Install the provider CLIs you want to use:
 
 Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
 
-If you would rather use API keys, open **Settings › API Keys** and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
+If you would rather use API keys, open **Settings › API Keys** and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `MIMO_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
 <div align="center">
   <img src="https://github.com/user-attachments/assets/d3ccbfcf-bf4c-498a-8f7f-f0a134a90e92" width="100%" alt="Saving provider API keys in Lite">
@@ -104,7 +104,9 @@ experimental_bearer_token = "<your DeepSeek API key>"
 
 Leave `preferred_auth_method` and `forced_login_method` out. Codex applies those globally, and setting them signs you out of ChatGPT the next time it runs. Lite selects the DeepSeek provider per launch, so your default Codex provider and existing OpenAI sessions are untouched, and it never reads or stores the DeepSeek key.
 
-**Codex · Z.ai** does the same with GLM-5.3 and GLM-5.3 Flash over Z.ai's Responses API: save a Z.ai key in Lite, or configure a `ZAI` Codex provider with `base_url = "https://api.z.ai/api/v1"` and `wire_api = "responses"` beside `model = "glm-5.3"`. Codex ships no entry for DeepSeek's or Z.ai's models, so Lite also hands it a catalog built from the bundled one — the models then carry the right context window, reasoning levels, and tool support instead of a metadata warning, and a `model_catalog_json` you configured yourself is left alone.
+**Codex · Z.ai** does the same with GLM-5.3 and GLM-5.3 Flash over Z.ai's Responses API: save a Z.ai key in Lite, or configure a `ZAI` Codex provider with `base_url = "https://api.z.ai/api/v1"` and `wire_api = "responses"` beside `model = "glm-5.3"`.
+
+**Codex · Xiaomi MiMo** runs MiMo-V2.6-Flash and MiMo-V2.6-Pro over MiMo's Responses API: save a MiMo key in Lite, or configure a `mimo` Codex provider with `base_url = "https://api.xiaomimimo.com/v1"` and `wire_api = "responses"` beside `model = "mimo-v2.6-pro"`. Codex ships no entry for the models these providers serve, so Lite also hands it a catalog built from the bundled one — the models then carry the right context window, reasoning levels, and tool support instead of a metadata warning, and a `model_catalog_json` you configured yourself is left alone.
 
 **Codex · OpenRouter** works the same way: save an OpenRouter key in Lite or configure an `openrouter` Codex provider, and Lite launches OpenRouter's current OpenAI model route without changing your default Codex setup.
 

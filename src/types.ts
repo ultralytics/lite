@@ -2,7 +2,7 @@
 
 // A harness runs the session; a model provider bills it. Codex can run against multiple providers.
 export type Agent = "claude" | "codex" | "gemini" | "kimi" | "qwen" | "shell";
-export type ModelProvider = "openai" | "deepseek" | "zai" | "openrouter";
+export type ModelProvider = "openai" | "deepseek" | "zai" | "mimo" | "openrouter";
 
 export interface Session {
   id: string;
@@ -46,6 +46,7 @@ const providerLabels: Record<ModelProvider, string> = {
   openai: "OpenAI",
   deepseek: "DeepSeek",
   zai: "Z.ai",
+  mimo: "Xiaomi MiMo",
   openrouter: "OpenRouter",
 };
 
