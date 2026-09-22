@@ -13,8 +13,8 @@ export interface GitHubReferences {
 }
 
 // Repository-qualified references are certain. A bare number from user prose or an unqualified GitHub CLI
-// command, and a number output qualifies only by a repository's short name, may belong to any repository
-// the session has named: GitHub activity must confirm one before the panel shows it.
+// command may belong to any repository the session has named, and a short name narrows it to that one
+// (the only form output prose may use): GitHub activity must confirm one before the panel shows it.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC hyperlinks are terminal framing.
@@ -25,14 +25,11 @@ const GITHUB_REPOSITORY =
 const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!\w)/g;
 const ITEM_MENTION =
   /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?!\w|\.\d)/gi;
-const NAMED_ITEM =
-  /(?:^|[^\w./-])(\w[\w.-]*)[ \t]+(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
-const BARE_ITEM = /(?:^|[^\w./-])(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
-const GH_ITEM_COMMAND =
-  /\bgh\s+(issue|pr)\s+(?!create\b|list\b|status\b)[\w-]+((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
+const ITEM_REFERENCE =
+  /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
+const GH_ITEM_COMMAND = /\bgh\s+(issue|pr)\s+([\w-]+)((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
   /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;
-const GH_REPOSITORY_FLAG = /\bgh\s[^;&|\r\n]*?\s(?:--repo|-R)(?:=|\s+)["']?([\w.-]+)\/([\w.-]+?)["']?(?=[\s;&|]|$)/gim;
 const GH_API =
   /\bgh\s+api\s+["']?(?:https:\/\/api\.github\.com\/)?\/?repos\/([\w.-]+)\/([\w.-]+)\/(issues|pulls)\/([1-9]\d{0,8})(?![\w/])/gi;
 
@@ -60,7 +57,6 @@ export function githubItemReferences(
   const base = remote.match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i);
   if (base) nameRepository(base[1], base[2]);
   for (const match of text.matchAll(GITHUB_REPOSITORY)) nameRepository(match[1], match[2]);
-  for (const match of text.matchAll(GH_REPOSITORY_FLAG)) nameRepository(match[1], match[2]);
 
   for (const match of text.matchAll(GITHUB_ITEM))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase(), match[4], 4);
@@ -75,24 +71,29 @@ export function githubItemReferences(
   // Ambiguous forms are read once every repository the session names is known.
   const ambiguous: { kind: string; number: string; name?: string }[] = [];
   for (const match of text.matchAll(GH_ITEM_COMMAND)) {
-    const repositoryMatch = match[2].match(GH_REPOSITORY);
-    const numbers = match[2]
+    const repository = match[3].match(GH_REPOSITORY)?.slice(2).find(Boolean);
+    // A command names its repository even when it names no item, or its number is a shell variable.
+    if (repository) nameRepository(...(repository.split("/") as [string, string]));
+    if (/^(?:create|list|status)$/i.test(match[2])) continue;
+    const numbers = match[3]
       .replace(GH_REPOSITORY, "$1")
       .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "")
       .match(/(?:^|\s)([1-9]\d{0,8})(?=\s|$)/g);
     if (numbers?.length !== 1) continue;
     const kind = match[1].toLowerCase() === "pr" ? "pull" : "issues";
-    const repository = repositoryMatch?.slice(2).find(Boolean);
     if (repository) add(match, repository, kind, numbers[0].trim(), 2);
     else ambiguous.push({ kind, number: numbers[0].trim() });
   }
   for (const match of text.matchAll(GH_API))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase() === "pulls" ? "pull" : "issues", match[4], 3);
+  const names = new Set([...repositories.keys()].map((repository) => repository.split("/")[1]));
   for (const source of new Set([text, userText])) {
-    for (const match of source.matchAll(NAMED_ITEM))
-      ambiguous.push({ kind: itemKind(match[2]), number: match[3], name: match[1].toLowerCase() });
+    for (const match of source.matchAll(ITEM_REFERENCE)) {
+      const name = match[1]?.toLowerCase();
+      if (name && names.has(name)) ambiguous.push({ kind: itemKind(match[2]), number: match[3], name });
+      else if (source === userText) ambiguous.push({ kind: itemKind(match[2]), number: match[3] });
+    }
   }
-  for (const match of userText.matchAll(BARE_ITEM)) ambiguous.push({ kind: itemKind(match[1]), number: match[2] });
 
   candidates.sort((left, right) => left.index - right.index);
   const items = new Map<string, Candidate>();

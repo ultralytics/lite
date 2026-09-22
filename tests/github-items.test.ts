@@ -258,6 +258,25 @@ gh pr merge 347 -R ultralytics/handbook --squash`,
     ).toEqual([["https://github.com/ultralytics/lite/pull/192"]]);
   });
 
+  test("names repositories only from a command's own repository flag", () => {
+    const found = references(
+      `⏺ Bash(gh pr list -R ultralytics/handbook)
+gh pr edit 12 --body "mention --repo fake/repo"
+for n in 1 2; do gh pr view $n -R ultralytics/sdk; done`,
+      "https://github.com/ultralytics/skills",
+      "",
+      "please look at skills #192 and #349",
+    );
+    expect(found.inferred).toEqual([
+      [
+        "https://github.com/ultralytics/skills/pull/12",
+        ...["handbook", "sdk"].map((name) => `https://github.com/ultralytics/${name}/pull/12`),
+      ],
+      ["https://github.com/ultralytics/skills/pull/192"],
+      ["skills", "handbook", "sdk"].map((name) => `https://github.com/ultralytics/${name}/pull/349`),
+    ]);
+  });
+
   test("keeps session items while refreshing mutable GitHub fields", () => {
     const current = [
       { url: "https://github.com/ultralytics/lite/issues/107", title: "Old", state: "open" },
@@ -318,6 +337,15 @@ describe("renderedOutput", () => {
         "• Ran gh pr view 4225 --repo ultralytics/portal --json url",
         "https://github.com/ultralytics/handbook/pull/349",
       ].join("\n"),
+    );
+  });
+
+  test("keeps the space where a full row ends exactly at a word", async () => {
+    expect(await rendered(36, ["Merged https://github.com/o/r/pull/1", "  2 follow-ups remain."])).toBe(
+      "Merged https://github.com/o/r/pull/1 2 follow-ups remain.",
+    );
+    expect(await rendered(28, ["I merged ultralytics/lite#12", "and then stopped."])).toBe(
+      "I merged ultralytics/lite#12 and then stopped.",
     );
   });
 

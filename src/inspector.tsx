@@ -1477,13 +1477,14 @@ function GitPanel({
       const next = namedInSession(sessionId, remote);
       setReferences((current) => {
         // Alternate-screen redraws can hide earlier conversation text, so an observed reference stays
-        // with this session until the user explicitly refreshes the panel.
+        // with this session until the user explicitly refreshes the panel. An ambiguous reference is
+        // re-read instead: every repository named since widens its candidates, and each one was
+        // already asked about when it was seen.
         const explicit = [...new Set([...current.explicit, ...next.explicit])];
         const certain = new Set(explicit.map(itemKey));
-        const inferred = [
-          ...new Map([...current.inferred, ...next.inferred].map((group) => [group.join(" "), group])).values(),
-        ].filter((group) => !group.some((url) => certain.has(itemKey(url))));
-        return explicit.length === current.explicit.length && inferred.length === current.inferred.length
+        const inferred = next.inferred.filter((group) => !group.some((url) => certain.has(itemKey(url))));
+        const groups = (references: string[][]) => references.map((group) => group.join(" ")).join("\n");
+        return explicit.length === current.explicit.length && groups(inferred) === groups(current.inferred)
           ? current
           : { explicit, inferred };
       });

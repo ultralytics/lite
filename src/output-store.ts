@@ -181,8 +181,8 @@ export function connectTerminalOutput(sessionId: string, read: () => string) {
 }
 
 // Agent interfaces wrap their own text, so a terminal holds separate lines where a person reads one.
-// A full row was cut mid-word, and a row the wrapper had no room for the next word on continues into it;
-// either way the continuation drops its indentation and a Codex command gutter. Output markers and table
+// A row continues the previous one when the wrapper cut a token too long for a row, or had no room for the
+// row's first word; the continuation drops its indentation and a Codex command gutter. Output markers and table
 // rows begin lines of their own.
 const CONTINUATION_GUTTER = /^\s*(?:│\s)?/;
 const LINE_START = /^[\u2500-\u257f•⏺❯›⎿]/;
@@ -192,9 +192,11 @@ function continuation(previous: string, row: string, cols: number) {
   const text = row.replace(CONTINUATION_GUTTER, "");
   const word = text.match(/^\S+/)?.[0];
   if (!previous || !word || LINE_START.test(word) || BORDER.test(previous) || BORDER.test(row.trimEnd())) return;
-  if (previous.length >= cols) return text;
-  // A word that fills a row of its own was cut from a longer token, which a wrapper starts on the row before.
-  if (previous.length + word.length > cols - 3 && word.length < cols - (row.length - text.length)) return ` ${text}`;
+  // A wrapper cuts only a token longer than a row, and starts it on the row before; a full row can also end
+  // exactly at a word.
+  const width = cols - (row.length - text.length);
+  if (previous.length >= cols && (previous.match(/\S+$/)?.[0].length ?? 0) + word.length > width) return text;
+  if (previous.length + word.length > cols - 3 && word.length < width) return ` ${text}`;
 }
 
 // What a person reads in the terminal: soft-wrapped rows and rows an agent wrapped itself are joined back
