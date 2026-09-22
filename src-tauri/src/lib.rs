@@ -3627,7 +3627,7 @@ async fn agent_availability(
                 String::new()
             } else {
                 format!(
-                    "Save a {} key in Lite's settings, or add a {} provider to your Codex configuration.",
+                    "Save a {} key in Lite’s settings, or add a {} provider to your Codex configuration.",
                     codex_provider.name, codex_provider.name
                 )
             },
@@ -5568,7 +5568,7 @@ fn main_checkout(git: &Path, path: &Path) -> Result<PathBuf, String> {
         return common
             .parent()
             .map(|parent| parent.to_path_buf())
-            .ok_or("The repository's git folder has no parent".into());
+            .ok_or("The repository’s git folder has no parent".into());
     }
     Ok(common)
 }
@@ -6133,7 +6133,7 @@ async fn remove_worktree(
     grant_known(&roots, &root_id)?;
     let record = worktrees_path(&app)?.join(&root_id);
     let recorded = read_worktree_record(&record)
-        .ok_or("This session's worktree is not one Lite created".to_owned())?;
+        .ok_or("This session’s worktree is not one Lite created".to_owned())?;
     let path = PathBuf::from(&recorded.path);
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     if !path.is_dir() {
@@ -6467,7 +6467,7 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .check()
         .await
         .map_err(|error| error.to_string())?
-        .ok_or_else(|| "No update is available.".to_string())?;
+        .ok_or_else(|| "No update is available".to_string())?;
     // The download reports every chunk it receives, which is thousands of messages for a bar with a
     // hundred steps it can show, so only a percent the dialog has not already been given is worth
     // sending. A server that never said how large the update is says nothing rather than filling a

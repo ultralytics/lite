@@ -3,7 +3,7 @@
 import { Check } from "lucide-react";
 
 import { ItemDescription } from "@/components/ui/item";
-import type { Agent, ModelProvider } from "@/types";
+import { type Agent, agentLabel, type ModelProvider } from "@/types";
 
 export const AUTH_PROVIDERS = {
   codex: {
@@ -12,7 +12,6 @@ export const AUTH_PROVIDERS = {
     provider: "openai",
     label: "OpenAI",
     variable: "OPENAI_API_KEY",
-    configured: "Signed in through Codex",
     signIn: true,
   },
   claude: {
@@ -21,7 +20,6 @@ export const AUTH_PROVIDERS = {
     provider: undefined,
     label: "Anthropic",
     variable: "ANTHROPIC_API_KEY",
-    configured: "Signed in through Claude Code",
     signIn: true,
   },
   deepseek: {
@@ -30,7 +28,6 @@ export const AUTH_PROVIDERS = {
     provider: "deepseek",
     label: "DeepSeek",
     variable: "DEEPSEEK_API_KEY",
-    configured: "Using API key",
     signIn: false,
     note: "Runs Codex against DeepSeek. Usage bills DeepSeek, not OpenAI.",
   },
@@ -40,7 +37,6 @@ export const AUTH_PROVIDERS = {
     provider: "zai",
     label: "Z.ai",
     variable: "ZAI_API_KEY",
-    configured: "Using API key",
     signIn: false,
     note: "Runs Codex against Z.ai. Usage bills Z.ai, not OpenAI.",
   },
@@ -50,7 +46,6 @@ export const AUTH_PROVIDERS = {
     provider: "mimo",
     label: "Xiaomi MiMo",
     variable: "MIMO_API_KEY",
-    configured: "Using API key",
     signIn: false,
     note: "Runs Codex against Xiaomi MiMo. Usage bills Xiaomi, not OpenAI.",
   },
@@ -60,7 +55,6 @@ export const AUTH_PROVIDERS = {
     provider: "openrouter",
     label: "OpenRouter",
     variable: "OPENROUTER_API_KEY",
-    configured: "Using API key",
     signIn: false,
     note: "Runs Codex against OpenRouter. Usage bills OpenRouter, not OpenAI.",
   },
@@ -70,7 +64,6 @@ export const AUTH_PROVIDERS = {
     provider: undefined,
     label: "Google Gemini",
     variable: "GEMINI_API_KEY",
-    configured: "Signed in through Gemini CLI",
     signIn: true,
   },
   kimi: {
@@ -79,7 +72,6 @@ export const AUTH_PROVIDERS = {
     provider: undefined,
     label: "Moonshot AI",
     variable: "MOONSHOT_API_KEY",
-    configured: "Configured through Kimi Code",
     signIn: true,
   },
   qwen: {
@@ -87,7 +79,6 @@ export const AUTH_PROVIDERS = {
     agent: "qwen",
     provider: undefined,
     label: "Alibaba ModelStudio",
-    configured: "Set up through Qwen Code",
     signIn: true,
   },
 } as const satisfies Record<
@@ -98,7 +89,6 @@ export const AUTH_PROVIDERS = {
     provider?: ModelProvider;
     label: string;
     variable?: string;
-    configured: string;
     signIn: boolean;
     note?: string;
   }
@@ -110,6 +100,9 @@ export interface ProviderAuth {
   cliAuthMethod: "provider" | "apiKey" | null;
 }
 
+// Every card says the same three things the same way: the key Lite holds, the CLI that owns the sign-in,
+// or the Codex configuration that declares the provider. The state the backend reports picks the wording,
+// so no provider carries status prose of its own.
 export function ProviderAuthDescription({
   provider,
   status,
@@ -118,13 +111,17 @@ export function ProviderAuthDescription({
   status?: ProviderAuth;
 }) {
   const hint = status?.keyHint;
-  const configured = status?.keyHint ? "Using API key" : provider.configured;
+  const cli = agentLabel(provider.agent);
   return (
     <ItemDescription className="truncate text-xs leading-4">
       {status && (hint || status.cliAuthMethod) ? (
         <span className="flex items-center gap-1.5">
           <Check className="size-3.5 shrink-0" />
-          {configured}
+          {hint
+            ? "Using API key"
+            : status.cliAuthMethod === "apiKey"
+              ? `Configured in ${cli}`
+              : `Signed in through ${cli}`}
           {hint ? <span className="font-mono">••••{hint}</span> : null}
         </span>
       ) : status ? (

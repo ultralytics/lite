@@ -854,7 +854,7 @@ function VersionBadge({
             </span>
             <button
               type="button"
-              className="underline underline-offset-2"
+              className="underline underline-offset-4"
               onClick={() =>
                 void invoke("open_url", {
                   url: `https://github.com/ultralytics/lite/releases/tag/v${version}`,

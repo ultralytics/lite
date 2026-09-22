@@ -665,7 +665,7 @@ export function NewSessionDialog({
                       ? ({ label: "Update", working: "Updating" } as const)
                       : undefined;
                   const busy = installing === option.id;
-                  const authProvider = "configured" in option ? option : undefined;
+                  const authProvider = "signIn" in option ? option : undefined;
                   const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
                   return (
                     <div

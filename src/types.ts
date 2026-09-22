@@ -50,6 +50,10 @@ const providerLabels: Record<ModelProvider, string> = {
   openrouter: "OpenRouter",
 };
 
+export function agentLabel(agent: Agent): string {
+  return agentLabels[agent];
+}
+
 export function providerLabel(provider: ModelProvider): string {
   return providerLabels[provider];
 }
