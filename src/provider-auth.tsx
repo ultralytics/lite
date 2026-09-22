@@ -100,10 +100,9 @@ export interface ProviderAuth {
   cliAuthMethod: "provider" | "apiKey" | null;
 }
 
-// Every card says the same three things the same way: the key Lite holds, the same key held by the CLI's
-// own configuration, or the sign-in the CLI owns. A key reads as a key wherever it lives, and only the
-// one Lite holds can show its last characters. The state the backend reports picks the wording, so no
-// provider carries status prose of its own.
+// Every card states the state and nothing else: an API key is in play, or the CLI owns the sign-in. Which
+// file the key sits in does not change that sentence, because the actions beside it already say so — a key
+// Lite holds is the one that offers Replace and Delete. So no provider carries status prose of its own.
 export function ProviderAuthDescription({
   provider,
   status,
@@ -118,12 +117,7 @@ export function ProviderAuthDescription({
       {status && (hint || status.cliAuthMethod) ? (
         <span className="flex items-center gap-1.5">
           <Check className="size-3.5 shrink-0" />
-          {hint
-            ? "Using API key"
-            : status.cliAuthMethod === "apiKey"
-              ? `Using API key from ${cli}`
-              : `Signed in through ${cli}`}
-          {hint ? <span className="font-mono">••••{hint}</span> : null}
+          {hint || status.cliAuthMethod === "apiKey" ? "Using API key" : `Signed in through ${cli}`}
         </span>
       ) : status ? (
         "Not set up"
