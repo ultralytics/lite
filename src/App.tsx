@@ -1154,20 +1154,21 @@ function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void;
       </div>
       <div className="grid w-full max-w-2xl grid-cols-2 gap-2 sm:grid-cols-4">
         {SESSION_CHOICES.map((option) => (
-          <button
+          <Item
             key={option.id}
-            type="button"
-            className="flex items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            variant="outline"
+            className="flex-nowrap bg-card text-left hover:bg-muted"
+            render={<button type="button" />}
             onClick={() => onChoose(option.id)}
           >
-            <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+            <ItemMedia variant="icon" className="size-9 rounded-lg bg-muted">
               <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
-            </span>
-            <span className="min-w-0">
-              <span className="block truncate text-sm font-medium">{sessionLabel(option)}</span>
-              <span className="block truncate text-xs text-muted-foreground">{option.label}</span>
-            </span>
-          </button>
+            </ItemMedia>
+            <ItemContent className="gap-0">
+              <ItemTitle className="w-full truncate">{sessionLabel(option)}</ItemTitle>
+              <ItemDescription className="truncate text-xs">{option.label}</ItemDescription>
+            </ItemContent>
+          </Item>
         ))}
       </div>
       <p className="text-xs text-muted-foreground">
@@ -3287,7 +3288,7 @@ function App() {
                               {sessionView.grouping === "none" ? null : (
                                 <button
                                   type="button"
-                                  className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[10px] font-medium text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
+                                  className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[10px] font-medium text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
                                   title={group.title}
                                   aria-label={`${group.name}, ${group.sessions.length} session${group.sessions.length === 1 ? "" : "s"}`}
                                   aria-expanded={open}
