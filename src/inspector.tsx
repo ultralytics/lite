@@ -1501,18 +1501,17 @@ function GitPanel({
   }, [active, remote, sessionId]);
 
   // A named item belongs to the session once. Later checks update its GitHub state, but never remove it.
-  // User prose or an unqualified command first has to be confirmed as recent activity.
+  // User prose or an unqualified command first has to be confirmed as recent activity, and each check asks
+  // about every candidate, so a repository named later can still hold the most active one.
   useEffect(() => {
     const { explicit, inferred } = references;
     const visible = sessionGitHubItems(sessionId);
     const known = new Set(visible.map((item) => itemKey(item.url)));
-    // A reference the session already holds is settled; its candidates in other repositories are not asked.
-    const unconfirmed = inferred.filter((group) => !group.some((url) => known.has(itemKey(url))));
     const shown = mergeGitHubItems(
       visible,
       explicit.map((url) => ({ url })),
     ).map((item) => item.url);
-    const urls = [...shown, ...unconfirmed.flat()];
+    const urls = [...shown, ...inferred.flat()];
     if (!urls.length) {
       setItems([]);
       setLoadingUrls([]);
@@ -1524,8 +1523,9 @@ function GitPanel({
     void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
         if (!disposed) {
-          const updates = likelyGitHubItems(checked, unconfirmed).filter(
-            (item) => item.title !== null || !known.has(itemKey(item.url)),
+          const likely = new Set(likelyGitHubItems(checked, inferred));
+          const updates = checked.filter((item) =>
+            known.has(itemKey(item.url)) ? item.title !== null : likely.has(item),
           );
           setItems(retainGitHubItems(sessionId, updates));
         }
