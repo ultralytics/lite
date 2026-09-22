@@ -1458,7 +1458,7 @@ function GitPanel({
   const [loadingUrls, setLoadingUrls] = useState(() =>
     mergeGitHubItems(
       items,
-      [...references.explicit, ...references.inferred].map((url) => ({ url })),
+      references.explicit.map((url) => ({ url })),
     ).map((item) => item.url),
   );
   const [error, setError] = useState("");
@@ -1479,8 +1479,10 @@ function GitPanel({
         // Alternate-screen redraws can hide earlier conversation text, so an observed reference stays
         // with this session until the user explicitly refreshes the panel.
         const explicit = [...new Set([...current.explicit, ...next.explicit])];
-        const certain = new Set(explicit);
-        const inferred = [...new Set([...current.inferred, ...next.inferred])].filter((url) => !certain.has(url));
+        const certain = new Set(explicit.map(itemKey));
+        const inferred = [
+          ...new Map([...current.inferred, ...next.inferred].map((group) => [group.join(" "), group])).values(),
+        ].filter((group) => !group.some((url) => certain.has(itemKey(url))));
         return explicit.length === current.explicit.length && inferred.length === current.inferred.length
           ? current
           : { explicit, inferred };
@@ -1502,10 +1504,14 @@ function GitPanel({
   useEffect(() => {
     const { explicit, inferred } = references;
     const visible = sessionGitHubItems(sessionId);
-    const urls = mergeGitHubItems(
+    const known = new Set(visible.map((item) => itemKey(item.url)));
+    // A reference the session already holds is settled; its candidates in other repositories are not asked.
+    const unconfirmed = inferred.filter((group) => !group.some((url) => known.has(itemKey(url))));
+    const shown = mergeGitHubItems(
       visible,
-      [...explicit, ...inferred].map((url) => ({ url })),
+      explicit.map((url) => ({ url })),
     ).map((item) => item.url);
+    const urls = [...shown, ...unconfirmed.flat()];
     if (!urls.length) {
       setItems([]);
       setLoadingUrls([]);
@@ -1513,12 +1519,10 @@ function GitPanel({
     }
     let disposed = false;
     setItems(visible);
-    setLoadingUrls(urls);
+    setLoadingUrls(shown);
     void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
         if (!disposed) {
-          const known = new Set(visible.map((item) => itemKey(item.url)));
-          const unconfirmed = inferred.filter((url) => !known.has(itemKey(url)));
           const updates = likelyGitHubItems(checked, unconfirmed).filter(
             (item) => item.title !== null || !known.has(itemKey(item.url)),
           );

@@ -2,8 +2,10 @@
 
 import { describe, expect, test } from "bun:test";
 
+import { Terminal } from "@xterm/xterm";
+
 import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "../src/github-items";
-import { appendOutput, clearOutput, readTerminalInput, recordTerminalInput } from "../src/output-store";
+import { appendOutput, clearOutput, readTerminalInput, recordTerminalInput, renderedOutput } from "../src/output-store";
 
 const references = (output: string, remote = "", terminalStream = "", prose = output) =>
   githubItemReferences(output, remote, terminalStream, prose);
@@ -161,11 +163,11 @@ ultralytics/lite PR #102
     );
 
     expect(found).toEqual({
-      explicit: ["https://github.com/ultralytics/lite/pull/102", "https://github.com/ultralytics/lite/pull/97"],
+      explicit: ["https://github.com/ultralytics/lite/pull/97", "https://github.com/ultralytics/lite/pull/102"],
       inferred: [
-        "https://github.com/ultralytics/lite/issues/3052",
-        "https://github.com/ultralytics/lite/pull/94",
-        "https://github.com/ultralytics/lite/issues/88",
+        ["https://github.com/ultralytics/lite/pull/94"],
+        ["https://github.com/ultralytics/lite/issues/88"],
+        ["https://github.com/ultralytics/lite/issues/3052"],
       ],
     });
   });
@@ -184,14 +186,17 @@ The agent also discussed ultralytics/portal PR #3612.`,
 
     expect(found).toEqual({
       explicit: ["https://github.com/ultralytics/lite/pull/111", "https://github.com/ultralytics/portal/pull/3612"],
-      inferred: ["https://github.com/ultralytics/lite/pull/112", "https://github.com/ultralytics/lite/issues/90"],
+      inferred: [
+        ["https://github.com/ultralytics/lite/pull/112", "https://github.com/ultralytics/portal/pull/112"],
+        ["https://github.com/ultralytics/lite/issues/90", "https://github.com/ultralytics/portal/issues/90"],
+      ],
     });
   });
 
   test("uses one named repository to resolve user prose without a Git remote", () => {
     expect(references("See https://github.com/ultralytics/portal. Then review PR 3612.")).toEqual({
       explicit: [],
-      inferred: ["https://github.com/ultralytics/portal/pull/3612"],
+      inferred: [["https://github.com/ultralytics/portal/pull/3612"]],
     });
   });
 
@@ -207,7 +212,50 @@ The agent also discussed ultralytics/portal PR #3612.`,
       { url: "https://github.com/ultralytics/lite/pull/102", updatedAt: null },
     ];
 
-    expect(likelyGitHubItems(items, inferred, now)).toEqual([items[1], items[2]]);
+    expect(
+      likelyGitHubItems(
+        items,
+        inferred.map((url) => [url]),
+        now,
+      ),
+    ).toEqual([items[1], items[2]]);
+  });
+
+  test("resolves a bare reference to the session repository GitHub shows active", () => {
+    const found = references(
+      `gh pr view 16 --json url
+gh pr view 77 -R ultralytics/sdk --json title
+gh pr merge 347 -R ultralytics/handbook --squash`,
+      "https://github.com/ultralytics/skills",
+      "",
+      "handbook - 3 open PRs\n#349 Update zensical requirement from >=0.0.60 to >=0.0.62",
+    );
+    const group = ["skills", "sdk", "handbook"].map((name) => `https://github.com/ultralytics/${name}/pull/349`);
+    expect(found).toEqual({
+      explicit: ["https://github.com/ultralytics/sdk/pull/77", "https://github.com/ultralytics/handbook/pull/347"],
+      inferred: [
+        ["https://github.com/ultralytics/skills/pull/16", ...group.slice(1).map((url) => url.replace("349", "16"))],
+        group,
+      ],
+    });
+
+    const now = Date.parse("2026-09-22T18:00:00Z");
+    const checked = [
+      { url: group[1], updatedAt: "2026-09-01T00:00:00Z" },
+      { url: group[2], updatedAt: "2026-09-22T17:00:00Z" },
+    ];
+    expect(likelyGitHubItems(checked, [group], now)).toEqual([checked[1]]);
+  });
+
+  test("resolves a short repository name only against repositories the session names", () => {
+    expect(
+      references(
+        "ultralytics/portal#4225 merged; Lite #192 is approved; Since #3143 it skips",
+        "https://github.com/ultralytics/lite",
+        "",
+        "",
+      ).inferred,
+    ).toEqual([["https://github.com/ultralytics/lite/pull/192"]]);
   });
 
   test("keeps session items while refreshing mutable GitHub fields", () => {
@@ -233,7 +281,7 @@ https://github.com/ultralytics/assistant/pull/3052
 `,
       "https://github.com/ultralytics/portal",
     );
-    const checked = [...found.explicit, ...found.inferred].map((url) => ({
+    const checked = [...found.explicit, ...found.inferred.flat()].map((url) => ({
       url,
       updatedAt: url.includes("/portal/") ? "2026-07-01T00:00:00Z" : "2026-08-14T17:00:00Z",
     }));
@@ -242,5 +290,45 @@ https://github.com/ultralytics/assistant/pull/3052
       checked[0],
       checked[1],
     ]);
+  });
+});
+
+describe("renderedOutput", () => {
+  const rendered = async (cols: number, rows: string[]) => {
+    const terminal = new Terminal({ cols, rows: 10, allowProposedApi: true });
+    await new Promise<void>((resolve) => terminal.write(`${rows.join("\r\n")}\r\n`, resolve));
+    return renderedOutput(terminal).trimEnd();
+  };
+
+  test("joins rows an agent wrapped itself back into the lines a person reads", async () => {
+    // Claude continues a wrapped command under deeper indentation, Codex under a gutter, and both cut a
+    // token that fills the row.
+    expect(
+      await rendered(32, [
+        "⏺ Bash(gh pr merge 347 --squash",
+        "      -R ultralytics/handbook)",
+        "• Ran gh pr view 4225 --repo",
+        "  │ ultralytics/portal --json url",
+        "https://github.com/ultralytics/h",
+        "andbook/pull/349",
+      ]),
+    ).toBe(
+      [
+        "⏺ Bash(gh pr merge 347 --squash -R ultralytics/handbook)",
+        "• Ran gh pr view 4225 --repo ultralytics/portal --json url",
+        "https://github.com/ultralytics/handbook/pull/349",
+      ].join("\n"),
+    );
+  });
+
+  test("keeps short rows, output markers, and table borders on lines of their own", async () => {
+    const rows = [
+      "• Ran git log -1 --format=%s",
+      "  └ cfba7d30c1 Fix the demo (#4219)",
+      "  │ #26273 │ Repeated safe_download │",
+      "  ├────────┼────────────────────────┤",
+      "  ⎿  7da5382 Update zensical (#349)",
+    ];
+    expect(await rendered(40, rows)).toBe(rows.join("\n"));
   });
 });

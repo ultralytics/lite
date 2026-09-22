@@ -1,10 +1,11 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
+import type { Terminal } from "@xterm/xterm";
 
 import type { Theme } from "@/theme";
 
-export const MAX_OUTPUT_BYTES = 1_000_000;
+const MAX_OUTPUT_BYTES = 1_000_000;
 
 interface Buffer {
   chunks: Uint8Array[];
@@ -177,6 +178,57 @@ export function connectTerminalOutput(sessionId: string, read: () => string) {
     terminalSnapshots.set(sessionId, read());
     terminalReaders.delete(sessionId);
   };
+}
+
+// Agent interfaces wrap their own text, so a terminal holds separate lines where a person reads one.
+// A full row was cut mid-word, and a row the wrapper had no room for the next word on continues into it;
+// either way the continuation drops its indentation and a Codex command gutter. Output markers and table
+// rows begin lines of their own.
+const CONTINUATION_GUTTER = /^\s*(?:│\s)?/;
+const LINE_START = /^[\u2500-\u257f•⏺❯›⎿]/;
+const BORDER = /[\u2500-\u257f]$/;
+
+function continuation(previous: string, row: string, cols: number) {
+  const text = row.replace(CONTINUATION_GUTTER, "");
+  const word = text.match(/^\S+/)?.[0];
+  if (!previous || !word || LINE_START.test(word) || BORDER.test(previous) || BORDER.test(row.trimEnd())) return;
+  if (previous.length >= cols) return text;
+  // A word that fills a row of its own was cut from a longer token, which a wrapper starts on the row before.
+  if (previous.length + word.length > cols - 3 && word.length < cols - (row.length - text.length)) return ` ${text}`;
+}
+
+// What a person reads in the terminal: soft-wrapped rows and rows an agent wrapped itself are joined back
+// into the lines they came from.
+export function renderedOutput(terminal: Terminal) {
+  let text = "";
+  const { active, normal } = terminal.buffer;
+  for (const buffer of active.type === "normal" ? [active] : [normal, active]) {
+    if (text) text += "\n";
+    let inputStart = -1;
+    let inputEnd = -1;
+    if (buffer === active) {
+      inputStart = buffer.baseY + buffer.cursorY;
+      inputEnd = inputStart;
+      while (inputStart > 0 && buffer.getLine(inputStart)?.isWrapped) inputStart--;
+      while (inputEnd + 1 < buffer.length && buffer.getLine(inputEnd + 1)?.isWrapped) inputEnd++;
+    }
+    let previous = "";
+    for (let index = 0; index < buffer.length; index++) {
+      // The cursor's logical line is still being typed or streamed. It becomes readable history only
+      // after the terminal advances, which keeps partial URLs and PR numbers out of the inspector.
+      if (index >= inputStart && index <= inputEnd) {
+        previous = "";
+        continue;
+      }
+      const line = buffer.getLine(index);
+      if (!line) continue;
+      const row = line.translateToString(true, 0, Math.min(line.length, terminal.cols));
+      if (line.isWrapped) text += row;
+      else text += continuation(previous, row, terminal.cols) ?? `${index ? "\n" : ""}${row}`;
+      previous = row.trimEnd();
+    }
+  }
+  return text.slice(-MAX_OUTPUT_BYTES);
 }
 
 export function readTerminalOutput(sessionId: string) {
