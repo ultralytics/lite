@@ -243,6 +243,8 @@ fn set_attention_badge(app: AppHandle, count: u32) -> Result<(), String> {
 // A model a provider serves and Codex has no catalog entry for.
 struct CodexModel {
     slug: &'static str,
+    // What the new-session picker calls this model, short enough to sit beside its siblings.
+    label: &'static str,
     display_name: &'static str,
     description: &'static str,
     images: bool,
@@ -258,13 +260,16 @@ struct CodexProvider {
     name: &'static str,
     base_url: &'static str,
     env_key: &'static str,
-    // The model a launch uses when the user has chosen none.
+    // The model a launch uses when the user has chosen none; `models` lists it first, so the picker and a
+    // launch agree on the default.
     model: &'static str,
     // Each thinking level Codex offers here and the wording Codex shows beside it, both as the provider
     // itself declares them.
     levels: &'static [(&'static str, &'static str)],
     // How the provider measures the output it truncates, either "tokens" or "bytes".
     truncation: &'static str,
+    // DeepSeek serves Lite its default model alone today, so its picker shows the pair but takes no choice.
+    model_choice: bool,
     // The tool surface the provider declares: the shell tool Codex offers it, the tool mode it accepts,
     // and whether it needs the trimmed Responses shape.
     shell_type: &'static str,
@@ -277,6 +282,7 @@ struct CodexProvider {
 const CODEX_PROVIDERS: [CodexProvider; 4] = [
     CodexProvider {
         id: "deepseek",
+        model_choice: false,
         codex_key: "deepseek",
         name: "DeepSeek",
         base_url: "https://api.deepseek.com/",
@@ -294,12 +300,14 @@ const CODEX_PROVIDERS: [CodexProvider; 4] = [
         models: &[
             CodexModel {
                 slug: "deepseek-flash",
+                label: "Flash",
                 display_name: "DeepSeek-V4.1-Flash",
                 description: "DeepSeek V4.1 Flash, served by the DeepSeek API.",
                 images: true,
             },
             CodexModel {
                 slug: "deepseek-v4-pro",
+                label: "Pro",
                 display_name: "DeepSeek-V4-Pro",
                 description: "DeepSeek V4 Pro, served by the DeepSeek API.",
                 images: false,
@@ -309,6 +317,7 @@ const CODEX_PROVIDERS: [CodexProvider; 4] = [
     },
     CodexProvider {
         id: "zai",
+        model_choice: true,
         codex_key: "ZAI",
         name: "Z.ai",
         base_url: "https://api.z.ai/api/v1",
@@ -325,29 +334,31 @@ const CODEX_PROVIDERS: [CodexProvider; 4] = [
         responses_lite: false,
         models: &[
             CodexModel {
-                slug: "glm-5.3",
-                display_name: "GLM-5.3",
-                description: "Z.ai GLM-5.3, served by the Z.ai API.",
-                images: false,
-            },
-            CodexModel {
                 slug: "glm-5.3-flash",
+                label: "Flash",
                 display_name: "GLM-5.3-Flash",
                 description: "Z.ai GLM-5.3 Flash, served by the Z.ai API.",
                 images: true,
+            },
+            CodexModel {
+                slug: "glm-5.3",
+                label: "GLM-5.3",
+                display_name: "GLM-5.3",
+                description: "Z.ai GLM-5.3, served by the Z.ai API.",
+                images: false,
             },
         ],
         setup_url: "https://docs.z.ai/devpack/tool/codex",
     },
     CodexProvider {
         id: "mimo",
+        model_choice: true,
         codex_key: "mimo",
         name: "Xiaomi MiMo",
         base_url: "https://api.xiaomimimo.com/v1",
         env_key: "MIMO_API_KEY",
         model: "mimo-v2.6-flash",
         levels: &[
-            ("none", "No extra reasoning for faster responses"),
             ("low", "Fast responses with lighter reasoning"),
             (
                 "medium",
@@ -363,12 +374,14 @@ const CODEX_PROVIDERS: [CodexProvider; 4] = [
         models: &[
             CodexModel {
                 slug: "mimo-v2.6-flash",
+                label: "Flash",
                 display_name: "MiMo-V2.6-Flash",
                 description: "Xiaomi MiMo-V2.6-Flash, served by the MiMo API.",
                 images: true,
             },
             CodexModel {
                 slug: "mimo-v2.6-pro",
+                label: "Pro",
                 display_name: "MiMo-V2.6-Pro",
                 description: "Xiaomi MiMo-V2.6-Pro, served by the MiMo API.",
                 images: true,
@@ -378,6 +391,7 @@ const CODEX_PROVIDERS: [CodexProvider; 4] = [
     },
     CodexProvider {
         id: "openrouter",
+        model_choice: false,
         codex_key: "openrouter",
         name: "OpenRouter",
         base_url: "https://openrouter.ai/api/v1",
@@ -2936,6 +2950,35 @@ fn api_keys_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| error.to_string())?
         .join("api-keys.json"))
+}
+
+// The new-session picker's own view of a provider. Every model and level it can offer comes from
+// CODEX_PROVIDERS, so a slug or level the picker shows is one the catalog handed Codex already carries.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexPicker {
+    id: &'static str,
+    models: Vec<(&'static str, &'static str)>,
+    levels: Vec<&'static str>,
+    model_choice: bool,
+}
+
+#[tauri::command]
+fn codex_pickers() -> Vec<CodexPicker> {
+    CODEX_PROVIDERS
+        .iter()
+        .filter(|provider| !provider.models.is_empty())
+        .map(|provider| CodexPicker {
+            id: provider.id,
+            models: provider
+                .models
+                .iter()
+                .map(|model| (model.slug, model.label))
+                .collect(),
+            levels: provider.levels.iter().map(|(level, _)| *level).collect(),
+            model_choice: provider.model_choice,
+        })
+        .collect()
 }
 
 fn codex_provider(id: Option<&str>) -> Option<CodexProvider> {
@@ -6588,6 +6631,7 @@ pub fn run() {
             default_directory,
             revoke_directory,
             spawn_session,
+            codex_pickers,
             record_codex_session,
             write_session,
             watch_shell_agent,

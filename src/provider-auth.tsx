@@ -5,14 +5,13 @@ import type { ReactNode } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
 import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
-import { type Agent, agentLabel, type ModelProvider, sessionLabel } from "@/types";
+import { type Agent, agentLabel, type ModelProvider, providerLabel, sessionLabel } from "@/types";
 
 export const AUTH_PROVIDERS = {
   codex: {
     id: "codex",
     agent: "codex",
     provider: "openai",
-    label: "OpenAI",
     variable: "OPENAI_API_KEY",
     signIn: true,
   },
@@ -28,7 +27,6 @@ export const AUTH_PROVIDERS = {
     id: "deepseek",
     agent: "codex",
     provider: "deepseek",
-    label: "DeepSeek",
     variable: "DEEPSEEK_API_KEY",
     signIn: false,
     note: "Runs Codex against DeepSeek. Usage bills DeepSeek, not OpenAI.",
@@ -37,7 +35,6 @@ export const AUTH_PROVIDERS = {
     id: "zai",
     agent: "codex",
     provider: "zai",
-    label: "Z.ai",
     variable: "ZAI_API_KEY",
     signIn: false,
     note: "Runs Codex against Z.ai. Usage bills Z.ai, not OpenAI.",
@@ -46,7 +43,6 @@ export const AUTH_PROVIDERS = {
     id: "mimo",
     agent: "codex",
     provider: "mimo",
-    label: "Xiaomi MiMo",
     variable: "MIMO_API_KEY",
     signIn: false,
     note: "Runs Codex against Xiaomi MiMo. Usage bills Xiaomi, not OpenAI.",
@@ -55,7 +51,6 @@ export const AUTH_PROVIDERS = {
     id: "openrouter",
     agent: "codex",
     provider: "openrouter",
-    label: "OpenRouter",
     variable: "OPENROUTER_API_KEY",
     signIn: false,
     note: "Runs Codex against OpenRouter. Usage bills OpenRouter, not OpenAI.",
@@ -89,7 +84,7 @@ export const AUTH_PROVIDERS = {
     id: string;
     agent: Agent;
     provider?: ModelProvider;
-    label: string;
+    label?: string;
     variable?: string;
     signIn: boolean;
     note?: string;
@@ -100,6 +95,12 @@ export interface ProviderAuth {
   name: string;
   keyHint: string | null;
   cliAuthMethod: "provider" | "apiKey" | null;
+}
+
+// The vendor a provider belongs to. A Codex provider is named by types.ts, which owns every ModelProvider
+// label already; only a harness Lite has no ModelProvider for carries a name of its own.
+export function providerName(option: { provider?: ModelProvider; label?: string }): string {
+  return option.provider ? providerLabel(option.provider) : (option.label ?? "");
 }
 
 // The one way a provider is drawn anywhere in Lite: its mark, its name, and a single line beneath. The

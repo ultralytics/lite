@@ -106,7 +106,7 @@ import {
   syncTerminalTheme,
   writeSession,
 } from "@/output-store";
-import { ProviderRow } from "@/provider-auth";
+import { ProviderRow, providerName } from "@/provider-auth";
 import { SettingsDialog } from "@/settings-dialog";
 import {
   IS_MAC,
@@ -1162,7 +1162,7 @@ function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void;
             render={<button type="button" />}
             onClick={() => onChoose(option.id)}
           >
-            <ProviderRow option={option}>{option.label}</ProviderRow>
+            <ProviderRow option={option}>{providerName(option)}</ProviderRow>
           </Item>
         ))}
       </div>

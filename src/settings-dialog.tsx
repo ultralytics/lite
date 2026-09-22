@@ -47,7 +47,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { including, without } from "@/lib/utils";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, ProviderRow } from "@/provider-auth";
+import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, ProviderRow, providerName } from "@/provider-auth";
 import {
   eventCombo,
   FIXED_SHORTCUTS,
@@ -403,7 +403,7 @@ export function SettingsDialog({
                               size="icon-sm"
                               className="hover:text-destructive"
                               tooltip="Delete this key"
-                              aria-label={`Delete the ${option.label} key`}
+                              aria-label={`Delete the ${providerName(option)} key`}
                               disabled={busy === option.id}
                               onClick={() => void remove(option.id)}
                             >
@@ -421,7 +421,7 @@ export function SettingsDialog({
                               value={draft}
                               className="font-mono"
                               placeholder="Paste a key"
-                              aria-label={`${option.label} API key`}
+                              aria-label={`${providerName(option)} API key`}
                               onChange={(event) =>
                                 setDrafts((current) => ({ ...current, [option.id]: event.target.value }))
                               }
