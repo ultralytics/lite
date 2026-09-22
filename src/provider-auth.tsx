@@ -1,9 +1,11 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { Check } from "lucide-react";
+import type { ReactNode } from "react";
 
-import { ItemDescription } from "@/components/ui/item";
-import { type Agent, agentLabel, type ModelProvider } from "@/types";
+import { ProviderIcon } from "@/brand-icons";
+import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
+import { type Agent, agentLabel, type ModelProvider, sessionLabel } from "@/types";
 
 export const AUTH_PROVIDERS = {
   codex: {
@@ -100,9 +102,32 @@ export interface ProviderAuth {
   cliAuthMethod: "provider" | "apiKey" | null;
 }
 
-// Every card states the state and nothing else: an API key is in play, or the CLI owns the sign-in. Which
-// file the key sits in does not change that sentence, because the actions beside it already say so — a key
-// Lite holds is the one that offers Replace and Delete. So no provider carries status prose of its own.
+// The one way a provider is drawn anywhere in Lite: its mark, its name, and a single line beneath. The
+// welcome grid, the new-session dialog, and the settings list all render this, so the mark size, the name,
+// and the line's type can only be changed for all three at once. Each passes its own words as children.
+export function ProviderRow({
+  option,
+  children,
+}: {
+  option: { agent: Agent; provider?: ModelProvider };
+  children?: ReactNode;
+}) {
+  return (
+    <>
+      <ItemMedia variant="icon">
+        <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+      </ItemMedia>
+      <ItemContent className="gap-0.5">
+        <ItemTitle className="w-full truncate">{sessionLabel(option)}</ItemTitle>
+        <ItemDescription className="truncate text-xs leading-4">{children}</ItemDescription>
+      </ItemContent>
+    </>
+  );
+}
+
+// The words for that line when the provider is one Lite authenticates: the state and nothing else. An API
+// key is in play, or the CLI owns the sign-in. Which file the key sits in does not change the sentence,
+// because the actions beside it already say so — a key Lite holds is the one that offers Replace and Delete.
 export function ProviderAuthDescription({
   provider,
   status,
@@ -111,19 +136,12 @@ export function ProviderAuthDescription({
   status?: ProviderAuth;
 }) {
   const hint = status?.keyHint;
-  const cli = agentLabel(provider.agent);
+  if (!status) return "Checking…";
+  if (!hint && !status.cliAuthMethod) return "Not set up";
   return (
-    <ItemDescription className="truncate text-xs leading-4">
-      {status && (hint || status.cliAuthMethod) ? (
-        <span className="flex items-center gap-1.5">
-          <Check className="size-3.5 shrink-0" />
-          {hint || status.cliAuthMethod === "apiKey" ? "Using API key" : `Signed in through ${cli}`}
-        </span>
-      ) : status ? (
-        "Not set up"
-      ) : (
-        "Checking…"
-      )}
-    </ItemDescription>
+    <span className="flex items-center gap-1.5">
+      <Check className="size-3.5 shrink-0" />
+      {hint || status.cliAuthMethod === "apiKey" ? "Using API key" : `Signed in through ${agentLabel(provider.agent)}`}
+    </span>
   );
 }

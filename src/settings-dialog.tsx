@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { GitHubLogomark, ProviderIcon, UltralyticsLogomark } from "@/brand-icons";
+import { GitHubLogomark, UltralyticsLogomark } from "@/brand-icons";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -47,7 +47,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { including, without } from "@/lib/utils";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, ProviderRow } from "@/provider-auth";
 import {
   eventCombo,
   FIXED_SHORTCUTS,
@@ -62,7 +62,7 @@ import {
   useShortcutKeys,
 } from "@/shortcuts";
 import type { Theme } from "@/theme";
-import { type Agent, sessionLabel } from "@/types";
+import type { Agent } from "@/types";
 
 const providers = Object.values(AUTH_PROVIDERS);
 
@@ -383,13 +383,9 @@ export function SettingsDialog({
                   const shown = revealed.has(option.id);
                   return (
                     <Item key={option.id} variant="outline">
-                      <ItemMedia variant="icon">
-                        <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>{sessionLabel(option)}</ItemTitle>
+                      <ProviderRow option={option}>
                         <ProviderAuthDescription provider={option} status={status} />
-                      </ItemContent>
+                      </ProviderRow>
                       {open ? null : (
                         <ItemActions>
                           {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (

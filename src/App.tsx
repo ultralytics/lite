@@ -106,6 +106,7 @@ import {
   syncTerminalTheme,
   writeSession,
 } from "@/output-store";
+import { ProviderRow } from "@/provider-auth";
 import { SettingsDialog } from "@/settings-dialog";
 import {
   IS_MAC,
@@ -1161,13 +1162,7 @@ function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void;
             render={<button type="button" />}
             onClick={() => onChoose(option.id)}
           >
-            <ItemMedia variant="icon" className="size-9 rounded-lg bg-muted">
-              <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
-            </ItemMedia>
-            <ItemContent className="gap-0">
-              <ItemTitle className="w-full truncate">{sessionLabel(option)}</ItemTitle>
-              <ItemDescription className="truncate text-xs">{option.label}</ItemDescription>
-            </ItemContent>
+            <ProviderRow option={option}>{option.label}</ProviderRow>
           </Item>
         ))}
       </div>

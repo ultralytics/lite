@@ -4,7 +4,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { Check, CircleAlert, Download, FolderOpen, RefreshCw, TriangleAlert } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 
-import { ProviderIcon } from "@/brand-icons";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,7 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "@/components/ui/toast";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription } from "@/provider-auth";
+import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, ProviderRow } from "@/provider-auth";
 import { defaultSessionName, type Session, sessionLabel } from "@/types";
 
 export const SESSION_CHOICES = [
@@ -676,7 +675,7 @@ export function NewSessionDialog({
                         type="button"
                         size="lg"
                         variant={active && !panel ? "secondary" : active ? "ghost" : "outline"}
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && panel ? "rounded-b-none" : ""}`}
+                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && panel ? "rounded-b-none" : ""} ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
                         aria-pressed={active}
                         disabled={Boolean(installing) || unsupported}
                         title={"note" in option ? option.note : sessionLabel(option)}
@@ -688,31 +687,27 @@ export function NewSessionDialog({
                           }
                         }}
                       >
-                        <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
-                        <div
-                          className={`min-w-0 flex-1 text-left ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
-                        >
-                          <span className="block truncate">{sessionLabel(option)}</span>
-                          {unsupported || remote || state === null || (state && !state.available) ? (
-                            <span className="block truncate text-xs font-normal text-muted-foreground">
-                              {unsupported
-                                ? "Local workspace only"
-                                : remote
-                                  ? `Runs on ${host.trim() || "SSH host"}`
-                                  : state === null
-                                    ? "Check failed"
-                                    : state?.installable
-                                      ? "Not installed"
-                                      : "Setup required"}
-                            </span>
+                        <ProviderRow option={option}>
+                          {unsupported ? (
+                            "Local workspace only"
+                          ) : remote ? (
+                            `Runs on ${host.trim() || "SSH host"}`
+                          ) : state === null ? (
+                            "Check failed"
+                          ) : state && !state.available ? (
+                            state.installable ? (
+                              "Not installed"
+                            ) : (
+                              "Setup required"
+                            )
                           ) : authProvider ? (
                             <ProviderAuthDescription provider={authProvider} status={authStatus} />
+                          ) : state ? (
+                            "Available"
                           ) : (
-                            <span className="block truncate text-xs font-normal text-muted-foreground">
-                              {state ? "Available" : "Checking…"}
-                            </span>
+                            "Checking…"
                           )}
-                        </div>
+                        </ProviderRow>
                       </Button>
                       {active && panel ? (
                         <div className="space-y-1 border-t px-3 py-2">
