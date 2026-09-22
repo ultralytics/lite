@@ -34,6 +34,12 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Pin installed Bun
+        # Keeps packageManager and engines on the Bun that CI, publish, and this lockfile use
+        run: |
+          version=$(bun --version)
+          sed -i -E "s/\"bun@[0-9.]+\"/\"bun@$version\"/; s/\"bun\": \">=[0-9.]+\"/\"bun\": \">=$version\"/" package.json
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
