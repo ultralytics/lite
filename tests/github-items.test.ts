@@ -258,6 +258,13 @@ gh pr merge 347 -R ultralytics/handbook --squash`,
     ).toEqual([["https://github.com/ultralytics/lite/pull/192"]]);
   });
 
+  test("finds a command after the word gh earlier on the line", () => {
+    expect(
+      explicit(`I checked with gh and then ran gh pr view 12 -R ultralytics/lite to confirm.
+Using gh auth token for gh pr merge 347 -R ultralytics/handbook`),
+    ).toEqual(["https://github.com/ultralytics/lite/pull/12", "https://github.com/ultralytics/handbook/pull/347"]);
+  });
+
   test("names repositories only from a command's own repository flag", () => {
     const found = references(
       `⏺ Bash(gh pr list -R ultralytics/handbook)
