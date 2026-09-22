@@ -100,9 +100,10 @@ export interface ProviderAuth {
   cliAuthMethod: "provider" | "apiKey" | null;
 }
 
-// Every card says the same three things the same way: the key Lite holds, the CLI that owns the sign-in,
-// or the Codex configuration that declares the provider. The state the backend reports picks the wording,
-// so no provider carries status prose of its own.
+// Every card says the same three things the same way: the key Lite holds, the same key held by the CLI's
+// own configuration, or the sign-in the CLI owns. A key reads as a key wherever it lives, and only the
+// one Lite holds can show its last characters. The state the backend reports picks the wording, so no
+// provider carries status prose of its own.
 export function ProviderAuthDescription({
   provider,
   status,
@@ -120,7 +121,7 @@ export function ProviderAuthDescription({
           {hint
             ? "Using API key"
             : status.cliAuthMethod === "apiKey"
-              ? `Configured in ${cli}`
+              ? `Using API key from ${cli}`
               : `Signed in through ${cli}`}
           {hint ? <span className="font-mono">••••{hint}</span> : null}
         </span>
