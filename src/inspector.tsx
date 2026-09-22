@@ -169,9 +169,10 @@ function sessionGitHubItems(sessionId: string) {
   return (sessions[sessionId] ?? []).filter((item) => !removed.has(itemKey(item.url)));
 }
 
-function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
+function retainGitHubItems(sessionId: string, updates: GitHubItem[], replaced = new Set<string>()) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
-  const items = mergeGitHubItems(sessions[sessionId] ?? [], updates);
+  const current = (sessions[sessionId] ?? []).filter((item) => !replaced.has(itemKey(item.url)));
+  const items = mergeGitHubItems(current, updates);
   sessions[sessionId] = items;
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
   return sessionGitHubItems(sessionId);
@@ -1501,8 +1502,9 @@ function GitPanel({
   }, [active, remote, sessionId]);
 
   // A named item belongs to the session once. Later checks update its GitHub state, but never remove it.
-  // User prose or an unqualified command first has to be confirmed as recent activity, and each check asks
-  // about every candidate, so a repository named later can still hold the most active one.
+  // User prose or an unqualified command first has to be confirmed as recent activity. Each check asks about
+  // every candidate, so a repository named later can hold the most active one, which then replaces an item
+  // only that ambiguous reference named.
   useEffect(() => {
     const { explicit, inferred } = references;
     const visible = sessionGitHubItems(sessionId);
@@ -1523,11 +1525,21 @@ function GitPanel({
     void invoke<GitHubItem[]>("github_items", { urls })
       .then((checked) => {
         if (!disposed) {
-          const likely = new Set(likelyGitHubItems(checked, inferred));
-          const updates = checked.filter((item) =>
-            known.has(itemKey(item.url)) ? item.title !== null : likely.has(item),
+          const chosen = new Set(likelyGitHubItems(checked, inferred).map((item) => itemKey(item.url)));
+          const certain = new Set(explicit.map(itemKey));
+          const replaced = new Set(
+            inferred.flatMap((group) => {
+              const keys = group.map(itemKey);
+              return keys.some((key) => chosen.has(key))
+                ? keys.filter((key) => !chosen.has(key) && !certain.has(key))
+                : [];
+            }),
           );
-          setItems(retainGitHubItems(sessionId, updates));
+          const updates = checked.filter((item) => {
+            const key = itemKey(item.url);
+            return known.has(key) ? item.title !== null && !replaced.has(key) : chosen.has(key);
+          });
+          setItems(retainGitHubItems(sessionId, updates, replaced));
         }
       })
       .catch(() => {})
