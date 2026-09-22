@@ -27,7 +27,7 @@ const ITEM_MENTION =
   /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const ITEM_REFERENCE =
   /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
-const GH_ITEM_COMMAND = /\bgh\s+(issue|pr)\s+([\w-]+)((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
+const GH_COMMAND = /\bgh\s+([\w-]+)\s+([\w-]+)((?:[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
   /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;
 const GH_API =
@@ -70,11 +70,11 @@ export function githubItemReferences(
   }
   // Ambiguous forms are read once every repository the session names is known.
   const ambiguous: { kind: string; number: string; name?: string }[] = [];
-  for (const match of text.matchAll(GH_ITEM_COMMAND)) {
+  for (const match of text.matchAll(GH_COMMAND)) {
     const repository = match[3].match(GH_REPOSITORY)?.slice(2).find(Boolean);
-    // A command names its repository even when it names no item, or its number is a shell variable.
+    // Any command names its repository, even one that names no item or whose number is a shell variable.
     if (repository) nameRepository(...(repository.split("/") as [string, string]));
-    if (/^(?:create|list|status)$/i.test(match[2])) continue;
+    if (!/^(?:issue|pr)$/i.test(match[1]) || /^(?:create|list|status)$/i.test(match[2])) continue;
     const numbers = match[3]
       .replace(GH_REPOSITORY, "$1")
       .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "")

@@ -262,18 +262,17 @@ gh pr merge 347 -R ultralytics/handbook --squash`,
     const found = references(
       `⏺ Bash(gh pr list -R ultralytics/handbook)
 gh pr edit 12 --body "mention --repo fake/repo"
-for n in 1 2; do gh pr view $n -R ultralytics/sdk; done`,
+for n in 1 2; do gh pr view $n -R ultralytics/sdk; done
+gh run view 35765314774 --repo ultralytics/portal --log-failed`,
       "https://github.com/ultralytics/skills",
       "",
       "please look at skills #192 and #349",
     );
+    const repositories = ["skills", "handbook", "sdk", "portal"];
     expect(found.inferred).toEqual([
-      [
-        "https://github.com/ultralytics/skills/pull/12",
-        ...["handbook", "sdk"].map((name) => `https://github.com/ultralytics/${name}/pull/12`),
-      ],
+      repositories.map((name) => `https://github.com/ultralytics/${name}/pull/12`),
       ["https://github.com/ultralytics/skills/pull/192"],
-      ["skills", "handbook", "sdk"].map((name) => `https://github.com/ultralytics/${name}/pull/349`),
+      repositories.map((name) => `https://github.com/ultralytics/${name}/pull/349`),
     ]);
   });
 
