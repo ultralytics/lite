@@ -258,6 +258,12 @@ gh pr merge 347 -R ultralytics/handbook --squash`,
     ).toEqual([["https://github.com/ultralytics/lite/pull/192"]]);
   });
 
+  test("reads an unqualified command number inside Claude Code's Bash(...)", () => {
+    expect(references("⏺ Bash(gh pr view 16)", "https://github.com/ultralytics/skills").inferred).toEqual([
+      ["https://github.com/ultralytics/skills/pull/16"],
+    ]);
+  });
+
   test("finds a command after the word gh earlier on the line", () => {
     expect(
       explicit(`I checked with gh and then ran gh pr view 12 -R ultralytics/lite to confirm.

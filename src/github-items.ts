@@ -78,7 +78,7 @@ export function githubItemReferences(
     const numbers = match[3]
       .replace(GH_REPOSITORY, "$1")
       .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "")
-      .match(/(?:^|\s)([1-9]\d{0,8})(?=\s|$)/g);
+      .match(/(?:^|\s)([1-9]\d{0,8})(?=[\s)]|$)/g);
     if (numbers?.length !== 1) continue;
     const kind = match[1].toLowerCase() === "pr" ? "pull" : "issues";
     if (repository) add(match, repository, kind, numbers[0].trim(), 2);
