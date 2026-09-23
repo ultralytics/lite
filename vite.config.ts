@@ -20,6 +20,10 @@ export default defineConfig(async () => ({
     // File-tree icons stay separate files: a tree shows a dozen of them, so its lazy chunk carries
     // associations and URLs rather than hundreds of SVG bodies.
     assetsInlineLimit: (file) => (file.includes("jetbrains-file-icon-theme") ? false : undefined),
+    // The startup chunk (React, Base UI, and the shell) loads from disk, not the network, so the budget is
+    // what Lite starts with today (~700 kB) plus headroom; a new UI library that crosses it should be
+    // measured and lazy-loaded, as the terminal and file previews already are.
+    chunkSizeWarningLimit: 800,
     rollupOptions: {
       input: {
         main: path.resolve(import.meta.dirname, "./index.html"),

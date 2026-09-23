@@ -30,7 +30,7 @@ jobs:
           retries: 3
           retry_delay_seconds: 20
           timeout_minutes: 10
-          run: npm install --global bun@latest
+          run: npm install --global --allow-scripts=bun bun@latest
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable

@@ -1449,8 +1449,7 @@ fn ssh_native_session_state(
 }
 
 fn load_codex_server(app: &AppHandle) -> Result<CodexServer, String> {
-    #[cfg(unix)]
-    let endpoint = {
+    let endpoint = if cfg!(unix) {
         let home = std::env::var_os("CODEX_HOME")
             .filter(|home| !home.is_empty())
             .map(PathBuf::from)
@@ -1465,9 +1464,9 @@ fn load_codex_server(app: &AppHandle) -> Result<CodexServer, String> {
             "unix://{}",
             path_text(&home.join("app-server-control/app-server-control.sock"))
         )
+    } else {
+        String::new()
     };
-    #[cfg(windows)]
-    let endpoint = String::new();
     Ok(CodexServer(Mutex::new(CodexServerState {
         child: None,
         endpoint,
@@ -1520,10 +1519,10 @@ fn update_provider_session(
         if !is_provider_session_id(&provider_session_id) {
             return Err("Invalid provider session ID".into());
         }
-        if let Some(existing) = sessions.get(session_id) {
-            if existing == &provider_session_id {
-                return Ok(true);
-            }
+        if let Some(existing) = sessions.get(session_id)
+            && existing == &provider_session_id
+        {
+            return Ok(true);
         }
         // Claiming under the lock lets concurrent discoveries run without one stealing the other's session.
         if sessions
@@ -1820,18 +1819,17 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
         ("five_hour", "Current session"),
         ("seven_day", "Current week"),
     ] {
-        if let Some(window) = input.get("rate_limits").and_then(|limits| limits.get(key)) {
-            if let Some(used_percent) = window
+        if let Some(window) = input.get("rate_limits").and_then(|limits| limits.get(key))
+            && let Some(used_percent) = window
                 .get("used_percentage")
                 .and_then(serde_json::Value::as_f64)
-            {
-                windows.push(UsageWindow {
-                    label: label.into(),
-                    used_percent,
-                    resets_at: window.get("resets_at").and_then(serde_json::Value::as_u64),
-                    window_minutes: None,
-                });
-            }
+        {
+            windows.push(UsageWindow {
+                label: label.into(),
+                used_percent,
+                resets_at: window.get("resets_at").and_then(serde_json::Value::as_u64),
+                window_minutes: None,
+            });
         }
     }
     let snapshot = UsageSnapshot {
@@ -2552,37 +2550,35 @@ fn codex_usage(
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("Codex");
             for (key, suffix) in [("primary", ""), ("secondary", " secondary")] {
-                if let Some(window) = bucket.get(key).filter(|value| !value.is_null()) {
-                    if let Some(used_percent) = window
+                if let Some(window) = bucket.get(key).filter(|value| !value.is_null())
+                    && let Some(used_percent) = window
                         .get("usedPercent")
                         .and_then(serde_json::Value::as_f64)
-                    {
-                        windows.push(UsageWindow {
-                            label: format!("{name}{suffix}"),
-                            used_percent,
-                            resets_at: window.get("resetsAt").and_then(serde_json::Value::as_u64),
-                            window_minutes: window
-                                .get("windowDurationMins")
-                                .and_then(serde_json::Value::as_u64),
-                        });
-                    }
+                {
+                    windows.push(UsageWindow {
+                        label: format!("{name}{suffix}"),
+                        used_percent,
+                        resets_at: window.get("resetsAt").and_then(serde_json::Value::as_u64),
+                        window_minutes: window
+                            .get("windowDurationMins")
+                            .and_then(serde_json::Value::as_u64),
+                    });
                 }
             }
         }
-    } else if let Some(window) = rates.and_then(|value| value.pointer("/rateLimits/primary")) {
-        if let Some(used_percent) = window
+    } else if let Some(window) = rates.and_then(|value| value.pointer("/rateLimits/primary"))
+        && let Some(used_percent) = window
             .get("usedPercent")
             .and_then(serde_json::Value::as_f64)
-        {
-            windows.push(UsageWindow {
-                label: "Codex".into(),
-                used_percent,
-                resets_at: window.get("resetsAt").and_then(serde_json::Value::as_u64),
-                window_minutes: window
-                    .get("windowDurationMins")
-                    .and_then(serde_json::Value::as_u64),
-            });
-        }
+    {
+        windows.push(UsageWindow {
+            label: "Codex".into(),
+            used_percent,
+            resets_at: window.get("resetsAt").and_then(serde_json::Value::as_u64),
+            window_minutes: window
+                .get("windowDurationMins")
+                .and_then(serde_json::Value::as_u64),
+        });
     }
     let context = responses
         .get(&3)
@@ -3582,10 +3578,10 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
         }
         "shell" => {
             let mut command = CommandBuilder::new_default_prog();
-            #[cfg(target_os = "macos")]
-            command.env("TERM_PROGRAM", "Apple_Terminal");
-            #[cfg(target_os = "macos")]
-            command.env("TERM_SESSION_ID", session_id);
+            if cfg!(target_os = "macos") {
+                command.env("TERM_PROGRAM", "Apple_Terminal");
+                command.env("TERM_SESSION_ID", session_id);
+            }
             command
         }
         _ => return Err("Unknown session type".into()),
@@ -4080,20 +4076,16 @@ fn ssh_session_command(
     Ok(builder)
 }
 
-#[tauri::command]
-async fn spawn_session(
-    app: AppHandle,
-    sessions: State<'_, Sessions>,
-    roots: State<'_, Roots>,
-    provider_sessions: State<'_, ProviderSessions>,
-    codex_server: State<'_, CodexServer>,
-    output: Channel<InvokeResponseBody>,
+// Everything the interface decides about a session launch; Tauri supplies the rest of spawn_session.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionLaunch {
     session_id: String,
     run_id: String,
     root_id: String,
     cwd: String,
     host: Option<String>,
-    mut provider_session_id: Option<String>,
+    provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
     model: Option<String>,
@@ -4104,7 +4096,36 @@ async fn spawn_session(
     resume: bool,
     cols: u16,
     rows: u16,
+}
+
+#[tauri::command]
+async fn spawn_session(
+    app: AppHandle,
+    sessions: State<'_, Sessions>,
+    roots: State<'_, Roots>,
+    provider_sessions: State<'_, ProviderSessions>,
+    codex_server: State<'_, CodexServer>,
+    output: Channel<InvokeResponseBody>,
+    launch: SessionLaunch,
 ) -> Result<Option<String>, String> {
+    let SessionLaunch {
+        session_id,
+        run_id,
+        root_id,
+        cwd,
+        host,
+        mut provider_session_id,
+        agent,
+        provider,
+        model,
+        reasoning_effort,
+        mode,
+        initial_prompt,
+        theme,
+        resume,
+        cols,
+        rows,
+    } = launch;
     let root = roots
         .0
         .lock()
