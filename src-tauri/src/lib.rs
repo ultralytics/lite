@@ -2062,7 +2062,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             ));
         }
         query.push_str(
-            "}\nfragment f on IssueOrPullRequest {\n... on Issue { title url state createdAt updatedAt closedAt }\n... on PullRequest { title url state isDraft createdAt updatedAt closedAt mergedAt additions deletions }\n}",
+            "}\nfragment f on IssueOrPullRequest {\n__typename\n... on Issue { title state createdAt updatedAt closedAt }\n... on PullRequest { title state isDraft createdAt updatedAt closedAt mergedAt additions deletions }\n}",
         );
         let output = Command::new(gh)
             .args(["api", "graphql", "-f", &format!("query={query}")])
@@ -2108,10 +2108,19 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                 }]
                 .as_str()
                 .map(str::to_owned);
+                // GitHub answers a renamed repository under its new name. The item keeps the name it was
+                // asked by, which GitHub still redirects, so it stays the item its reference and the session
+                // know; only its kind comes from the answer.
+                let kind = if item["__typename"].as_str() == Some("PullRequest") {
+                    "pull"
+                } else {
+                    "issues"
+                };
                 found.push(GitHubItem {
-                    url: item["url"]
-                        .as_str()
-                        .map_or_else(|| lookup.url.clone(), str::to_owned),
+                    url: format!(
+                        "https://github.com/{}/{}/{kind}/{}",
+                        lookup.owner, lookup.repository, lookup.number
+                    ),
                     title: item["title"].as_str().map(str::to_owned),
                     state: Some(state.to_owned()),
                     occurred_at,
