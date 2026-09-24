@@ -289,6 +289,8 @@ export function TerminalView({
     };
     const observer = new ResizeObserver(settleResize);
     observer.observe(container);
+    // Display changes can update xterm's cell measurements after the container has settled.
+    if (terminal.element) observer.observe(terminal.element);
     // WebKit can miss the element resize when macOS moves a window onto the built-in display after
     // an external display disconnects. The native window event reaches the same fit owner.
     const resized = getCurrentWindow().onResized(settleResize);
