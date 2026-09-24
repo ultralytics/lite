@@ -64,6 +64,8 @@ jobs:
     if: needs.check.outputs.increment == 'true'
     strategy:
       fail-fast: false
+      # Each build merges and replaces the shared latest.json release asset.
+      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest
