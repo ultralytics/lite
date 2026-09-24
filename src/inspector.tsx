@@ -365,6 +365,8 @@ interface UsageSnapshot {
   contextTokens: number | null;
   costUsd: number | null;
   lifetimeTokens: number | null;
+  bankedResets: number | null;
+  bankedResetExpiries: (number | null)[];
   windows: UsageWindow[];
 }
 
@@ -1788,6 +1790,21 @@ function UsagePanel({
                   ) : null}
                 </Item>
               ))}
+              {usage.bankedResets != null ? (
+                <Item variant="outline" className="flex-col items-stretch">
+                  <ItemDescription>Banked resets</ItemDescription>
+                  <ItemTitle className="text-lg tabular-nums">{usage.bankedResets} available</ItemTitle>
+                  {usage.bankedResetExpiries.map((expiresAt, index) => (
+                    <ItemDescription key={index}>
+                      Reset {index + 1}:{" "}
+                      {expiresAt == null ? "No expiry" : `Expires ${formatTime.format(expiresAt * 1000)}`}
+                    </ItemDescription>
+                  ))}
+                  {usage.bankedResets > usage.bankedResetExpiries.length ? (
+                    <ItemDescription>Expiry dates unavailable for remaining resets.</ItemDescription>
+                  ) : null}
+                </Item>
+              ) : null}
               {usage.lifetimeTokens != null ? (
                 <Item variant="outline">
                   <ItemContent>

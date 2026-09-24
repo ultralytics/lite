@@ -828,6 +828,9 @@ pub struct UsageSnapshot {
     context_tokens: Option<u64>,
     cost_usd: Option<f64>,
     lifetime_tokens: Option<u64>,
+    banked_resets: Option<u64>,
+    #[serde(default)]
+    banked_reset_expiries: Vec<Option<u64>>,
     windows: Vec<UsageWindow>,
 }
 
@@ -1844,6 +1847,8 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
             .pointer("/cost/total_cost_usd")
             .and_then(serde_json::Value::as_f64),
         lifetime_tokens: None,
+        banked_resets: None,
+        banked_reset_expiries: Vec::new(),
         windows,
     };
     let usage = serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?;
@@ -2585,10 +2590,25 @@ fn codex_usage(
         .and_then(|response| response.pointer("/thread/path"))
         .and_then(serde_json::Value::as_str)
         .and_then(|path| codex_context(Path::new(path)));
+    let mut banked_reset_expiries: Vec<_> = rates
+        .and_then(|value| value.pointer("/rateLimitResetCredits/credits"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|credit| {
+            credit.get("status").and_then(serde_json::Value::as_str) == Some("available")
+        })
+        .map(|credit| credit.get("expiresAt").and_then(serde_json::Value::as_u64))
+        .collect();
+    banked_reset_expiries.sort_by_key(|expiry| expiry.unwrap_or(u64::MAX));
     Ok(UsageSnapshot {
         lifetime_tokens: summary
             .and_then(|value| value.pointer("/summary/lifetimeTokens"))
             .and_then(serde_json::Value::as_u64),
+        banked_resets: rates
+            .and_then(|value| value.pointer("/rateLimitResetCredits/availableCount"))
+            .and_then(serde_json::Value::as_u64),
+        banked_reset_expiries,
         windows,
         ..context.unwrap_or_default()
     })
