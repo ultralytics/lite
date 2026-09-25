@@ -2160,8 +2160,8 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                     deletions: item["deletions"].as_u64(),
                 });
             }
-            // The repository was read and searched, and the number names nothing in it.
-            Some(repository) if !repository.is_null() && not_found.contains(alias.as_str()) => {}
+            // GitHub has no such repository, or the number names nothing in it.
+            _ if not_found.contains(alias.as_str()) => {}
             _ => found.push(GitHubItem {
                 url: lookup.url.clone(),
                 title: None,

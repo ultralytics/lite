@@ -169,9 +169,10 @@ function sessionGitHubItems(sessionId: string) {
   return (sessions[sessionId] ?? []).filter((item) => !removed.has(itemKey(item.url)));
 }
 
-function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
+function retainGitHubItems(sessionId: string, updates: GitHubItem[], disowned = new Set<string>()) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
-  const items = mergeGitHubItems(sessions[sessionId] ?? [], updates);
+  const current = (sessions[sessionId] ?? []).filter((item) => !disowned.has(itemKey(item.url)));
+  const items = mergeGitHubItems(current, updates);
   sessions[sessionId] = items;
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
   return sessionGitHubItems(sessionId);
@@ -1529,7 +1530,11 @@ function GitPanel({
           const updates = checked.filter((item) =>
             known.has(itemKey(item.url)) ? item.title !== null : likely.has(item),
           );
-          setItems(retainGitHubItems(sessionId, updates));
+          // An item GitHub left out of its answer is one GitHub says does not exist, such as a link
+          // a redraw clipped, so the session forgets it rather than keeping it as printed.
+          const answered = new Set(checked.map((item) => itemKey(item.url)));
+          const disowned = new Set(urls.map(itemKey).filter((key) => !answered.has(key)));
+          setItems(retainGitHubItems(sessionId, updates, disowned));
         }
       })
       .catch(() => {})
@@ -1615,10 +1620,12 @@ function GitPanel({
   const removedRepositories = new Set(
     [...removedGitHubItems(sessionId)].map((item) => item.slice(0, item.lastIndexOf("#"))),
   );
+  // A link waits for its GitHub check before it is shown; only one GitHub could not answer shows as printed.
+  const checking = new Set(loadingUrls.map(itemKey));
   const repositories = repositoryGroups(
     remote,
     status ?? null,
-    mergeGitHubItems(loadingUrls.map(pendingGitHubItem), items),
+    items.filter((item) => item.state !== null || !checking.has(itemKey(item.url))),
   ).filter((repository) => !repository.url || !removedRepositories.has(githubRepositoryKey(repository.url)));
   const itemRepositories = new Set(items.map((item) => githubRepositoryKey(item.url)));
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
