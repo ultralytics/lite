@@ -2436,7 +2436,7 @@ fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositori
                 color: node["primaryLanguage"]["color"].as_str().map(str::to_owned),
                 cloned: github_name(owner).is_ok()
                     && github_name(name).is_ok()
-                    && root.join(owner).join(name).join(".git").exists(),
+                    && root.join(name).join(".git").exists(),
             })
         })
         .collect();
@@ -2460,7 +2460,9 @@ async fn github_repositories(app: AppHandle, query: String) -> Result<GitHubRepo
 // the path must be this repository's clone: Lite never adopts or overwrites anything else.
 fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathBuf, String> {
     let (owner, name) = (github_name(owner)?, github_name(name)?);
-    let path = root.join(owner).join(name);
+    // One folder per repository name: a same-named repository of another owner is refused below
+    // rather than sharing it.
+    let path = root.join(name);
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
     if path.exists() {
         let remote =
@@ -2502,7 +2504,7 @@ fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathB
         return Ok(path);
     }
     let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
-    fs::create_dir_all(root.join(owner)).map_err(|error| error.to_string())?;
+    fs::create_dir_all(root).map_err(|error| error.to_string())?;
     let mut clone = Command::new(gh);
     clone.args([
         "repo",

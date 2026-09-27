@@ -424,26 +424,17 @@ export function NewSessionDialog({
   }, [isOpen, recentFolders, source]);
 
   const separator = repositoriesRoot.includes("\\") ? "\\" : "/";
-  const clonePath = (repository: { owner: string; name: string }) =>
-    [repositoriesRoot, repository.owner, repository.name].join(separator);
+  const clonePath = (repository: { name: string }) => [repositoriesRoot, repository.name].join(separator);
   const listed = github?.repositories ?? [];
-  // The repositories Lite's own sessions ran in, newest first: clones under the repositories folder.
+  // The repositories Lite's own sessions ran in, newest first: the user's repositories cloned under
+  // the repositories folder.
   const recent: GitHubRepository[] = [];
   for (const session of [...sessions].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))) {
-    const [owner, name, rest] = (session.repo ?? "").slice(repositoriesRoot.length + 1).split(separator);
-    if (
-      repositoriesRoot &&
-      !session.host &&
-      session.repo?.startsWith(repositoriesRoot + separator) &&
-      owner &&
-      name &&
-      rest === undefined &&
-      !recent.some((entry) => fullName(entry) === `${owner}/${name}`)
-    )
-      recent.push({ owner, name, private: false, pushedAt: null, language: null, color: null, cloned: true });
+    const repository = listed.find((entry) => !session.host && session.repo === clonePath(entry));
+    if (repositoriesRoot && repository && !recent.includes(repository)) recent.push(repository);
   }
   const known = new Map<string, GitHubRepository>();
-  for (const repository of [...listed, ...recent, ...(found?.repositories ?? [])])
+  for (const repository of [...listed, ...(found?.repositories ?? [])])
     if (!known.has(fullName(repository).toLowerCase())) known.set(fullName(repository).toLowerCase(), repository);
   const needle = search.toLowerCase();
   const matches = (repository: GitHubRepository) => !needle || fullName(repository).toLowerCase().includes(needle);
@@ -462,7 +453,7 @@ export function NewSessionDialog({
     : [
         {
           label: "Recent in Lite",
-          repositories: recent.map((repository) => known.get(fullName(repository).toLowerCase()) ?? repository),
+          repositories: recent,
         },
         {
           label: "Your repositories",
