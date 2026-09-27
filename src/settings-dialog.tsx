@@ -2,11 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import {
-  Bell,
-  Coffee,
   ExternalLink,
-  EyeOff,
-  FolderCog,
   Info,
   Keyboard,
   KeyRound,
@@ -15,7 +11,6 @@ import {
   Plus,
   RefreshCw,
   RotateCcw,
-  Server,
   SlidersHorizontal,
   Sun,
   Trash2,
@@ -29,7 +24,6 @@ import {
   DialogBody,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -49,7 +43,6 @@ import {
   KEY_PROVIDERS,
   type KeyProvider,
   type ProviderAuth,
-  ProviderRow,
   providerName,
 } from "@/provider-auth";
 import {
@@ -86,8 +79,10 @@ function ShortcutRow({
   const [error, setError] = useState("");
   const { label } = SHORTCUTS[id];
   return (
-    <li className="flex items-center gap-3 py-1.5">
-      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+    <Item role="listitem" size="xs" className="rounded-none">
+      <ItemContent>
+        <ItemTitle className="font-normal">{label}</ItemTitle>
+      </ItemContent>
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
       {keys !== SHORTCUTS[id].keys ? (
         <ActionIconButton
@@ -142,7 +137,57 @@ function ShortcutRow({
       >
         {recording ? "Press keys…" : <ShortcutCaps keys={keys} />}
       </button>
-    </li>
+    </Item>
+  );
+}
+
+// A titled group of settings drawn as one list with divided rows, the way system settings group them.
+function Section({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string;
+  description?: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-end justify-between gap-4 px-1">
+        <div className="min-w-0">
+          <h3 className="text-sm font-medium">{title}</h3>
+          {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
+        </div>
+        {action}
+      </div>
+      <ItemGroup className="gap-0 divide-y rounded-lg border">{children}</ItemGroup>
+    </section>
+  );
+}
+
+// One setting: what it is and what it does on the left, its control on the right.
+function Setting({
+  title,
+  description,
+  media,
+  children,
+}: {
+  title: ReactNode;
+  description: ReactNode;
+  media?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Item role="listitem" className="rounded-none">
+      {media ? <ItemMedia variant="icon">{media}</ItemMedia> : null}
+      <ItemContent className="min-w-0">
+        <ItemTitle>{title}</ItemTitle>
+        <ItemDescription className="truncate">{description}</ItemDescription>
+      </ItemContent>
+      <ItemActions>{children}</ItemActions>
+    </Item>
   );
 }
 
@@ -268,11 +313,18 @@ export function SettingsDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:h-[36rem] sm:max-w-3xl">
+      <DialogContent className="sm:h-[38rem] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Personalize Lite and manage how agent sessions sign in.</DialogDescription>
+          <DialogDescription className="sr-only">
+            Change how Lite looks, runs sessions, signs in, and answers the keyboard.
+          </DialogDescription>
         </DialogHeader>
+        {error ? (
+          <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
         <DialogBody className="flex">
           <Tabs defaultValue={tab} orientation="vertical" className="min-h-full w-full gap-6">
             <TabsList variant="line" className="w-36 shrink-0 items-stretch justify-start border-r pr-4">
@@ -280,13 +332,9 @@ export function SettingsDialog({
                 <SlidersHorizontal />
                 General
               </TabsTrigger>
-              <TabsTrigger value="keys">
+              <TabsTrigger value="accounts">
                 <KeyRound />
-                API keys
-              </TabsTrigger>
-              <TabsTrigger value="files">
-                <FolderCog />
-                Files
+                Accounts
               </TabsTrigger>
               <TabsTrigger value="shortcuts">
                 <Keyboard />
@@ -297,154 +345,150 @@ export function SettingsDialog({
                 About
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="general" className="min-w-0">
-              <h2 className="text-base font-semibold">General</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">Personalize how Lite looks and responds.</p>
-              <ItemGroup>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">{theme === "dark" ? <Moon /> : <Sun />}</ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Dark mode</ItemTitle>
-                    <ItemDescription>Use Lite’s dark appearance.</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch
-                      aria-label="Dark mode"
-                      checked={theme === "dark"}
-                      onCheckedChange={(checked) => onThemeChange(checked ? "dark" : "light")}
-                    />
-                  </ItemActions>
-                </Item>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <Coffee />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Keep system awake</ItemTitle>
-                    <ItemDescription>
-                      Prevent automatic sleep and display shutoff while a session is active.
-                    </ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch aria-label="Keep system awake" checked={keepAwake} onCheckedChange={onKeepAwakeChange} />
-                  </ItemActions>
-                </Item>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <Server />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Remote SSH</ItemTitle>
-                    <ItemDescription>Show Remote SSH workspaces when creating a session.</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch aria-label="Remote SSH" checked={remoteSsh} onCheckedChange={onRemoteSshChange} />
-                  </ItemActions>
-                </Item>
+            <TabsContent value="general" className="min-w-0 space-y-6">
+              <Section title="Appearance">
+                <Setting title="Theme" description="How Lite and its terminals look.">
+                  <Tabs value={theme} onValueChange={(value) => onThemeChange(value as Theme)}>
+                    <TabsList>
+                      <TabsTrigger value="light">
+                        <Sun />
+                        Light
+                      </TabsTrigger>
+                      <TabsTrigger value="dark">
+                        <Moon />
+                        Dark
+                      </TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </Setting>
+              </Section>
+              <Section title="Sessions">
+                <Setting
+                  title="Repositories folder"
+                  description={
+                    <span className="font-mono text-xs" title={repositories}>
+                      {repositories || "…"}
+                    </span>
+                  }
+                >
+                  <Button variant="outline" size="sm" onClick={() => void changeRepositories()}>
+                    Change…
+                  </Button>
+                </Setting>
+                <Setting title="SSH hosts" description="Offer an SSH tab when starting a session.">
+                  <Switch aria-label="SSH hosts" checked={remoteSsh} onCheckedChange={onRemoteSshChange} />
+                </Setting>
+                <Setting title="Keep computer awake" description="Prevent sleep while any session is working.">
+                  <Switch aria-label="Keep computer awake" checked={keepAwake} onCheckedChange={onKeepAwakeChange} />
+                </Setting>
                 {notificationsSupported ? (
-                  <Item variant="outline">
-                    <ItemMedia variant="icon">
-                      <Bell />
-                    </ItemMedia>
-                    <ItemContent>
-                      <ItemTitle>macOS notifications</ItemTitle>
-                      <ItemDescription>Notify you when a background session is ready.</ItemDescription>
-                    </ItemContent>
-                    <ItemActions>
-                      <Switch
-                        aria-label="macOS notifications"
-                        checked={notifications}
-                        disabled={busy === "notifications"}
-                        onCheckedChange={(checked) => void changeNotifications(checked)}
-                      />
-                    </ItemActions>
-                  </Item>
+                  <Setting title="Notifications" description="Tell you when a background session is ready.">
+                    <Switch
+                      aria-label="Notifications"
+                      checked={notifications}
+                      disabled={busy === "notifications"}
+                      onCheckedChange={(checked) => void changeNotifications(checked)}
+                    />
+                  </Setting>
                 ) : null}
-              </ItemGroup>
-            </TabsContent>
-            <TabsContent value="keys" className="min-w-0">
-              <div className="mb-4 flex items-start justify-between gap-4">
-                <div>
-                  <h2 className="text-base font-semibold">API keys</h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    One key per vendor, kept on this computer. A saved key comes before the vendor’s own sign-in.
-                  </p>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button size="sm" className="shrink-0">
-                        <Plus />
-                        Add key
-                      </Button>
-                    }
+              </Section>
+              <Section title="File browser">
+                <Setting
+                  title="Show hidden files"
+                  description="Include files and folders whose names begin with a period."
+                >
+                  <Switch
+                    aria-label="Show hidden files"
+                    checked={hideHidden === false}
+                    disabled={hideHidden === undefined || busy === "hidden-files"}
+                    onCheckedChange={(show) => void changeHideHidden(!show)}
                   />
-                  <DropdownMenuContent align="end" className="w-52">
-                    {KEY_PROVIDERS.map((option) => (
-                      <DropdownMenuItem key={option.id} onClick={() => setKeying(option)}>
-                        <ProviderIcon agent={option.agent} provider={option.provider} className="size-4" />
-                        {providerName(option)}
-                      </DropdownMenuItem>
-                    ))}
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-              {saved.length ? (
-                <ItemGroup>
-                  {saved.map(({ option, status }) => (
-                    <Item key={option.id} variant="outline">
-                      <ProviderRow option={option} title={providerName(option)}>
-                        <span className="font-mono">{status.keyHint}…</span> · Used by {agentLabel(option.agent)}
-                      </ProviderRow>
-                      <ItemActions>
-                        <ActionIconButton
-                          size="icon-sm"
-                          tooltip={`Replace the ${providerName(option)} key`}
-                          aria-label={`Replace the ${providerName(option)} key`}
-                          onClick={() => setKeying(option)}
-                        >
-                          <Pencil />
-                        </ActionIconButton>
-                        <ActionIconButton
-                          size="icon-sm"
-                          className="hover:text-destructive"
-                          tooltip={`Remove the ${providerName(option)} key`}
-                          aria-label={`Remove the ${providerName(option)} key`}
-                          disabled={busy === option.id}
-                          onClick={() => void remove(option.id)}
-                        >
-                          {busy === option.id ? <Spinner /> : <Trash2 />}
-                        </ActionIconButton>
-                      </ItemActions>
-                    </Item>
-                  ))}
-                </ItemGroup>
-              ) : (
-                <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-                  {auth ? "No API keys yet. Add one to use a vendor without signing in through its CLI." : "…"}
-                </p>
-              )}
-              <h3 className="mt-8 text-sm font-semibold">Sign-ins</h3>
-              <p className="mt-1 mb-3 text-sm text-muted-foreground">
-                Each CLI keeps its own sign-in. Lite only runs the sign-in and never reads it.
-              </p>
-              <ItemGroup>
+                </Setting>
+              </Section>
+            </TabsContent>
+            <TabsContent value="accounts" className="min-w-0 space-y-6">
+              <Section
+                title="API keys"
+                description="One key per vendor, kept on this computer. A saved key comes before the vendor’s sign-in."
+                action={
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button size="sm" className="shrink-0">
+                          <Plus />
+                          Add key
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="end" className="w-52">
+                      {KEY_PROVIDERS.map((option) => (
+                        <DropdownMenuItem key={option.id} onClick={() => setKeying(option)}>
+                          <ProviderIcon agent={option.agent} provider={option.provider} className="size-4" />
+                          {providerName(option)}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                }
+              >
+                {saved.length ? (
+                  saved.map(({ option, status }) => (
+                    <Setting
+                      key={option.id}
+                      media={<ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />}
+                      title={providerName(option)}
+                      description={
+                        <>
+                          <span className="font-mono">{status.keyHint}…</span> · Used by {agentLabel(option.agent)}
+                        </>
+                      }
+                    >
+                      <ActionIconButton
+                        size="icon-sm"
+                        tooltip={`Replace the ${providerName(option)} key`}
+                        aria-label={`Replace the ${providerName(option)} key`}
+                        onClick={() => setKeying(option)}
+                      >
+                        <Pencil />
+                      </ActionIconButton>
+                      <ActionIconButton
+                        size="icon-sm"
+                        className="hover:text-destructive"
+                        tooltip={`Remove the ${providerName(option)} key`}
+                        aria-label={`Remove the ${providerName(option)} key`}
+                        disabled={busy === option.id}
+                        onClick={() => void remove(option.id)}
+                      >
+                        {busy === option.id ? <Spinner /> : <Trash2 />}
+                      </ActionIconButton>
+                    </Setting>
+                  ))
+                ) : (
+                  <Item role="listitem" className="justify-center rounded-none py-6 text-muted-foreground">
+                    {auth ? "No API keys yet. Add one to use a vendor without signing in through its CLI." : "…"}
+                  </Item>
+                )}
+              </Section>
+              <Section
+                title="Sign-ins"
+                description="Each CLI keeps its own sign-in. Lite runs the sign-in and never reads it."
+              >
                 {SIGN_INS.map((option) => {
                   const signedIn = auth?.find((entry) => entry.name === option.id)?.cliAuthMethod === "provider";
                   return (
-                    <Item key={option.id} variant="outline">
-                      <ProviderRow option={option}>
-                        {auth ? (signedIn ? "Signed in" : "Not signed in") : "Checking…"}
-                      </ProviderRow>
-                      <ItemActions>
-                        <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
-                          {signedIn ? "Sign in again" : "Sign in"}
-                        </Button>
-                      </ItemActions>
-                    </Item>
+                    <Setting
+                      key={option.id}
+                      media={<ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />}
+                      title={agentLabel(option.agent)}
+                      description={auth ? (signedIn ? "Signed in" : "Not signed in") : "Checking…"}
+                    >
+                      <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
+                        {signedIn ? "Sign in again" : "Sign in"}
+                      </Button>
+                    </Setting>
                   );
                 })}
-              </ItemGroup>
+              </Section>
               <ApiKeyDialog
                 provider={keying}
                 replacing={saved.some(({ option }) => option.id === keying?.id)}
@@ -452,53 +496,8 @@ export function SettingsDialog({
                 onSaved={read}
               />
             </TabsContent>
-            <TabsContent value="files" className="min-w-0">
-              <h2 className="text-base font-semibold">Files</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">
-                Choose which files appear in the browser and where Lite keeps the repositories it clones.
-              </p>
-              <ItemGroup>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <EyeOff />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Hide hidden files</ItemTitle>
-                    <ItemDescription>Hide files and folders whose names begin with a period.</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch
-                      aria-label="Hide hidden files"
-                      checked={hideHidden ?? false}
-                      disabled={hideHidden === undefined || busy === "hidden-files"}
-                      onCheckedChange={(hide) => void changeHideHidden(hide)}
-                    />
-                  </ItemActions>
-                </Item>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <GitHubLogomark />
-                  </ItemMedia>
-                  <ItemContent className="min-w-0">
-                    <ItemTitle>Repositories folder</ItemTitle>
-                    <ItemDescription className="truncate font-mono text-xs" title={repositories}>
-                      {repositories || "…"}
-                    </ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Button variant="outline" size="sm" onClick={() => void changeRepositories()}>
-                      Change…
-                    </Button>
-                  </ItemActions>
-                </Item>
-              </ItemGroup>
-            </TabsContent>
-            <TabsContent value="shortcuts" className="min-w-0">
-              <h2 className="text-base font-semibold">Keyboard shortcuts</h2>
-              <p className="mt-1 mb-2 text-sm text-muted-foreground">
-                Click a shortcut and press the keys you would rather use.
-              </p>
-              <ul className="divide-y">
+            <TabsContent value="shortcuts" className="min-w-0 space-y-6">
+              <Section title="Customizable" description="Click a shortcut, then press the keys you would rather use.">
                 {SHORTCUT_IDS.map((id) => (
                   <ShortcutRow
                     key={id}
@@ -507,30 +506,29 @@ export function SettingsDialog({
                     onRecord={(on) => setRecording((current) => (on ? id : current === id ? null : current))}
                   />
                 ))}
-              </ul>
+              </Section>
               {FIXED_SHORTCUTS.map(({ title, rows }) => (
-                <div key={title}>
-                  <h3 className="mt-5 mb-1 text-xs font-medium text-muted-foreground">{title}</h3>
-                  <ul className="divide-y">
-                    {rows.map(({ label, keys }) => (
-                      <li key={label} className="flex items-center gap-3 py-1.5">
-                        <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-                        <span className="flex items-center gap-1.5 pr-1.5">
-                          {keys.map((combo, index) => (
-                            <span key={combo} className="flex items-center gap-1.5">
-                              {index ? <span className="text-xs text-muted-foreground">/</span> : null}
-                              <ShortcutCaps keys={combo} />
-                            </span>
-                          ))}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                <Section key={title} title={title}>
+                  {rows.map(({ label, keys }) => (
+                    <Item key={label} role="listitem" size="xs" className="rounded-none">
+                      <ItemContent>
+                        <ItemTitle className="font-normal">{label}</ItemTitle>
+                      </ItemContent>
+                      <span className="flex items-center gap-1.5 pr-1.5">
+                        {keys.map((combo, index) => (
+                          <span key={combo} className="flex items-center gap-1.5">
+                            {index ? <span className="text-xs text-muted-foreground">/</span> : null}
+                            <ShortcutCaps keys={combo} />
+                          </span>
+                        ))}
+                      </span>
+                    </Item>
+                  ))}
+                </Section>
               ))}
             </TabsContent>
-            <TabsContent value="about" className="min-w-0">
-              <div className="flex flex-col items-center pt-3 text-center">
+            <TabsContent value="about" className="min-w-0 space-y-6">
+              <div className="flex flex-col items-center pt-2 text-center">
                 <UltralyticsLogomark className="size-14" />
                 <div className="mt-3 flex items-center gap-2">
                   <h2 className="text-xl font-semibold">Lite</h2>
@@ -539,54 +537,10 @@ export function SettingsDialog({
                 <p className="mt-1 max-w-sm text-sm text-muted-foreground">
                   A fast, local workspace for AI coding agents, with no indexing, telemetry, or cloud service.
                 </p>
-              </div>
-              <ItemGroup className="mt-6 gap-2.5">
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <GitHubLogomark />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Open source</ItemTitle>
-                    <ItemDescription>AGPL-3.0 · github.com/ultralytics/lite</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
-                    >
-                      View repository
-                      <ExternalLink />
-                    </Button>
-                  </ItemActions>
-                </Item>
-              </ItemGroup>
-              <div className="mt-4 flex items-start justify-between gap-4">
-                <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
-                  {commit ? (
-                    <>
-                      <dt className="text-muted-foreground">Revision</dt>
-                      <dd className="truncate font-mono">{commit}</dd>
-                    </>
-                  ) : null}
-                  {built ? (
-                    <>
-                      <dt className="text-muted-foreground">Built</dt>
-                      <dd className="truncate">{built}</dd>
-                    </>
-                  ) : null}
-                  {repo ? (
-                    <>
-                      <dt className="text-muted-foreground">Working tree</dt>
-                      <dd className="truncate font-mono" title={repo}>
-                        {repo}
-                      </dd>
-                    </>
-                  ) : null}
-                </dl>
                 <Button
                   variant="outline"
                   size="sm"
+                  className="mt-4"
                   onClick={() => {
                     onOpenChange(false);
                     onCheckForUpdates();
@@ -596,17 +550,47 @@ export function SettingsDialog({
                   Check for updates
                 </Button>
               </div>
+              <Section title="Details">
+                {commit ? (
+                  <Setting title="Revision" description={<span className="font-mono">{commit}</span>}>
+                    {null}
+                  </Setting>
+                ) : null}
+                {built ? (
+                  <Setting title="Built" description={built}>
+                    {null}
+                  </Setting>
+                ) : null}
+                {repo ? (
+                  <Setting
+                    title="Working tree"
+                    description={
+                      <span className="font-mono" title={repo}>
+                        {repo}
+                      </span>
+                    }
+                  >
+                    {null}
+                  </Setting>
+                ) : null}
+                <Setting
+                  media={<GitHubLogomark />}
+                  title="Open source"
+                  description="AGPL-3.0 · github.com/ultralytics/lite"
+                >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+                  >
+                    View repository
+                    <ExternalLink />
+                  </Button>
+                </Setting>
+              </Section>
             </TabsContent>
           </Tabs>
         </DialogBody>
-        <DialogFooter className={error ? "sm:justify-between" : undefined}>
-          {error ? (
-            <p role="alert" className="self-center text-sm text-destructive">
-              {error}
-            </p>
-          ) : null}
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

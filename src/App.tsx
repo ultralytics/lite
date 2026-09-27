@@ -106,7 +106,7 @@ import {
   syncTerminalTheme,
   writeSession,
 } from "@/output-store";
-import { ProviderRow, providerName } from "@/provider-auth";
+import { providerName } from "@/provider-auth";
 import { SettingsDialog } from "@/settings-dialog";
 import {
   IS_MAC,
@@ -1162,7 +1162,13 @@ function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void;
             render={<button type="button" />}
             onClick={() => onChoose(option.id)}
           >
-            <ProviderRow option={option}>{providerName(option)}</ProviderRow>
+            <ItemMedia variant="icon">
+              <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+            </ItemMedia>
+            <ItemContent className="gap-0.5">
+              <ItemTitle className="w-full truncate">{sessionLabel(option)}</ItemTitle>
+              <ItemDescription className="truncate text-xs leading-4">{providerName(option)}</ItemDescription>
+            </ItemContent>
           </Item>
         ))}
       </div>
@@ -3873,7 +3879,7 @@ function App() {
             onCreate={createSession}
             onGitHubSignIn={() => void signIn("shell")}
             onApiKeys={() => {
-              setSettingsTab("keys");
+              setSettingsTab("accounts");
               setSettingsOpen(true);
             }}
           />

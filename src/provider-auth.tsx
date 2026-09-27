@@ -15,9 +15,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
-import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
-import { type Agent, agentLabel, type ModelProvider, providerLabel, sessionLabel } from "@/types";
+import { type Agent, agentLabel, type ModelProvider, providerLabel } from "@/types";
 
 export const AUTH_PROVIDERS = {
   codex: {
@@ -138,33 +137,6 @@ export interface ProviderAuth {
 // label already; only a harness Lite has no ModelProvider for carries a name of its own.
 export function providerName(option: { provider?: ModelProvider; label?: string }): string {
   return option.provider ? providerLabel(option.provider) : (option.label ?? "");
-}
-
-// The one way a provider is drawn in a list: its mark, its name, and a single line beneath. The welcome
-// grid and the settings list both render this, so the mark size, the name, and the line's type can only be
-// changed for both at once. Each passes its own words as children. The new-session dialog draws harnesses
-// instead, with the provider on the line beneath.
-export function ProviderRow({
-  option,
-  title = sessionLabel(option),
-  children,
-}: {
-  option: { agent: Agent; provider?: ModelProvider };
-  // The harness by default; the settings list names the vendor a key belongs to instead.
-  title?: string;
-  children?: ReactNode;
-}) {
-  return (
-    <>
-      <ItemMedia variant="icon">
-        <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
-      </ItemMedia>
-      <ItemContent className="gap-0.5">
-        <ItemTitle className="w-full truncate">{title}</ItemTitle>
-        <ItemDescription className="truncate text-xs leading-4">{children}</ItemDescription>
-      </ItemContent>
-    </>
-  );
 }
 
 // How a new-session row's provider is connected: a key Lite saved, a key in the CLI's own configuration, or
