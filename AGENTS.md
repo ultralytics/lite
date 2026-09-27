@@ -49,7 +49,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 bun run tauri build --debug --no-bundle
 ```
 
-Use the Bun version in `package.json`, stable Rust, and Tauri's platform prerequisites. Ultralytics Actions formats only Markdown/YAML/JSON/CSS and headers, so run `bun run format` and `cargo fmt` yourself. `bun run local` builds a separate Lite Dev app with separate data. CI builds on macOS, Windows, and Linux; verify all affected platform branches. Terminal/UI changes also need desktop validation with background sessions and alternate screens.
+Use the Bun version in `package.json`, stable Rust, and Tauri's platform prerequisites. Ultralytics Actions formats with Prettier, not Biome, and never runs `cargo fmt`, so run `bun run format` and `cargo fmt` yourself. `bun run local` builds a separate Lite Dev app with separate data. CI builds on macOS, Windows, and Linux; verify all affected platform branches. Terminal/UI changes also need desktop validation with background sessions and alternate screens.
 
 ## Where to look
 
