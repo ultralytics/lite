@@ -11,6 +11,8 @@ import {
   Keyboard,
   KeyRound,
   Moon,
+  Pencil,
+  Plus,
   RefreshCw,
   RotateCcw,
   Server,
@@ -20,7 +22,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { GitHubLogomark, UltralyticsLogomark } from "@/brand-icons";
+import { GitHubLogomark, ProviderIcon, UltralyticsLogomark } from "@/brand-icons";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,24 +34,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemFooter,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { including, without } from "@/lib/utils";
 import {
-  ApiKeyInput,
+  ApiKeyDialog,
   AUTH_PROVIDERS,
+  KEY_PROVIDERS,
+  type KeyProvider,
   type ProviderAuth,
-  ProviderAuthDescription,
   ProviderRow,
   providerName,
 } from "@/provider-auth";
@@ -67,9 +66,9 @@ import {
   useShortcutKeys,
 } from "@/shortcuts";
 import type { Theme } from "@/theme";
-import type { Agent } from "@/types";
+import { type Agent, agentLabel } from "@/types";
 
-const providers = Object.values(AUTH_PROVIDERS);
+const SIGN_INS = Object.values(AUTH_PROVIDERS).filter((option) => option.signIn);
 
 // One shortcut row: the caps it answers to, which turn into a recorder on a click and take the next
 // chord pressed. A chord another shortcut already holds, or one without a modifier, is refused with a
@@ -190,12 +189,18 @@ export function SettingsDialog({
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [hideHidden, setHideHidden] = useState<boolean>();
   const [repositories, setRepositories] = useState("");
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [editing, setEditing] = useState<Set<string>>(new Set());
+  // The vendor whose key is being added or replaced.
+  const [keying, setKeying] = useState<KeyProvider>();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notificationsSupported, setNotificationsSupported] = useState<boolean>();
   const [recording, setRecording] = useState<ShortcutId | null>(null);
+
+  // The keys Lite holds, one per vendor, in the vendors' own order.
+  const saved = KEY_PROVIDERS.flatMap((option) => {
+    const status = auth?.find((entry) => entry.name === option.id);
+    return status?.keyHint ? [{ option, status }] : [];
+  });
 
   const read = useCallback(async () => {
     setAuth(await invoke<ProviderAuth[]>("provider_auth"));
@@ -204,8 +209,6 @@ export function SettingsDialog({
   useEffect(() => {
     if (!isOpen) return;
     setError("");
-    setDrafts({});
-    setEditing(new Set());
     void Promise.all([
       read(),
       invoke<boolean>("notifications_supported").then(setNotificationsSupported),
@@ -213,26 +216,6 @@ export function SettingsDialog({
       invoke<string>("repositories_directory").then(setRepositories),
     ]).catch((reason) => setError(String(reason)));
   }, [isOpen, read]);
-
-  function edit(id: string, open: boolean) {
-    setEditing((current) => (open ? including(current, id) : without(current, id)));
-    if (!open) setDrafts((current) => ({ ...current, [id]: "" }));
-  }
-
-  async function save(id: string) {
-    setError("");
-    setBusy(id);
-    try {
-      await invoke("save_api_key", { name: id, key: drafts[id] ?? "" });
-      setDrafts((current) => ({ ...current, [id]: "" }));
-      edit(id, false);
-      await read();
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy("");
-    }
-  }
 
   async function remove(id: string) {
     setError("");
@@ -380,73 +363,94 @@ export function SettingsDialog({
               </ItemGroup>
             </TabsContent>
             <TabsContent value="keys" className="min-w-0">
-              <h2 className="text-base font-semibold">API keys</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">
-                One key per vendor, kept on this computer. A saved key takes priority over the vendor’s own sign-in.
-              </p>
-              <ItemGroup>
-                {providers.map((option) => {
-                  const status = auth?.find((entry) => entry.name === option.id);
-                  const open = editing.has(option.id);
-                  const draft = drafts[option.id] ?? "";
-                  return (
+              <div className="mb-4 flex items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-base font-semibold">API keys</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    One key per vendor, kept on this computer. A saved key comes before the vendor’s own sign-in.
+                  </p>
+                </div>
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    render={
+                      <Button size="sm" className="shrink-0">
+                        <Plus />
+                        Add key
+                      </Button>
+                    }
+                  />
+                  <DropdownMenuContent align="end" className="w-52">
+                    {KEY_PROVIDERS.map((option) => (
+                      <DropdownMenuItem key={option.id} onClick={() => setKeying(option)}>
+                        <ProviderIcon agent={option.agent} provider={option.provider} className="size-4" />
+                        {providerName(option)}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              {saved.length ? (
+                <ItemGroup>
+                  {saved.map(({ option, status }) => (
                     <Item key={option.id} variant="outline">
                       <ProviderRow option={option} title={providerName(option)}>
-                        <ProviderAuthDescription provider={option} status={status} />
+                        <span className="font-mono">…{status.keyHint}</span> · Used by {agentLabel(option.agent)}
                       </ProviderRow>
-                      {open ? null : (
-                        <ItemActions>
-                          {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (
-                            <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
-                              Sign in
-                            </Button>
-                          ) : null}
-                          {"variable" in option ? (
-                            <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
-                              {status?.keyHint ? "Replace API key" : "Use API key"}
-                            </Button>
-                          ) : null}
-                          {status?.keyHint ? (
-                            <ActionIconButton
-                              size="icon-sm"
-                              className="hover:text-destructive"
-                              tooltip="Delete this key"
-                              aria-label={`Delete the ${providerName(option)} key`}
-                              disabled={busy === option.id}
-                              onClick={() => void remove(option.id)}
-                            >
-                              {busy === option.id ? <Spinner /> : <Trash2 />}
-                            </ActionIconButton>
-                          ) : null}
-                        </ItemActions>
-                      )}
-                      {open && "variable" in option ? (
-                        <ItemFooter>
-                          <ApiKeyInput
-                            label={`${providerName(option)} API key`}
-                            value={draft}
-                            onChange={(value) => setDrafts((current) => ({ ...current, [option.id]: value }))}
-                            onSubmit={() => void save(option.id)}
-                            onCancel={() => edit(option.id, false)}
-                          />
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={!draft.trim() || busy === option.id}
-                            onClick={() => void save(option.id)}
-                          >
-                            {busy === option.id ? <Spinner /> : null}
-                            Save
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
-                            Cancel
-                          </Button>
-                        </ItemFooter>
-                      ) : null}
+                      <ItemActions>
+                        <ActionIconButton
+                          size="icon-sm"
+                          tooltip={`Replace the ${providerName(option)} key`}
+                          aria-label={`Replace the ${providerName(option)} key`}
+                          onClick={() => setKeying(option)}
+                        >
+                          <Pencil />
+                        </ActionIconButton>
+                        <ActionIconButton
+                          size="icon-sm"
+                          className="hover:text-destructive"
+                          tooltip={`Remove the ${providerName(option)} key`}
+                          aria-label={`Remove the ${providerName(option)} key`}
+                          disabled={busy === option.id}
+                          onClick={() => void remove(option.id)}
+                        >
+                          {busy === option.id ? <Spinner /> : <Trash2 />}
+                        </ActionIconButton>
+                      </ItemActions>
+                    </Item>
+                  ))}
+                </ItemGroup>
+              ) : (
+                <p className="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                  {auth ? "No API keys yet. Add one to use a vendor without signing in through its CLI." : "…"}
+                </p>
+              )}
+              <h3 className="mt-8 text-sm font-semibold">Sign-ins</h3>
+              <p className="mt-1 mb-3 text-sm text-muted-foreground">
+                Each CLI keeps its own sign-in. Lite only runs the sign-in and never reads it.
+              </p>
+              <ItemGroup>
+                {SIGN_INS.map((option) => {
+                  const signedIn = auth?.find((entry) => entry.name === option.id)?.cliAuthMethod === "provider";
+                  return (
+                    <Item key={option.id} variant="outline">
+                      <ProviderRow option={option}>
+                        {auth ? (signedIn ? "Signed in" : "Not signed in") : "Checking…"}
+                      </ProviderRow>
+                      <ItemActions>
+                        <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
+                          {signedIn ? "Sign in again" : "Sign in"}
+                        </Button>
+                      </ItemActions>
                     </Item>
                   );
                 })}
               </ItemGroup>
+              <ApiKeyDialog
+                provider={keying}
+                replacing={saved.some(({ option }) => option.id === keying?.id)}
+                onClose={() => setKeying(undefined)}
+                onSaved={read}
+              />
             </TabsContent>
             <TabsContent value="files" className="min-w-0">
               <h2 className="text-base font-semibold">Files</h2>
