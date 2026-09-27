@@ -1,7 +1,20 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { ChevronDown, Download, FolderOpen, GitBranch, Lock, RefreshCw, Search, Server, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  CircleAlert,
+  Download,
+  FolderOpen,
+  GitBranch,
+  Lock,
+  RefreshCw,
+  Search,
+  Server,
+  TriangleAlert,
+  X,
+} from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { GitHubLogomark, GitLogomark, ProviderIcon } from "@/brand-icons";
@@ -1101,22 +1114,43 @@ export function NewSessionDialog({
                   <div className="space-y-1.5">
                     {remote ? <Label htmlFor="project-folder">Folder on host</Label> : null}
                     <div className="flex gap-2">
-                      <Input
-                        id="project-folder"
-                        value={path}
-                        className="font-mono"
-                        placeholder={remote ? "/home/user/project" : "Type or choose a project folder…"}
-                        aria-label={remote ? undefined : "Project folder"}
-                        autoComplete="off"
-                        spellCheck={false}
-                        aria-invalid={folder === "other" || undefined}
-                        onChange={(event) => {
-                          setPath(event.target.value);
-                          setFolder("checking");
-                          setRepo(undefined);
-                          setWorktree("");
-                        }}
-                      />
+                      <div className="relative min-w-0 flex-1">
+                        <Input
+                          id="project-folder"
+                          value={path}
+                          className={`pr-8 font-mono ${folder === "directory" ? "border-success focus-visible:border-success focus-visible:ring-success/20" : folder === "missing" ? "border-amber-500 focus-visible:border-amber-500 focus-visible:ring-amber-500/20" : ""}`}
+                          placeholder={remote ? "/home/user/project" : "Type or choose a project folder…"}
+                          aria-label={remote ? undefined : "Project folder"}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-invalid={folder === "other" || undefined}
+                          aria-describedby={
+                            folder === "missing" || folder === "other" ? "project-folder-status" : undefined
+                          }
+                          onChange={(event) => {
+                            setPath(event.target.value);
+                            setFolder("checking");
+                            setRepo(undefined);
+                            setWorktree("");
+                          }}
+                        />
+                        {folder === "directory" ? (
+                          <Check
+                            className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-success"
+                            aria-hidden="true"
+                          />
+                        ) : folder === "missing" ? (
+                          <TriangleAlert
+                            className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-amber-500"
+                            aria-hidden="true"
+                          />
+                        ) : folder === "other" ? (
+                          <CircleAlert
+                            className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-destructive"
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                      </div>
                       {remote ? null : (
                         <Button type="button" variant="outline" onClick={() => void chooseFolder()}>
                           <FolderOpen />
@@ -1130,11 +1164,13 @@ export function NewSessionDialog({
                         key authentication must be non-interactive.
                       </p>
                     ) : folder === "missing" ? (
-                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                      <p id="project-folder-status" className="text-xs text-amber-600 dark:text-amber-400">
                         This folder does not exist and will be created.
                       </p>
                     ) : folder === "other" ? (
-                      <p className="text-xs text-destructive">This path is not a folder.</p>
+                      <p id="project-folder-status" className="text-xs text-destructive">
+                        This path is not a folder.
+                      </p>
                     ) : null}
                   </div>
                   {!remote && recentFolders.length ? (
