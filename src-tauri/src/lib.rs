@@ -2512,8 +2512,9 @@ async fn github_repositories(
 }
 
 // The repository's local clone: one the user already has, used as it is so a launch never waits on the
-// network, or Lite's own under the repositories folder, cloned on first use. gh clones with the user's own sign-in
-// and sets up a fork's upstream; a partial clone keeps the first download small. A folder already at
+// network, or Lite's own under the repositories folder, cloned whole on first use so later checkouts
+// and agents never fetch contents on demand without gh's sign-in. gh clones with the user's own sign-in
+// and sets up a fork's upstream. A folder already at
 // the path must be this repository's clone: Lite never adopts or overwrites anything else.
 fn prepare_repository_path(
     root: &Path,
@@ -2546,8 +2547,6 @@ fn prepare_repository_path(
         "clone",
         &format!("{owner}/{name}"),
         &path_text(&path),
-        "--",
-        "--filter=blob:none",
     ]);
     // gh runs git itself, and a launched app's bare PATH does not reach it.
     if let Some(path) = user_path() {
@@ -3522,8 +3521,8 @@ enum CliAuthMethod {
     ApiKey,
 }
 
-// A key's first characters, as Platform shows them: enough to recognize it, never its last four and never
-// more than eleven.
+// A key's first characters, as Platform shows them: enough to tell which vendor's key it is, never its
+// last four and never more than eleven.
 fn key_hint(key: &str) -> String {
     let key = key.trim();
     key.chars()
@@ -3597,7 +3596,7 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
                 let cli_auth = cli_auth(&app, name);
                 ProviderAuth {
                     name: name.to_owned(),
-                    // Only the first characters travel to the interface, enough to tell two keys apart.
+                    // Only the key's first characters travel to the interface.
                     key_hint: keys.get(name).map(|key| key_hint(key)),
                     cli_auth_method: cli_auth,
                 }
@@ -6335,10 +6334,11 @@ fn create_worktree_inner(
     // git needs --orphan for the same start, and the record simply has no ancestor to check later.
     let head = match recovery.as_ref() {
         Some(recorded) => (!recorded.head.is_empty()).then(|| recorded.head.clone()),
-        None if upstream => Some(
+        None if upstream => {
             command_output(&git, &folder, &["rev-parse", "refs/remotes/origin/HEAD"])
-                .or_else(|_| command_output(&git, &folder, &["rev-parse", "HEAD"]))?,
-        ),
+                .or_else(|_| command_output(&git, &folder, &["rev-parse", "HEAD"]))
+                .ok()
+        }
         None => command_output(&git, &folder, &["rev-parse", "HEAD"]).ok(),
     };
     let delete_branch = !restoring || !branch_exists(&git, &repo, branch)?;

@@ -248,6 +248,8 @@ export function NewSessionDialog({
     return stored === "local" || stored === "ssh" ? stored : "github";
   });
   const source: Source = sourceSelected === "ssh" && !remoteSsh ? "local" : sourceSelected;
+  const opensOnSsh = useRef(false);
+  opensOnSsh.current = source === "ssh";
   const remote = source === "ssh";
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
@@ -329,7 +331,6 @@ export function NewSessionDialog({
     setError("");
     setAvailability({});
     setAuth(undefined);
-    setGitHub(lastRepositories);
     setFound(undefined);
     setQuery("");
     void invoke<string>("repositories_directory")
@@ -339,28 +340,19 @@ export function NewSessionDialog({
       .catch((reason) => {
         if (!disposed) setError(String(reason));
       });
-    void invoke<GitHubRepositories>("github_repositories", { query: "", known: knownRef.current })
-      .then((result) => {
-        lastRepositories = result;
-        if (!disposed) setGitHub(result);
-      })
-      .catch((reason) => {
-        if (!disposed) {
-          setGitHub(lastRepositories ?? { signedIn: true, repositories: [] });
-          setError(String(reason));
-        }
-      });
-    void invoke<DirectoryGrant | null>("default_directory", { path: initialPath ?? null })
-      .then((selected) => {
-        if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
-        else if (selected) {
-          setDirectory(selected);
-          setPath(selected.path);
-        }
-      })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
-      });
+    // A local folder is no default for an SSH host, so the SSH tab opens with its field empty.
+    if (!opensOnSsh.current)
+      void invoke<DirectoryGrant | null>("default_directory", { path: initialPath ?? null })
+        .then((selected) => {
+          if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
+          else if (selected) {
+            setDirectory(selected);
+            setPath(selected.path);
+          }
+        })
+        .catch((reason) => {
+          if (!disposed) setError(String(reason));
+        });
     void invoke<CodexPicker[]>("codex_pickers")
       .then((result) => {
         if (disposed) return;
@@ -408,6 +400,29 @@ export function NewSessionDialog({
       disposed = true;
     };
   }, [initialPath, isOpen]);
+
+  // GitHub is asked for the list only while its tab shows. A reopened dialog shows the last list at once
+  // while it asks again.
+  const onGitHub = source === "github";
+  useEffect(() => {
+    if (!isOpen || !onGitHub) return;
+    let disposed = false;
+    setGitHub(lastRepositories);
+    void invoke<GitHubRepositories>("github_repositories", { query: "", known: knownRef.current })
+      .then((result) => {
+        lastRepositories = result;
+        if (!disposed) setGitHub(result);
+      })
+      .catch((reason) => {
+        if (!disposed) {
+          setGitHub(lastRepositories ?? { signedIn: true, repositories: [] });
+          setError(String(reason));
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [isOpen, onGitHub]);
 
   // GitHub is searched once typing pauses, for repositories the user's own list does not hold.
   const search = query.trim();
@@ -770,16 +785,19 @@ export function NewSessionDialog({
     const status = availability[choice.id];
     // Locally an agent starts only once its check answered that it can; SSH checks on the host.
     if (busy || !placeReady || remoteUnsupported(remote, choice) || (!remote && !status)) return;
-    if (!remote && status && !status.available) {
-      if (status.installable) void install(choice);
-      else if ("variable" in choice && !choice.signIn) setKeyFor(choice);
-      else
-        void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
-          setError(String(reason)),
-        );
-      return;
-    }
-    void create(choice);
+    if (!remote && status && !status.available) setUp(choice);
+    else void create(choice);
+  }
+
+  // What an agent that is not ready needs, wherever the session would run: its install, its API key, or
+  // its setup guide.
+  function setUp(choice: Choice) {
+    if (availability[choice.id]?.installable) void install(choice);
+    else if ("variable" in choice && !choice.signIn) setKeyFor(choice);
+    else
+      void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
+        setError(String(reason)),
+      );
   }
 
   // Enter anywhere in the dialog starts the agent used last; the number keys start the others.
@@ -1038,7 +1056,7 @@ export function NewSessionDialog({
             {installing === choice.id ? <Spinner /> : <Download />}
           </ActionIconButton>
         ) : (
-          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => launch(agent)}>
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setUp(choice)}>
             Set up
           </Button>
         )}

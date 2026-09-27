@@ -68,14 +68,14 @@ export function folderName(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? "";
 }
 
-// A session is named for its folder until someone or something names it better; a root path that
-// names no folder falls back to "Session". Creation and every is-it-still-the-default comparison
-// share this one spelling.
 // A path as a terminal would show it, with the home folder as ~ on every platform.
 export function tilde(path: string): string {
   return path.replace(/^(\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)(?=[\\/]|$)/, "~");
 }
 
+// A session is named for its folder until someone or something names it better; a root path that
+// names no folder falls back to "Session". Creation and every is-it-still-the-default comparison
+// share this one spelling.
 export function defaultSessionName(cwd: string): string {
   return folderName(cwd) || "Session";
 }
