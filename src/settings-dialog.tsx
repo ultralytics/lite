@@ -181,6 +181,7 @@ export function SettingsDialog({
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [hideHidden, setHideHidden] = useState<boolean>();
+  const [repositories, setRepositories] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Set<string>>(new Set());
   const [revealed, setRevealed] = useState<Set<string>>(new Set());
@@ -203,6 +204,7 @@ export function SettingsDialog({
       read(),
       invoke<boolean>("notifications_supported").then(setNotificationsSupported),
       invoke<boolean>("hide_hidden_files").then(setHideHidden),
+      invoke<string>("repositories_directory").then(setRepositories),
     ]).catch((reason) => setError(String(reason)));
   }, [isOpen, read]);
 
@@ -257,6 +259,16 @@ export function SettingsDialog({
       setError(String(reason));
     } finally {
       setBusy("");
+    }
+  }
+
+  async function changeRepositories() {
+    setError("");
+    try {
+      const chosen = await invoke<string | null>("choose_repositories_directory");
+      if (chosen) setRepositories(chosen);
+    } catch (reason) {
+      setError(String(reason));
     }
   }
 
@@ -461,7 +473,9 @@ export function SettingsDialog({
             </TabsContent>
             <TabsContent value="files" className="min-w-0">
               <h2 className="text-base font-semibold">Files</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">Choose which files appear in the browser.</p>
+              <p className="mt-1 mb-4 text-sm text-muted-foreground">
+                Choose which files appear in the browser and where Lite keeps the repositories it clones.
+              </p>
               <ItemGroup>
                 <Item variant="outline">
                   <ItemMedia variant="icon">
@@ -478,6 +492,22 @@ export function SettingsDialog({
                       disabled={hideHidden === undefined || busy === "hidden-files"}
                       onCheckedChange={(hide) => void changeHideHidden(hide)}
                     />
+                  </ItemActions>
+                </Item>
+                <Item variant="outline">
+                  <ItemMedia variant="icon">
+                    <GitHubLogomark />
+                  </ItemMedia>
+                  <ItemContent className="min-w-0">
+                    <ItemTitle>Repositories folder</ItemTitle>
+                    <ItemDescription className="truncate font-mono text-xs" title={repositories}>
+                      {repositories || "…"}
+                    </ItemDescription>
+                  </ItemContent>
+                  <ItemActions>
+                    <Button variant="outline" size="sm" onClick={() => void changeRepositories()}>
+                      Change…
+                    </Button>
                   </ItemActions>
                 </Item>
               </ItemGroup>

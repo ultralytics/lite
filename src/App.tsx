@@ -2415,7 +2415,8 @@ function App() {
         mode: "login",
         cwd: grant.path,
         rootId: grant.id,
-        name: `Sign in · ${sessionLabel({ agent })}`,
+        // A shell sign-in is the GitHub CLI's, which the new-session dialog lists repositories through.
+        name: `Sign in · ${agent === "shell" ? "GitHub" : sessionLabel({ agent })}`,
         running: false,
       });
     } catch (reason) {
@@ -3858,6 +3859,7 @@ function App() {
             choice={newSessionChoice}
             initialPath={newSessionPath}
             remoteSsh={remoteSsh}
+            sessions={sessions}
             onOpenChange={(open) => {
               setNewSessionOpen(open);
               // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
@@ -3867,6 +3869,7 @@ function App() {
               }
             }}
             onCreate={createSession}
+            onGitHubSignIn={() => void signIn("shell")}
           />
           <SessionSwitcher
             open={sessionSwitcherOpen}

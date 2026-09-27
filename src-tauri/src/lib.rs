@@ -2284,6 +2284,267 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
     .unwrap_or(unanswered)
 }
 
+// Where Lite keeps the repositories it clones. The user may move it; otherwise it is `lite` in the home
+// folder, which every platform has.
+fn repositories_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let record = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("repositories-directory");
+    match fs::read_to_string(record) {
+        Ok(path) => Ok(PathBuf::from(path)),
+        Err(_) => Ok(app
+            .path()
+            .home_dir()
+            .map_err(|error| error.to_string())?
+            .join("lite")),
+    }
+}
+
+#[tauri::command]
+fn repositories_directory(app: AppHandle) -> Result<String, String> {
+    repositories_directory_path(&app).map(|path| path_text(&path))
+}
+
+#[tauri::command]
+async fn choose_repositories_directory(app: AppHandle) -> Result<Option<String>, String> {
+    let current = repositories_directory_path(&app)?;
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_title("Choose where Lite keeps repositories");
+    if current.is_dir() {
+        dialog = dialog.set_directory(current);
+    }
+    let Some(path) = dialog.blocking_pick_folder() else {
+        return Ok(None);
+    };
+    let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    write_atomic(
+        &app.path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?
+            .join("repositories-directory"),
+        path_text(&path).as_bytes(),
+    )?;
+    Ok(Some(path_text(&path)))
+}
+
+// An owner or repository name as GitHub allows it. Both become folder names under the repositories
+// folder, so the dot names that mean "here" and "up" are refused along with every separator.
+fn github_name(name: &str) -> Result<&str, String> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-._".contains(character))
+    {
+        return Err(format!("“{name}” is not a GitHub name"));
+    }
+    Ok(name)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+enum GitHubStatus {
+    Ready,
+    SignedOut,
+    Missing,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubRepository {
+    owner: String,
+    name: String,
+    private: bool,
+    pushed_at: Option<String>,
+    language: Option<String>,
+    color: Option<String>,
+    // Lite already holds a clone, so starting a session skips the download.
+    cloned: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubRepositories {
+    status: GitHubStatus,
+    repositories: Vec<GitHubRepository>,
+}
+
+// The user's own repositories, most recently pushed first, or GitHub's matches for a search. gh
+// carries the sign-in, so Lite never reads a token; a failed request asks gh whether anyone is
+// signed in at all, which is the one failure the dialog can fix.
+fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositories, String> {
+    let Some(gh) = resolve_executable("gh") else {
+        return Ok(GitHubRepositories {
+            status: GitHubStatus::Missing,
+            repositories: Vec::new(),
+        });
+    };
+    let fields = "name owner { login } isPrivate pushedAt primaryLanguage { name color }";
+    let query = query.trim();
+    let mut command = Command::new(&gh);
+    command.args(["api", "graphql"]);
+    if query.is_empty() {
+        command.args(["-f", &format!(
+            "query=query {{ viewer {{ repositories(first: 50, orderBy: {{field: PUSHED_AT, direction: DESC}}, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]) {{ nodes {{ {fields} }} }} }} }}"
+        )]);
+    } else {
+        // "owner/partial" narrows to one owner; anything else searches repository names.
+        let search = match query.split_once('/') {
+            Some((owner, rest)) => format!("user:{owner} {rest} in:name"),
+            None => format!("{query} in:name"),
+        };
+        command.args([
+            "-f",
+            &format!("query=query($q: String!) {{ search(query: $q, type: REPOSITORY, first: 20) {{ nodes {{ ... on Repository {{ {fields} }} }} }} }}"),
+            "-f",
+            &format!("q={search}"),
+        ]);
+    }
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let signed_in = Command::new(&gh)
+            .args(["auth", "status"])
+            .output()
+            .is_ok_and(|status| status.status.success());
+        if !signed_in {
+            return Ok(GitHubRepositories {
+                status: GitHubStatus::SignedOut,
+                repositories: Vec::new(),
+            });
+        }
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    let body: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    let nodes = if query.is_empty() {
+        &body["data"]["viewer"]["repositories"]["nodes"]
+    } else {
+        &body["data"]["search"]["nodes"]
+    };
+    let repositories = nodes
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            let owner = node["owner"]["login"].as_str()?;
+            let name = node["name"].as_str()?;
+            Some(GitHubRepository {
+                owner: owner.to_owned(),
+                name: name.to_owned(),
+                private: node["isPrivate"].as_bool().unwrap_or(false),
+                pushed_at: node["pushedAt"].as_str().map(str::to_owned),
+                language: node["primaryLanguage"]["name"].as_str().map(str::to_owned),
+                color: node["primaryLanguage"]["color"].as_str().map(str::to_owned),
+                cloned: github_name(owner).is_ok()
+                    && github_name(name).is_ok()
+                    && root.join(owner).join(name).join(".git").exists(),
+            })
+        })
+        .collect();
+    Ok(GitHubRepositories {
+        status: GitHubStatus::Ready,
+        repositories,
+    })
+}
+
+#[tauri::command]
+async fn github_repositories(app: AppHandle, query: String) -> Result<GitHubRepositories, String> {
+    let root = repositories_directory_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || list_github_repositories(&root, &query))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+// The repository's copy under the repositories folder, cloned on first use and fetched on every later
+// one, so a session's worktree starts from what GitHub has now. gh clones with the user's own sign-in
+// and sets up a fork's upstream; a partial clone keeps the first download small. A folder already at
+// the path must be this repository's clone: Lite never adopts or overwrites anything else.
+fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathBuf, String> {
+    let (owner, name) = (github_name(owner)?, github_name(name)?);
+    let path = root.join(owner).join(name);
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    if path.exists() {
+        let remote =
+            command_output(&git, &path, &["remote", "get-url", "origin"]).map_err(|_| {
+                format!(
+                    "{} exists and is not a clone of {owner}/{name}",
+                    path_text(&path)
+                )
+            })?;
+        let expected = format!("https://github.com/{owner}/{name}").to_lowercase();
+        if browse_url(&remote).map(|url| url.to_lowercase()) != Some(expected) {
+            return Err(format!(
+                "{} is a clone of {remote}, not {owner}/{name}",
+                path_text(&path)
+            ));
+        }
+        // The fetch signs in the way gh's clone did: through gh as Git's credential helper for GitHub.
+        let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
+        let mut fetch = Command::new(&git);
+        fetch.arg("-C").arg(&path).args([
+            "-c",
+            "credential.https://github.com.helper=",
+            "-c",
+            &format!(
+                "credential.https://github.com.helper=!\"{}\" auth git-credential",
+                path_text(&gh)
+            ),
+            "fetch",
+            "--quiet",
+            "origin",
+        ]);
+        if let Some(path) = user_path() {
+            fetch.env("PATH", path);
+        }
+        let output = fetch.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        }
+        return Ok(path);
+    }
+    let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
+    fs::create_dir_all(root.join(owner)).map_err(|error| error.to_string())?;
+    let mut clone = Command::new(gh);
+    clone.args([
+        "repo",
+        "clone",
+        &format!("{owner}/{name}"),
+        &path_text(&path),
+        "--",
+        "--filter=blob:none",
+    ]);
+    // gh runs git itself, and a launched app's bare PATH does not reach it.
+    if let Some(path) = user_path() {
+        clone.env("PATH", path);
+    }
+    let output = clone.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+async fn prepare_repository(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    owner: String,
+    name: String,
+) -> Result<DirectoryGrant, String> {
+    let root = repositories_directory_path(&app)?;
+    let path =
+        tauri::async_runtime::spawn_blocking(move || prepare_repository_path(&root, &owner, &name))
+            .await
+            .map_err(|error| error.to_string())??;
+    grant_directory(&app, &roots, path, None)
+}
+
 #[tauri::command]
 fn revoke_directory(app: AppHandle, roots: State<Roots>, root_id: String) -> Result<(), String> {
     update_roots(&app, &roots, |roots| {
@@ -3730,10 +3991,16 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
 }
 
 // Each CLI owns its sign-in and opens the browser itself, so Lite only runs the command and shows it.
+// A shell sign-in is GitHub's: the GitHub CLI owns the sign-in Lite's repository list and clones use.
 fn login_command(agent: &str) -> Result<CommandBuilder, String> {
-    let mut command = agent_builder(agent)?;
+    let mut command = match agent {
+        "shell" => {
+            CommandBuilder::new(resolve_executable("gh").ok_or("Could not find gh in your PATH")?)
+        }
+        _ => agent_builder(agent)?,
+    };
     command.args(match agent {
-        "claude" => vec!["auth", "login"],
+        "claude" | "shell" => vec!["auth", "login"],
         "codex" | "kimi" => vec!["login"],
         "gemini" | "qwen" => Vec::new(),
         _ => return Err("This provider signs in with an API key".into()),
@@ -5846,6 +6113,8 @@ struct Repository {
     branch: String,
     root: String,
     worktree: String,
+    // Where the folder was cloned from, as a link, when it is a host a browser can open.
+    remote: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -5890,6 +6159,9 @@ async fn directory_probe(app: AppHandle, path: String) -> Result<DirectoryProbe,
             worktree: path_text(&candidate.path),
             branch: candidate.branch,
             root: path_text(&root),
+            remote: command_output(&git, &path, &["remote", "get-url", "origin"])
+                .ok()
+                .and_then(|remote| browse_url(&remote)),
         }),
     })
 }
@@ -5902,16 +6174,20 @@ async fn create_worktree(
     roots: State<'_, Roots>,
     root_id: String,
     branch: String,
+    upstream: bool,
 ) -> Result<DirectoryGrant, String> {
     grant_known(roots.inner(), &root_id)?;
-    create_worktree_inner(&app, roots.inner(), root_id, branch)
+    create_worktree_inner(&app, roots.inner(), root_id, branch, upstream)
 }
 
+// `upstream` starts the branch from the remote's default branch instead of the folder's commit: a
+// repository Lite cloned is only ever fetched, so its checkout lags what GitHub has.
 fn create_worktree_inner(
     app: &AppHandle,
     roots: &Roots,
     root_id: String,
     branch: String,
+    upstream: bool,
 ) -> Result<DirectoryGrant, String> {
     let (folder, recovery) = match root_path(roots, &root_id) {
         Ok(folder) => (folder, None),
@@ -5981,6 +6257,11 @@ fn create_worktree_inner(
     // git needs --orphan for the same start, and the record simply has no ancestor to check later.
     let head = match recovery.as_ref() {
         Some(recorded) => (!recorded.head.is_empty()).then(|| recorded.head.clone()),
+        None if upstream => Some(command_output(
+            &git,
+            &folder,
+            &["rev-parse", "refs/remotes/origin/HEAD"],
+        )?),
         None => command_output(&git, &folder, &["rev-parse", "HEAD"]).ok(),
     };
     let delete_branch = !restoring || !branch_exists(&git, &repo, branch)?;
@@ -6143,7 +6424,7 @@ async fn restore_worktree(
         }
         return grant_directory(&app, roots.inner(), path, Some(root_id)).map(Some);
     }
-    create_worktree_inner(&app, roots.inner(), root_id, String::new()).map(Some)
+    create_worktree_inner(&app, roots.inner(), root_id, String::new(), false).map(Some)
 }
 
 // What closing a worktree session needs to know before it asks. recorded is false when Lite has
@@ -6818,6 +7099,10 @@ pub fn run() {
             git_remote,
             directory_probe,
             create_worktree,
+            github_repositories,
+            prepare_repository,
+            repositories_directory,
+            choose_repositories_directory,
             restore_worktree,
             worktree_state,
             remove_worktree,
@@ -6860,6 +7145,15 @@ mod tests {
     use super::*;
     use std::ffi::OsStr;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn github_names_stay_one_folder_deep() {
+        assert_eq!(github_name("ultralytics"), Ok("ultralytics"));
+        assert_eq!(github_name("lite.js-2_x"), Ok("lite.js-2_x"));
+        for name in ["", ".", "..", "a/b", "a\\b", "~", "name with space"] {
+            assert!(github_name(name).is_err(), "{name:?} passed");
+        }
+    }
 
     #[test]
     fn session_locale_is_utf8_only_on_macos() {
