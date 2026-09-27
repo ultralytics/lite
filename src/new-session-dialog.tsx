@@ -153,14 +153,20 @@ function Tile({ children, className }: { children: ReactNode; className?: string
   );
 }
 
-// The line under a harness: its provider's mark and name, then what the row has to say about it.
+// The vendor whose mark a harness carries: OpenAI's for Codex, the harness's own otherwise.
+const harnessVendor = (agent: Agent) => (agent === "codex" ? "openai" : undefined);
+
+// The line under a harness: its provider's name, then what the row has to say about it. The provider's
+// mark joins the name only when it is not the harness's own, which the row's main mark already shows.
 function ProviderLine({ choice, children }: { choice: Choice; children: ReactNode }) {
   const provider = providerName(choice);
   return (
     <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
       {provider ? (
         <>
-          <ProviderIcon agent={choice.agent} provider={choice.provider} className="size-3 shrink-0" />
+          {choice.provider !== harnessVendor(choice.agent) ? (
+            <ProviderIcon agent={choice.agent} provider={choice.provider} className="size-3 shrink-0" />
+          ) : null}
           <span className="shrink-0 text-foreground/75">{provider}</span>
           <span aria-hidden="true">·</span>
         </>
@@ -776,7 +782,7 @@ export function NewSessionDialog({
           className="flex h-14 min-w-0 flex-1 items-center gap-3 rounded-xl pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
         >
           <Tile>
-            <ProviderIcon agent={agent} provider={agent === "codex" ? "openai" : undefined} className="size-5" />
+            <ProviderIcon agent={agent} provider={harnessVendor(agent)} className="size-5" />
           </Tile>
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex items-center gap-2 text-sm font-medium">
@@ -893,7 +899,7 @@ export function NewSessionDialog({
     return (
       <div key={agent} className="flex h-12 items-center gap-3 rounded-xl border border-dashed pr-2 pl-3">
         <Tile className="size-8 opacity-60 grayscale-[60%]">
-          <ProviderIcon agent={agent} provider={agent === "codex" ? "openai" : undefined} className="size-4" />
+          <ProviderIcon agent={agent} provider={harnessVendor(agent)} className="size-4" />
         </Tile>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="text-sm font-medium text-muted-foreground">{agentLabel(agent)}</span>
