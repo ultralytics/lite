@@ -376,15 +376,33 @@ const formatNumber = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
 });
 
-// A quota window turns over on the minute as far as anyone using it is concerned, so it is named to
-// the minute; the seconds only ever changed the width of the line.
-const formatTime = new Intl.DateTimeFormat(undefined, {
-  year: "numeric",
-  month: "numeric",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+const formatClock = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const formatWeekday = new Intl.DateTimeFormat(undefined, { weekday: "long" });
+const formatDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+
+// A moment ahead as someone planning around it asks about it: how long until then, and which day and time
+// that is — "in 3 hr 20 min · today 8:40 PM", "in 4 days · Tuesday 5:20 PM". The counterpart of relativeAge.
+function timeUntil(seconds: number) {
+  const at = new Date(seconds * 1000);
+  const left = at.getTime() - Date.now();
+  const minutes = Math.round(left / 60000);
+  const hours = Math.floor(minutes / 60);
+  const wait =
+    left <= 0
+      ? "now"
+      : minutes < 1
+        ? "in under a minute"
+        : minutes < 60
+          ? `in ${minutes} min`
+          : hours < 48
+            ? `in ${hours} hr${hours < 10 && minutes % 60 ? ` ${minutes % 60} min` : ""}`
+            : `in ${Math.round(hours / 24)} days`;
+  const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((midnight(at) - midnight(new Date())) / 86_400_000);
+  const day =
+    days === 0 ? "today" : days === 1 ? "tomorrow" : days < 7 ? formatWeekday.format(at) : formatDay.format(at);
+  return `${wait} · ${day} ${formatClock.format(at)}`;
+}
 
 function Loading({ label }: { label: string }) {
   return (
@@ -1796,7 +1814,7 @@ function UsagePanel({
                 >
                   <Meter label={window.label} value={window.usedPercent} />
                   {window.resetsAt != null ? (
-                    <ItemDescription>Resets {formatTime.format(window.resetsAt * 1000)}</ItemDescription>
+                    <ItemDescription>Resets {timeUntil(window.resetsAt)}</ItemDescription>
                   ) : null}
                 </Item>
               ))}
@@ -1806,8 +1824,7 @@ function UsagePanel({
                   <ItemTitle className="text-lg tabular-nums">{usage.bankedResets} available</ItemTitle>
                   {usage.bankedResetExpiries.map((expiresAt, index) => (
                     <ItemDescription key={index}>
-                      Reset {index + 1}:{" "}
-                      {expiresAt == null ? "No expiry" : `Expires ${formatTime.format(expiresAt * 1000)}`}
+                      Reset {index + 1}: {expiresAt == null ? "No expiry" : `Expires ${timeUntil(expiresAt)}`}
                     </ItemDescription>
                   ))}
                   {usage.bankedResets > usage.bankedResetExpiries.length ? (
