@@ -6179,7 +6179,18 @@ async fn create_worktree(
     upstream: bool,
 ) -> Result<DirectoryGrant, String> {
     grant_known(roots.inner(), &root_id)?;
-    create_worktree_inner(&app, roots.inner(), root_id, branch, upstream)
+    // Checking out a worktree writes the whole tree, so it waits off the runtime other commands share.
+    tauri::async_runtime::spawn_blocking(move || {
+        create_worktree_inner(
+            &app,
+            app.state::<Roots>().inner(),
+            root_id,
+            branch,
+            upstream,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // `upstream` starts the branch from the remote's default branch instead of the folder's commit: a

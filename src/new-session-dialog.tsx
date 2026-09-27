@@ -257,7 +257,15 @@ export function NewSessionDialog({
   const [updates, setUpdates] = useState<Record<string, boolean | null>>({});
   // What creation is doing right now. Creation runs commands against the dialog's grant, so closing
   // must wait for it: a Cancel mid-command would revoke the grant the command is still using.
-  const [creating, setCreating] = useState("");
+  // The launch under way: the harness, where it runs, each step as it reads while running and once done,
+  // and how many are done.
+  const [launching, setLaunching] = useState<{
+    choice: Choice;
+    place: string;
+    steps: [running: string, done: string][];
+    done: number;
+  }>();
+  const advance = () => setLaunching((current) => current && { ...current, done: current.done + 1 });
   const [error, setError] = useState("");
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
   const [repo, setRepo] = useState<string | null>();
@@ -555,7 +563,7 @@ export function NewSessionDialog({
   }
 
   function changeOpen(open: boolean) {
-    if (!open && (installing || creating)) return;
+    if (!open && (installing || launching)) return;
     if (!open && directory) {
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
@@ -578,12 +586,23 @@ export function NewSessionDialog({
       if (source === "github") {
         if (!selected) return;
         const repository = selected;
-        setCreating(repository.cloned ? `Fetching ${fullName(repository)}…` : `Cloning ${fullName(repository)}…`);
+        setLaunching({
+          choice,
+          place: fullName(repository),
+          steps: [
+            repository.cloned
+              ? [`Fetching ${fullName(repository)}`, `Fetched ${fullName(repository)}`]
+              : [`Cloning ${fullName(repository)}`, `Cloned ${fullName(repository)}`],
+            ["Creating worktree", "Created worktree"],
+            [`Starting ${agentLabel(choice.agent)}`, `Started ${agentLabel(choice.agent)}`],
+          ],
+          done: 0,
+        });
         const main = await invoke<DirectoryGrant>("prepare_repository", {
           owner: repository.owner,
           name: repository.name,
         });
-        setCreating("Creating worktree…");
+        advance();
         try {
           place = await invoke<DirectoryGrant>("create_worktree", {
             rootId: main.id,
@@ -594,6 +613,7 @@ export function NewSessionDialog({
           void invoke("revoke_directory", { rootId: main.id });
           throw reason;
         }
+        advance();
         worktree = true;
         root = main.path;
         fallbackName = repository.name;
@@ -601,7 +621,16 @@ export function NewSessionDialog({
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setSelectedName(fullName(repository));
       } else {
-        setCreating("Starting…");
+        const making = !remote && Boolean(repo) && worktreeOn;
+        setLaunching({
+          choice,
+          place: placeLabel,
+          steps: [
+            ...(making ? [["Creating worktree", "Created worktree"] as [string, string]] : []),
+            [`Starting ${agentLabel(choice.agent)}`, `Started ${agentLabel(choice.agent)}`],
+          ],
+          done: 0,
+        });
         place = await grant();
         // The probe's answer can lag the folder field, so the granted folder is asked directly:
         // the worktree and the recorded repository always describe where the session will run.
@@ -610,12 +639,12 @@ export function NewSessionDialog({
         // The switch must still describe this folder: root === repo fails when the folder changed
         // after the probe that enabled the option, and a worktree is never made on a stale answer.
         if (root && root === repo && worktreeOn) {
-          setCreating("Creating worktree…");
           place = await invoke<DirectoryGrant>("create_worktree", {
             rootId: place.id,
             branch: branch.trim(),
             upstream: false,
           });
+          advance();
           worktree = true;
         }
         fallbackName = defaultSessionName(place.path);
@@ -646,7 +675,7 @@ export function NewSessionDialog({
     } catch (reason) {
       setError(String(reason));
     } finally {
-      setCreating("");
+      setLaunching(undefined);
     }
   }
 
@@ -704,7 +733,7 @@ export function NewSessionDialog({
   // Green is kept for a place Lite has confirmed: a repository it can clone or fetch, or a folder that
   // exists. A folder about to be created stays amber and an SSH host is only checked once a session starts.
   const confirmed = placeReady && (source === "github" || folder === "directory");
-  const busy = Boolean(installing || creating);
+  const busy = Boolean(installing || launching);
   // The session the user asked for starts once the provider answers that its new key makes it ready.
   async function keySaved(choice?: Choice) {
     if (!choice) return;
@@ -1003,7 +1032,7 @@ export function NewSessionDialog({
         initialFocus={() => searchRef.current ?? folderRef.current ?? true}
         className="gap-0 p-0 sm:h-[min(40rem,calc(100dvh-2rem))] sm:max-w-4xl"
       >
-        <form onSubmit={submit} onKeyDown={numberKey} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <form onSubmit={submit} onKeyDown={numberKey} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <DialogHeader className="px-5 pt-4 pb-3">
             <DialogTitle>New session</DialogTitle>
             <DialogDescription className="sr-only">
@@ -1356,11 +1385,7 @@ export function NewSessionDialog({
               <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-2">
                 <p className={SECTION}>Start with</p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {creating ? (
-                    <span className="flex items-center gap-1.5">
-                      <Spinner /> {creating}
-                    </span>
-                  ) : placeReady ? (
+                  {placeReady ? (
                     <span className="flex items-center gap-1.5">
                       <span
                         className={cn(
@@ -1406,6 +1431,46 @@ export function NewSessionDialog({
               Start an agent
             </span>
           </div>
+          {launching ? (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-popover/80 backdrop-blur-sm">
+              <div
+                role="status"
+                aria-live="polite"
+                className="w-80 space-y-4 rounded-xl border bg-popover p-5 shadow-lg"
+              >
+                <div className="flex items-center gap-3">
+                  <Tile className="size-10">
+                    <ProviderIcon
+                      agent={launching.choice.agent}
+                      provider={harnessVendor(launching.choice.agent)}
+                      className="size-5"
+                    />
+                  </Tile>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">Starting {agentLabel(launching.choice.agent)}</p>
+                    <p className="truncate text-xs text-muted-foreground">in {launching.place}</p>
+                  </div>
+                </div>
+                <ol className="space-y-2.5 text-sm">
+                  {launching.steps.map(([running, done], index) => (
+                    <li
+                      key={running}
+                      className={cn("flex items-center gap-2.5", index > launching.done && "text-muted-foreground")}
+                    >
+                      {index < launching.done ? (
+                        <Check aria-label="Done" className="size-4 shrink-0 text-success" />
+                      ) : index === launching.done ? (
+                        <Spinner className="size-4 shrink-0" />
+                      ) : (
+                        <span className="size-4 shrink-0 rounded-full border" />
+                      )}
+                      {index < launching.done ? done : index === launching.done ? `${running}…` : running}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            </div>
+          ) : null}
         </form>
         <ApiKeyDialog
           provider={keyFor}
