@@ -2,6 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import {
+  Check,
   ExternalLink,
   Info,
   Keyboard,
@@ -59,7 +60,10 @@ import {
   useShortcutKeys,
 } from "@/shortcuts";
 import type { Theme } from "@/theme";
-import { type Agent, agentLabel } from "@/types";
+import { type Agent, agentLabel, tilde } from "@/types";
+
+// A row inside a section's list: the list draws the frame, each row only the line above it.
+const ROW = "rounded-none border-x-0 border-b-0 first:border-t-0";
 
 const SIGN_INS = Object.values(AUTH_PROVIDERS).filter((option) => option.signIn);
 
@@ -79,7 +83,7 @@ function ShortcutRow({
   const [error, setError] = useState("");
   const { label } = SHORTCUTS[id];
   return (
-    <Item role="listitem" size="xs" className="rounded-none">
+    <Item role="listitem" variant="outline" size="xs" className={ROW}>
       <ItemContent>
         <ItemTitle className="font-normal">{label}</ItemTitle>
       </ItemContent>
@@ -162,7 +166,7 @@ function Section({
         </div>
         {action}
       </div>
-      <ItemGroup className="gap-0 divide-y rounded-lg border">{children}</ItemGroup>
+      <ItemGroup className="gap-0 rounded-lg border">{children}</ItemGroup>
     </section>
   );
 }
@@ -180,7 +184,7 @@ function Setting({
   children: ReactNode;
 }) {
   return (
-    <Item role="listitem" className="rounded-none">
+    <Item role="listitem" variant="outline" className={ROW}>
       {media ? <ItemMedia variant="icon">{media}</ItemMedia> : null}
       <ItemContent className="min-w-0">
         <ItemTitle>{title}</ItemTitle>
@@ -348,18 +352,26 @@ export function SettingsDialog({
             <TabsContent value="general" className="min-w-0 space-y-6">
               <Section title="Appearance">
                 <Setting title="Theme" description="How Lite and its terminals look.">
-                  <Tabs value={theme} onValueChange={(value) => onThemeChange(value as Theme)}>
-                    <TabsList>
-                      <TabsTrigger value="light">
-                        <Sun />
-                        Light
-                      </TabsTrigger>
-                      <TabsTrigger value="dark">
-                        <Moon />
-                        Dark
-                      </TabsTrigger>
-                    </TabsList>
-                  </Tabs>
+                  <fieldset aria-label="Theme" className="flex rounded-lg border-0 bg-muted p-0.5">
+                    {(
+                      [
+                        ["light", Sun, "Light"],
+                        ["dark", Moon, "Dark"],
+                      ] as const
+                    ).map(([value, Icon, label]) => (
+                      <Button
+                        key={value}
+                        size="sm"
+                        variant={theme === value ? "outline" : "ghost"}
+                        aria-pressed={theme === value}
+                        className={theme === value ? "shadow-xs" : "text-muted-foreground"}
+                        onClick={() => onThemeChange(value)}
+                      >
+                        <Icon />
+                        {label}
+                      </Button>
+                    ))}
+                  </fieldset>
                 </Setting>
               </Section>
               <Section title="Sessions">
@@ -367,7 +379,7 @@ export function SettingsDialog({
                   title="Repositories folder"
                   description={
                     <span className="font-mono text-xs" title={repositories}>
-                      {repositories || "…"}
+                      {repositories ? tilde(repositories) : "…"}
                     </span>
                   }
                 >
@@ -464,7 +476,7 @@ export function SettingsDialog({
                     </Setting>
                   ))
                 ) : (
-                  <Item role="listitem" className="justify-center rounded-none py-6 text-muted-foreground">
+                  <Item role="listitem" className="justify-center py-6 text-muted-foreground">
                     {auth ? "No API keys yet. Add one to use a vendor without signing in through its CLI." : "…"}
                   </Item>
                 )}
@@ -480,7 +492,18 @@ export function SettingsDialog({
                       key={option.id}
                       media={<ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />}
                       title={agentLabel(option.agent)}
-                      description={auth ? (signedIn ? "Signed in" : "Not signed in") : "Checking…"}
+                      description={
+                        !auth ? (
+                          "Checking…"
+                        ) : signedIn ? (
+                          <span className="flex items-center gap-1.5">
+                            <Check className="size-3.5 text-success" />
+                            Signed in
+                          </span>
+                        ) : (
+                          "Not signed in"
+                        )
+                      }
                     >
                       <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
                         {signedIn ? "Sign in again" : "Sign in"}
@@ -510,7 +533,7 @@ export function SettingsDialog({
               {FIXED_SHORTCUTS.map(({ title, rows }) => (
                 <Section key={title} title={title}>
                   {rows.map(({ label, keys }) => (
-                    <Item key={label} role="listitem" size="xs" className="rounded-none">
+                    <Item key={label} role="listitem" variant="outline" size="xs" className={ROW}>
                       <ItemContent>
                         <ItemTitle className="font-normal">{label}</ItemTitle>
                       </ItemContent>

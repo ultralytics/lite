@@ -47,7 +47,7 @@ import {
   providerName,
 } from "@/provider-auth";
 import { IS_MAC } from "@/shortcuts";
-import { type Agent, agentLabel, defaultSessionName, folderName, type Session, sessionLabel } from "@/types";
+import { type Agent, agentLabel, defaultSessionName, folderName, type Session, sessionLabel, tilde } from "@/types";
 
 export const SESSION_CHOICES = [
   ...Object.values(AUTH_PROVIDERS),
@@ -273,6 +273,7 @@ export function NewSessionDialog({
   // The provider whose missing API key the user is supplying.
   const [keyFor, setKeyFor] = useState<KeyProvider>();
   const searchRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const [folderProbes, setFolderProbes] = useState<Record<string, DirectoryProbe | null>>({});
   const codexChoice = CODEX_CHOICES.find((option) => option.id === codexId) ?? CODEX_CHOICES[0];
   const harnessChoice = (agent: Agent) =>
@@ -762,18 +763,18 @@ export function NewSessionDialog({
   const whereLine =
     source === "github"
       ? selected
-        ? `New worktree beside ${clonePath(selected)}`
+        ? `New worktree beside ${tilde(clonePath(selected))}`
         : ""
       : remote
         ? host.trim() && path.trim()
           ? `Runs on ${host.trim()} in ${path.trim()}`
           : ""
         : worktreeHere
-          ? worktree && `New worktree in ${worktree}`
+          ? worktree && `New worktree in ${tilde(worktree)}`
           : folder === "missing"
-            ? `Creates and runs in ${path.trim()}`
+            ? `Creates and runs in ${tilde(path.trim())}`
             : path.trim() && folder === "directory"
-              ? `Runs directly in ${path.trim()}`
+              ? `Runs directly in ${tilde(path.trim())}`
               : "";
   const placeLabel =
     source === "github" ? (selected ? fullName(selected) : "") : remote ? host.trim() : folderName(path.trim());
@@ -852,23 +853,24 @@ export function NewSessionDialog({
               {status}
             </ProviderLine>
           </span>
-          <Kbd className="hidden sm:inline-flex">
+          <Kbd className="hidden opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 sm:inline-flex">
             {mod}
             {index + 1}
           </Kbd>
         </button>
         {updatable ? (
-          <ActionIconButton
+          <Button
             type="button"
-            size="icon-sm"
-            variant="ghost"
-            tooltip={`Update ${agentLabel(agent)} to the latest version`}
+            size="xs"
+            variant="outline"
+            className="text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
             aria-label={`Update ${agentLabel(agent)} to the latest version`}
             disabled={busy}
             onClick={() => void install(choice)}
           >
             <RefreshCw className={installing === choice.id ? "animate-spin" : undefined} />
-          </ActionIconButton>
+            {installing === choice.id ? "Updating…" : "Update"}
+          </Button>
         ) : null}
         {agent === "codex" ? (
           <DropdownMenu>
@@ -876,7 +878,7 @@ export function NewSessionDialog({
               render={
                 <Button
                   type="button"
-                  variant="ghost"
+                  variant="outline"
                   size="icon-sm"
                   aria-label="Codex provider, model and thinking"
                   disabled={busy}
@@ -993,7 +995,7 @@ export function NewSessionDialog({
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
       <DialogContent
-        initialFocus={() => searchRef.current ?? true}
+        initialFocus={() => searchRef.current ?? folderRef.current ?? true}
         className="gap-0 p-0 sm:h-[min(40rem,calc(100dvh-2rem))] sm:max-w-4xl"
       >
         <form onSubmit={submit} onKeyDown={numberKey} className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -1086,21 +1088,15 @@ export function NewSessionDialog({
                                   onClick={() => setSelectedName(fullName(repository))}
                                   className={pickRow(active, confirmed)}
                                 >
-                                  <span className="relative">
-                                    <Tile>
-                                      <GitHubLogomark className="size-4.5" />
-                                    </Tile>
-                                    {repository.cloned ? (
-                                      <span
-                                        title={`Cloned in ${repositoriesRoot}`}
-                                        className="absolute -right-0.5 -bottom-0.5 size-2.5 rounded-full bg-success ring-2 ring-popover"
-                                      />
-                                    ) : null}
-                                  </span>
+                                  <Tile>
+                                    <GitHubLogomark className="size-4.5" />
+                                  </Tile>
                                   <span className="flex min-w-0 flex-1 flex-col">
                                     <span className="flex min-w-0 items-center gap-1 text-sm">
-                                      <span className="truncate text-muted-foreground">{repository.owner}/</span>
-                                      <span className="truncate font-medium">{repository.name}</span>
+                                      <span className="truncate">
+                                        <span className="text-muted-foreground">{repository.owner}/</span>
+                                        <span className="font-medium">{repository.name}</span>
+                                      </span>
                                       {repository.private ? (
                                         <Lock aria-label="Private" className="size-3 shrink-0 text-muted-foreground" />
                                       ) : null}
@@ -1122,7 +1118,7 @@ export function NewSessionDialog({
                                   {count ? (
                                     <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] text-success">
                                       <span className="size-1.5 rounded-full bg-success" />
-                                      {count}
+                                      {count} running
                                     </span>
                                   ) : null}
                                   {active && confirmed ? readyMark : null}
@@ -1169,6 +1165,7 @@ export function NewSessionDialog({
                     <div className="flex gap-2">
                       <div className="relative min-w-0 flex-1">
                         <Input
+                          ref={folderRef}
                           id="project-folder"
                           value={path}
                           className={`pr-8 font-mono ${folder === "directory" ? "border-success focus-visible:border-success focus-visible:ring-success/20" : folder === "missing" ? "border-amber-500 focus-visible:border-amber-500 focus-visible:ring-amber-500/20" : ""}`}
@@ -1264,7 +1261,7 @@ export function NewSessionDialog({
                             </Tile>
                             <span className="flex min-w-0 flex-1 flex-col">
                               <span className="truncate text-sm font-medium">{folderName(place) || place}</span>
-                              <span className="truncate font-mono text-xs text-muted-foreground">{place}</span>
+                              <span className="truncate font-mono text-xs text-muted-foreground">{tilde(place)}</span>
                             </span>
                             {probe === undefined ? null : (
                               <span className="max-w-40 shrink-0 truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
@@ -1388,21 +1385,21 @@ export function NewSessionDialog({
                 ) : null}
                 {error ? <p className="px-1 pt-1 text-xs text-destructive">{error}</p> : null}
               </div>
-              <div className="hidden items-center gap-3 border-t px-4 py-2 text-xs text-muted-foreground sm:flex">
-                <span className="flex items-center gap-1.5">
-                  <Kbd>↑↓</Kbd> Choose
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Kbd>↵</Kbd> Start {agentLabel(lastAgent)}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <Kbd>
-                    {mod}1–{HARNESSES.length}
-                  </Kbd>{" "}
-                  Start an agent
-                </span>
-              </div>
             </div>
+          </div>
+          <div className="hidden items-center gap-4 border-t px-5 py-2.5 text-xs text-muted-foreground sm:flex">
+            <span className="flex items-center gap-1.5">
+              <Kbd>↑↓</Kbd> Choose
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd>↵</Kbd> Start {agentLabel(lastAgent)}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd>
+                {mod}1–{HARNESSES.length}
+              </Kbd>{" "}
+              Start an agent
+            </span>
           </div>
         </form>
         <ApiKeyDialog
