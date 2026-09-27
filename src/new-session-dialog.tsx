@@ -87,6 +87,10 @@ function remoteUnsupported(remote: boolean, choice: Choice) {
 
 let updateChecks: Promise<Record<string, boolean | null>> | undefined;
 
+// The last repository list GitHub answered with. A reopened dialog shows it at once while it asks again,
+// so the list is only ever waited for on the first opening.
+let lastRepositories: GitHubRepositories | undefined;
+
 function checkAgentUpdates() {
   updateChecks ??= Promise.all(
     HARNESSES.filter((agent) => agent !== "shell").map(async (agent) => {
@@ -343,7 +347,7 @@ export function NewSessionDialog({
     setError("");
     setAvailability({});
     setAuth(undefined);
-    setGitHub(undefined);
+    setGitHub(lastRepositories);
     setFound(undefined);
     setQuery("");
     void invoke<string>("repositories_directory")
@@ -355,11 +359,12 @@ export function NewSessionDialog({
       });
     void invoke<GitHubRepositories>("github_repositories", { query: "" })
       .then((result) => {
+        lastRepositories = result;
         if (!disposed) setGitHub(result);
       })
       .catch((reason) => {
         if (!disposed) {
-          setGitHub({ signedIn: true, repositories: [] });
+          setGitHub(lastRepositories ?? { signedIn: true, repositories: [] });
           setError(String(reason));
         }
       });
