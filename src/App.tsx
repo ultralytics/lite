@@ -106,7 +106,7 @@ import {
   syncTerminalTheme,
   writeSession,
 } from "@/output-store";
-import { ProviderRow, providerName } from "@/provider-auth";
+import { providerName } from "@/provider-auth";
 import { SettingsDialog } from "@/settings-dialog";
 import {
   IS_MAC,
@@ -1162,7 +1162,13 @@ function Welcome({ onChoose, onSettings }: { onChoose: (choice: string) => void;
             render={<button type="button" />}
             onClick={() => onChoose(option.id)}
           >
-            <ProviderRow option={option}>{providerName(option)}</ProviderRow>
+            <ItemMedia variant="icon">
+              <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
+            </ItemMedia>
+            <ItemContent className="gap-0.5">
+              <ItemTitle className="w-full truncate">{sessionLabel(option)}</ItemTitle>
+              <ItemDescription className="truncate text-xs leading-4">{providerName(option)}</ItemDescription>
+            </ItemContent>
           </Item>
         ))}
       </div>
@@ -1580,6 +1586,8 @@ function App() {
   const [newSessionChoice, setNewSessionChoice] = useState<string>();
   const [newSessionPath, setNewSessionPath] = useState<string>();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // A tab asked for from elsewhere, such as the new-session dialog's key setup; otherwise Settings opens on its first.
+  const [settingsTab, setSettingsTab] = useState<string>();
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
@@ -2415,7 +2423,8 @@ function App() {
         mode: "login",
         cwd: grant.path,
         rootId: grant.id,
-        name: `Sign in · ${sessionLabel({ agent })}`,
+        // A shell sign-in is the GitHub CLI's, which the new-session dialog lists repositories through.
+        name: `Sign in · ${agent === "shell" ? "GitHub" : sessionLabel({ agent })}`,
         running: false,
       });
     } catch (reason) {
@@ -3858,6 +3867,7 @@ function App() {
             choice={newSessionChoice}
             initialPath={newSessionPath}
             remoteSsh={remoteSsh}
+            sessions={sessions}
             onOpenChange={(open) => {
               setNewSessionOpen(open);
               // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
@@ -3867,6 +3877,11 @@ function App() {
               }
             }}
             onCreate={createSession}
+            onGitHubSignIn={() => void signIn("shell")}
+            onApiKeys={() => {
+              setSettingsTab("accounts");
+              setSettingsOpen(true);
+            }}
           />
           <SessionSwitcher
             open={sessionSwitcherOpen}
@@ -3920,7 +3935,11 @@ function App() {
           />
           <SettingsDialog
             open={settingsOpen}
-            onOpenChange={setSettingsOpen}
+            tab={settingsTab}
+            onOpenChange={(open) => {
+              setSettingsOpen(open);
+              if (!open) setSettingsTab(undefined);
+            }}
             onSignIn={signIn}
             notifications={notifications}
             onNotificationsChange={changeNotifications}

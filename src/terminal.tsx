@@ -26,6 +26,7 @@ import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import type { Theme } from "@/theme";
 import type { Agent } from "@/types";
 
+const ACKNOWLEDGE_BYTES = 64 * 1024;
 const SEARCH_HIGHLIGHT_LIMIT = 5000;
 const countFormat = new Intl.NumberFormat();
 const searchHighlights: Record<Theme, { match: string; active: string }> = {
@@ -241,7 +242,17 @@ export function TerminalView({
           refreshSearch();
         }, 200);
     });
-    const unsubscribe = subscribeOutput(sessionId, (data) => terminal.write(data));
+    // Lite stops reading the session once the page falls behind, so drawn output is reported back,
+    // a batch at a time, well before the reader's limit.
+    let drawn = 0;
+    const unsubscribe = subscribeOutput(sessionId, (data) =>
+      terminal.write(data, () => {
+        drawn += data.byteLength;
+        if (drawn < ACKNOWLEDGE_BYTES) return;
+        void invoke("acknowledge_output", { sessionId, bytes: drawn }).catch(() => {});
+        drawn = 0;
+      }),
+    );
     // What the user types before the first Enter is the closest thing a session has to a subject.
     // Typing, pasting, and the terminal's own answers to the program's cursor, focus, and color
     // queries all arrive here, and an answer is printable once its escape is dropped, so the escape

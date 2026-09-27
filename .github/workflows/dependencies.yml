@@ -13,6 +13,9 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   update:
     if: github.repository == 'ultralytics/lite'

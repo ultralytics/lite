@@ -10,7 +10,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
@@ -45,7 +45,9 @@ const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const CODEX_NOTIFICATION_ARGS: [&str; 6] = [
+const CODEX_NOTIFICATION_ARGS: [&str; 7] = [
+    // Per-launch overrides require embedded mode; select it explicitly instead of warning on fallback.
+    "--no-daemon",
     "-c",
     r#"tui.notification_method="osc9""#,
     "-c",
@@ -418,7 +420,84 @@ struct PtySession {
     output: Arc<Mutex<Channel<InvokeResponseBody>>>,
     run_id: String,
     alive: Arc<AtomicBool>,
+    backlog: Arc<Backlog>,
     agent_watch: Arc<AtomicU64>,
+}
+
+// Output the page has been sent but not yet drawn. Kept under the page's own replay buffer, so a
+// terminal that mounts late still draws, and so acknowledges, everything it was sent.
+const MAX_BACKLOG: usize = 512 * 1024;
+
+#[derive(Default)]
+struct Backlog {
+    bytes: Mutex<usize>,
+    drained: Condvar,
+}
+
+impl Backlog {
+    fn acknowledge(&self, count: usize) {
+        if let Ok(mut bytes) = self.bytes.lock() {
+            *bytes = bytes.saturating_sub(count);
+        }
+        self.drained.notify_one();
+    }
+
+    fn reset(&self) {
+        self.acknowledge(usize::MAX);
+    }
+
+    // Taken under the lock the reader checks liveness in, so a stop can't land between its check and
+    // its wait and be missed.
+    fn wake(&self) {
+        let _bytes = self.bytes.lock();
+        self.drained.notify_one();
+    }
+}
+
+// Reading stops while the page is behind, so a flood blocks the program on its own tty instead of
+// piling up in the page, and an interrupt is seen as soon as the page catches up.
+fn forward_output(
+    mut reader: impl Read,
+    backlog: &Backlog,
+    alive: &AtomicBool,
+    mut send: impl FnMut(&[u8]),
+) {
+    let mut buffer = [0_u8; 8192];
+    while let Ok(count) = reader.read(&mut buffer) {
+        if count == 0 {
+            break;
+        }
+        // Counted before it is sent, so an acknowledgment can never arrive for bytes not yet owed, and
+        // released while it is sent: with Tauri's tracing feature, eval waits on the main thread,
+        // where acknowledge_output takes this lock.
+        let Ok(mut bytes) = backlog.bytes.lock() else {
+            break;
+        };
+        *bytes += count;
+        drop(bytes);
+        send(&buffer[..count]);
+        let Ok(mut bytes) = backlog.bytes.lock() else {
+            break;
+        };
+        while *bytes > MAX_BACKLOG && alive.load(Ordering::Relaxed) {
+            let Ok(next) = backlog.drained.wait(bytes) else {
+                return;
+            };
+            bytes = next;
+        }
+    }
+}
+
+// A page that reloaded while the child ran takes over its output from here. Whatever the old page
+// left undrawn is never acknowledged, so the new one starts owing nothing.
+fn reattach_output(
+    output: &Mutex<Channel<InvokeResponseBody>>,
+    backlog: &Backlog,
+    channel: Channel<InvokeResponseBody>,
+) -> Result<(), String> {
+    *output.lock().map_err(|error| error.to_string())? = channel;
+    backlog.reset();
+    Ok(())
 }
 
 fn stop_pty(session: &mut PtySession) -> Result<(), String> {
@@ -435,6 +514,7 @@ fn stop_pty(session: &mut PtySession) -> Result<(), String> {
         .wait()
         .map_err(|error| kill_error.unwrap_or_else(|| error.to_string()))?;
     session.alive.store(false, Ordering::Relaxed);
+    session.backlog.wake();
     Ok(())
 }
 
@@ -1109,12 +1189,17 @@ fn remove_entry(path: &Path) -> Result<(), String> {
 }
 
 fn command_output(git: &Path, directory: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(git)
-        .arg("-C")
-        .arg(path_text(directory))
-        .args(args)
-        .output()
-        .map_err(|error| error.to_string())?;
+    command_text(
+        Command::new(git)
+            .arg("-C")
+            .arg(path_text(directory))
+            .args(args),
+    )
+}
+
+// A command's trimmed output, or what it printed to stderr when it failed.
+fn command_text(command: &mut Command) -> Result<String, String> {
+    let output = command.output().map_err(|error| error.to_string())?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     } else {
@@ -1144,6 +1229,14 @@ fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| error.to_string())?
         .join("last-directory"))
+}
+
+fn repositories_record_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("repositories-directory"))
 }
 
 fn hide_hidden_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1906,20 +1999,32 @@ fn default_directory(
         .transpose()
 }
 
-#[tauri::command]
-async fn choose_directory(
-    app: AppHandle,
-    roots: State<'_, Roots>,
-) -> Result<Option<DirectoryGrant>, String> {
-    let mut dialog = app.dialog().file().set_title("Choose a project");
-    if let Some(path) = default_directory_path(&app) {
+// The folder the user picks, canonical, starting from `start` when there is one; nothing if they cancel.
+fn pick_folder(
+    app: &AppHandle,
+    title: &str,
+    start: Option<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
+    let mut dialog = app.dialog().file().set_title(title);
+    if let Some(path) = start {
         dialog = dialog.set_directory(path);
     }
     let Some(path) = dialog.blocking_pick_folder() else {
         return Ok(None);
     };
-    let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
+    fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn choose_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+) -> Result<Option<DirectoryGrant>, String> {
+    let Some(path) = pick_folder(&app, "Choose a project", default_directory_path(&app))? else {
+        return Ok(None);
+    };
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
     grant_directory(&app, &roots, path, None).map(Some)
 }
@@ -2018,11 +2123,7 @@ fn github_item_parts(url: &str) -> Option<(String, String, String)> {
     let mut parts = url.strip_prefix("https://github.com/")?.split('/');
     let owner = parts.next().filter(|part| !part.is_empty())?;
     let repository = parts.next().filter(|part| !part.is_empty())?;
-    if [owner, repository].iter().any(|part| {
-        !part
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "-._".contains(character))
-    }) {
+    if github_name(owner).is_err() || github_name(repository).is_err() {
         return None;
     }
     if !matches!(parts.next()?, "pull" | "issues") {
@@ -2160,8 +2261,8 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                     deletions: item["deletions"].as_u64(),
                 });
             }
-            // The repository was read and searched, and the number names nothing in it.
-            Some(repository) if !repository.is_null() && not_found.contains(alias.as_str()) => {}
+            // GitHub has no such repository, or the number names nothing in it.
+            _ if not_found.contains(alias.as_str()) => {}
             _ => found.push(GitHubItem {
                 url: lookup.url.clone(),
                 title: None,
@@ -2202,6 +2303,309 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
     })
     .await
     .unwrap_or(unanswered)
+}
+
+// Where Lite keeps the repositories it clones. The user may move it; otherwise it is `lite` in the home
+// folder, which every platform has.
+fn repositories_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
+    match fs::read_to_string(repositories_record_path(app)?) {
+        Ok(path) => Ok(PathBuf::from(path)),
+        Err(_) => Ok(app
+            .path()
+            .home_dir()
+            .map_err(|error| error.to_string())?
+            .join("lite")),
+    }
+}
+
+#[tauri::command]
+fn repositories_directory(app: AppHandle) -> Result<String, String> {
+    repositories_directory_path(&app).map(|path| path_text(&path))
+}
+
+#[tauri::command]
+async fn choose_repositories_directory(app: AppHandle) -> Result<Option<String>, String> {
+    let current = repositories_directory_path(&app)?;
+    let Some(path) = pick_folder(
+        &app,
+        "Choose where Lite keeps repositories",
+        current.is_dir().then_some(current),
+    )?
+    else {
+        return Ok(None);
+    };
+    write_atomic(
+        &repositories_record_path(&app)?,
+        path_text(&path).as_bytes(),
+    )?;
+    Ok(Some(path_text(&path)))
+}
+
+// An owner or repository name as GitHub allows it. Names are embedded in GraphQL queries and become
+// folder names under the repositories folder, so the dot names that mean "here" and "up" are refused
+// along with every separator.
+fn github_name(name: &str) -> Result<&str, String> {
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-._".contains(character))
+    {
+        return Err(format!("“{name}” is not a GitHub name"));
+    }
+    Ok(name)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubRepository {
+    owner: String,
+    name: String,
+    private: bool,
+    pushed_at: Option<String>,
+    language: Option<String>,
+    color: Option<String>,
+    // A clone Lite already knows, so starting a session fetches there instead of cloning again.
+    local: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitHubRepositories {
+    // False when gh is missing or nobody is signed in to it: the one failure the dialog can fix.
+    signed_in: bool,
+    repositories: Vec<GitHubRepository>,
+}
+
+// The user's own repositories, most recently pushed first, or GitHub's matches for a search. gh
+// carries the sign-in, so Lite never reads a token; a failed request asks gh whether anyone is
+// signed in at all, which is the one failure the dialog can fix.
+fn list_github_repositories(
+    root: &Path,
+    query: &str,
+    known: &[String],
+) -> Result<GitHubRepositories, String> {
+    let Some(gh) = resolve_executable("gh") else {
+        return Ok(GitHubRepositories {
+            signed_in: false,
+            repositories: Vec::new(),
+        });
+    };
+    let fields = "name owner { login } isPrivate pushedAt primaryLanguage { name color }";
+    let query = query.trim();
+    let mut command = Command::new(&gh);
+    command.args(["api", "graphql"]);
+    if query.is_empty() {
+        command.args(["-f", &format!(
+            "query=query {{ viewer {{ repositories(first: 50, orderBy: {{field: PUSHED_AT, direction: DESC}}, affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER], ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]) {{ nodes {{ {fields} }} }} }} }}"
+        )]);
+    } else {
+        // "owner/partial" narrows to one owner; anything else searches repository names.
+        let search = match query.split_once('/') {
+            Some((owner, rest)) => format!("user:{owner} {rest} in:name"),
+            None => format!("{query} in:name"),
+        };
+        command.args([
+            "-f",
+            &format!("query=query($q: String!) {{ search(query: $q, type: REPOSITORY, first: 20) {{ nodes {{ ... on Repository {{ {fields} }} }} }} }}"),
+            "-f",
+            &format!("q={search}"),
+        ]);
+    }
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let signed_in = Command::new(&gh)
+            .args(["auth", "status"])
+            .output()
+            .is_ok_and(|status| status.status.success());
+        if !signed_in {
+            return Ok(GitHubRepositories {
+                signed_in: false,
+                repositories: Vec::new(),
+            });
+        }
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    let body: serde_json::Value =
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())?;
+    let nodes = if query.is_empty() {
+        &body["data"]["viewer"]["repositories"]["nodes"]
+    } else {
+        &body["data"]["search"]["nodes"]
+    };
+    // The clones Lite already knows — the folders its sessions ran in — by the GitHub repository each came
+    // from. Lite never looks further than that: it does not search the disk for repositories.
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let clones: HashMap<String, &String> = known
+        .iter()
+        .filter_map(|path| {
+            let url = origin_url(&git, Path::new(path))?;
+            Some((
+                url.strip_prefix("https://github.com/")?.to_lowercase(),
+                path,
+            ))
+        })
+        .collect();
+    // The folders those clones sit in are where the user keeps repositories, so a repository is also
+    // looked for by name beside them, and in the repositories folder.
+    // The user's own folders come first, so their clone is found before a copy Lite made.
+    let mut homes: Vec<PathBuf> = Vec::new();
+    for home in known
+        .iter()
+        .filter_map(|path| Path::new(path).parent())
+        .chain([root])
+    {
+        if !homes.iter().any(|seen| seen == home) {
+            homes.push(home.to_path_buf());
+        }
+    }
+    let repositories = nodes
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|node| {
+            let owner = node["owner"]["login"].as_str()?;
+            let name = node["name"].as_str()?;
+            let full = format!("{owner}/{name}").to_lowercase();
+            Some(GitHubRepository {
+                owner: owner.to_owned(),
+                name: name.to_owned(),
+                private: node["isPrivate"].as_bool().unwrap_or(false),
+                pushed_at: node["pushedAt"].as_str().map(str::to_owned),
+                language: node["primaryLanguage"]["name"].as_str().map(str::to_owned),
+                color: node["primaryLanguage"]["color"].as_str().map(str::to_owned),
+                local: clones.get(&full).map(|path| path.to_string()).or_else(|| {
+                    github_name(name).ok()?;
+                    homes
+                        .iter()
+                        .map(|home| home.join(name))
+                        .find(|path| {
+                            path.join(".git").exists()
+                                && origin_url(&git, path).is_some_and(|url| {
+                                    url.strip_prefix("https://github.com/").is_some_and(
+                                        |repository| repository.eq_ignore_ascii_case(&full),
+                                    )
+                                })
+                        })
+                        .map(|path| path_text(&path))
+                }),
+            })
+        })
+        .collect();
+    Ok(GitHubRepositories {
+        signed_in: true,
+        repositories,
+    })
+}
+
+#[tauri::command]
+async fn github_repositories(
+    app: AppHandle,
+    query: String,
+    known: Vec<String>,
+) -> Result<GitHubRepositories, String> {
+    let root = repositories_directory_path(&app)?;
+    tauri::async_runtime::spawn_blocking(move || list_github_repositories(&root, &query, &known))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+// The repository's local clone: one the user already has, used as it is so a launch never waits on the
+// network, or Lite's own under the repositories folder, cloned whole on first use so later checkouts
+// and agents never fetch contents on demand without gh's sign-in. gh clones with the user's own sign-in
+// and sets up a fork's upstream. A folder already at
+// the path must be this repository's clone: Lite never adopts or overwrites anything else.
+fn prepare_repository_path(
+    root: &Path,
+    owner: &str,
+    name: &str,
+    local: Option<PathBuf>,
+) -> Result<PathBuf, String> {
+    let (owner, name) = (github_name(owner)?, github_name(name)?);
+    // A clone the user already has is used where it is. Otherwise Lite keeps one folder per repository
+    // name, and a same-named repository of another owner is refused below rather than sharing it.
+    let path = local.unwrap_or_else(|| root.join(name));
+    if path.exists() {
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let expected = format!("https://github.com/{owner}/{name}");
+        let remote = origin_url(&git, &path);
+        if remote.as_ref().map(|url| url.to_lowercase()) != Some(expected.to_lowercase()) {
+            return Err(format!(
+                "{} holds {}, not {expected}",
+                path_text(&path),
+                remote.as_deref().unwrap_or("something else")
+            ));
+        }
+        return Ok(path);
+    }
+    let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
+    fs::create_dir_all(root).map_err(|error| error.to_string())?;
+    let mut clone = Command::new(&gh);
+    clone.args([
+        "repo",
+        "clone",
+        &format!("{owner}/{name}"),
+        &path_text(&path),
+    ]);
+    // gh runs git itself, and a launched app's bare PATH does not reach it.
+    if let Some(path) = user_path() {
+        clone.env("PATH", path);
+    }
+    command_text(&mut clone)?;
+    Ok(path)
+}
+
+#[tauri::command]
+async fn prepare_repository(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+    owner: String,
+    name: String,
+    local: Option<String>,
+) -> Result<DirectoryGrant, String> {
+    let root = repositories_directory_path(&app)?;
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        prepare_repository_path(&root, &owner, &name, local.map(PathBuf::from))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    grant_directory(&app, &roots, path, None)
+}
+
+// Brings a clone up to date once a session has started in it, so the next worktree starts from what
+// GitHub has without any launch waiting on the network. The fetch moves the branches; set-head follows a
+// default branch GitHub has since changed. Both sign in the way gh's clone did, with gh as Git's
+// credential helper.
+#[tauri::command]
+async fn refresh_repository(roots: State<'_, Roots>, root_id: String) -> Result<(), String> {
+    let path = root_path(&roots, &root_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
+        let helper = format!(
+            "credential.https://github.com.helper=!\"{}\" auth git-credential",
+            path_text(&gh)
+        );
+        for args in [
+            &["fetch", "--quiet", "origin"][..],
+            &["remote", "set-head", "origin", "--auto"],
+        ] {
+            let mut command = Command::new(&git);
+            command
+                .arg("-C")
+                .arg(&path)
+                .args(["-c", "credential.https://github.com.helper=", "-c", &helper])
+                .args(args);
+            if let Some(path) = user_path() {
+                command.env("PATH", path);
+            }
+            command_text(&mut command)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -3117,10 +3521,12 @@ enum CliAuthMethod {
     ApiKey,
 }
 
+// A key's first characters, as Platform shows them: enough to tell which vendor's key it is, never its
+// last four and never more than eleven.
 fn key_hint(key: &str) -> String {
     let key = key.trim();
     key.chars()
-        .skip(key.chars().count().saturating_sub(4))
+        .take(key.chars().count().saturating_sub(4).min(11))
         .collect()
 }
 
@@ -3190,7 +3596,7 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
                 let cli_auth = cli_auth(&app, name);
                 ProviderAuth {
                     name: name.to_owned(),
-                    // Only the last characters travel to the interface, enough to tell two keys apart.
+                    // Only the key's first characters travel to the interface.
                     key_hint: keys.get(name).map(|key| key_hint(key)),
                     cli_auth_method: cli_auth,
                 }
@@ -3650,10 +4056,16 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
 }
 
 // Each CLI owns its sign-in and opens the browser itself, so Lite only runs the command and shows it.
+// A shell sign-in is GitHub's: the GitHub CLI owns the sign-in Lite's repository list and clones use.
 fn login_command(agent: &str) -> Result<CommandBuilder, String> {
-    let mut command = agent_builder(agent)?;
+    let mut command = match agent {
+        "shell" => {
+            CommandBuilder::new(resolve_executable("gh").ok_or("Could not find gh in your PATH")?)
+        }
+        _ => agent_builder(agent)?,
+    };
     command.args(match agent {
-        "claude" => vec!["auth", "login"],
+        "claude" | "shell" => vec!["auth", "login"],
         "codex" | "kimi" => vec!["login"],
         "gemini" | "qwen" => Vec::new(),
         _ => return Err("This provider signs in with an API key".into()),
@@ -4305,9 +4717,8 @@ async fn spawn_session(
                 .map_err(|error| error.to_string())?
                 .is_none()
             {
-                // A page that reloaded while the child ran takes over its output from here, and its
-                // run id names the events that follow, the exit included.
-                *session.output.lock().map_err(|error| error.to_string())? = output;
+                // Its run id names the events that follow, the exit included.
+                reattach_output(&session.output, &session.backlog, output)?;
                 session.run_id = run_id;
                 return Ok(provider_session_id);
             }
@@ -4345,6 +4756,7 @@ async fn spawn_session(
 
     let output = Arc::new(Mutex::new(output));
     let alive = Arc::new(AtomicBool::new(true));
+    let backlog = Arc::new(Backlog::default());
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -4434,7 +4846,7 @@ async fn spawn_session(
         }
     };
     drop(pair.slave);
-    let mut reader = match pair.master.try_clone_reader() {
+    let reader = match pair.master.try_clone_reader() {
         Ok(reader) => reader,
         Err(error) => {
             let _ = child.kill();
@@ -4467,6 +4879,7 @@ async fn spawn_session(
             output: output.clone(),
             run_id: run_id.clone(),
             alive: Arc::clone(&alive),
+            backlog: Arc::clone(&backlog),
             agent_watch: Arc::new(AtomicU64::new(0)),
         },
     );
@@ -4479,18 +4892,13 @@ async fn spawn_session(
     thread::spawn(move || {
         // Bytes go to the page as bytes over the session's channel; an event would spell each one
         // out as a JSON number.
-        let mut buffer = [0_u8; 8192];
-        while let Ok(count) = reader.read(&mut buffer) {
-            if count == 0 {
-                break;
+        forward_output(reader, &backlog, &event_alive, |bytes| {
+            if let Ok(channel) = output.lock().map(|channel| channel.clone()) {
+                // A page reload drops its callback before the next page reattaches. Losing output
+                // during that gap must not turn into a process stop; spawn_session replaces this channel.
+                let _ = channel.send(InvokeResponseBody::Raw(bytes.to_vec()));
             }
-            let Ok(channel) = output.lock().map(|channel| channel.clone()) else {
-                break;
-            };
-            // A page reload drops its callback before the next page reattaches. Losing output during
-            // that gap must not turn into a process stop; spawn_session replaces this channel.
-            let _ = channel.send(InvokeResponseBody::Raw(buffer[..count].to_vec()));
-        }
+        });
         let completed = output_app
             .state::<Sessions>()
             .0
@@ -4756,6 +5164,17 @@ fn resize_session(
             pixel_height: 0,
         })
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn acknowledge_output(sessions: State<Sessions>, session_id: String, bytes: usize) {
+    if let Some(backlog) = sessions.0.lock().ok().and_then(|sessions| {
+        sessions
+            .get(&session_id)
+            .map(|session| Arc::clone(&session.backlog))
+    }) {
+        backlog.acknowledge(bytes);
+    }
 }
 
 #[tauri::command]
@@ -5667,11 +6086,13 @@ async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<S
     }
     let path = root_path(&roots, &root_id)?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    Ok(
-        command_output(&git, &path, &["remote", "get-url", "origin"])
-            .ok()
-            .and_then(|remote| browse_url(&remote)),
-    )
+    Ok(origin_url(&git, &path))
+}
+
+fn origin_url(git: &Path, path: &Path) -> Option<String> {
+    command_output(git, path, &["remote", "get-url", "origin"])
+        .ok()
+        .and_then(|remote| browse_url(&remote))
 }
 
 // The repository that owns a path's worktrees, reached from any of them: a normal repository's
@@ -5759,6 +6180,8 @@ struct Repository {
     branch: String,
     root: String,
     worktree: String,
+    // Where the folder was cloned from, as a link, when it is a host a browser can open.
+    remote: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -5775,36 +6198,43 @@ struct DirectoryProbe {
 #[tauri::command]
 async fn directory_probe(app: AppHandle, path: String) -> Result<DirectoryProbe, String> {
     let path = typed_path(&app, &path)?;
-    if !path.is_dir() {
-        return Ok(DirectoryProbe {
-            exists: path.exists(),
-            is_directory: false,
-            repository: None,
-        });
-    }
-    // Canonicalized like the grant's path would be, so the root can be compared with session cwds.
-    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
-    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let Ok(root) = main_checkout(&git, &path) else {
-        return Ok(DirectoryProbe {
+    // Several folders are probed at once when the Local tab opens, each through a few git calls, so they
+    // wait off the runtime other commands share.
+    tauri::async_runtime::spawn_blocking(move || {
+        if !path.is_dir() {
+            return Ok(DirectoryProbe {
+                exists: path.exists(),
+                is_directory: false,
+                repository: None,
+            });
+        }
+        // Canonicalized like the grant's path would be, so the root can be compared with session cwds.
+        let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let Ok(root) = main_checkout(&git, &path) else {
+            return Ok(DirectoryProbe {
+                exists: true,
+                is_directory: true,
+                repository: None,
+            });
+        };
+        let checkout = command_output(&git, &path, &["rev-parse", "--show-toplevel"])
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| root.clone());
+        let candidate = next_worktree(&git, &root, &checkout)?;
+        Ok(DirectoryProbe {
             exists: true,
             is_directory: true,
-            repository: None,
-        });
-    };
-    let checkout = command_output(&git, &path, &["rev-parse", "--show-toplevel"])
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| root.clone());
-    let candidate = next_worktree(&git, &root, &checkout)?;
-    Ok(DirectoryProbe {
-        exists: true,
-        is_directory: true,
-        repository: Some(Repository {
-            worktree: path_text(&candidate.path),
-            branch: candidate.branch,
-            root: path_text(&root),
-        }),
+            repository: Some(Repository {
+                worktree: path_text(&candidate.path),
+                branch: candidate.branch,
+                root: path_text(&root),
+                remote: origin_url(&git, &path),
+            }),
+        })
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // A session that shares its project with another gets the next numbered sibling folder. A missing
@@ -5815,16 +6245,32 @@ async fn create_worktree(
     roots: State<'_, Roots>,
     root_id: String,
     branch: String,
+    upstream: bool,
 ) -> Result<DirectoryGrant, String> {
     grant_known(roots.inner(), &root_id)?;
-    create_worktree_inner(&app, roots.inner(), root_id, branch)
+    // Checking out a worktree writes the whole tree, so it waits off the runtime other commands share.
+    tauri::async_runtime::spawn_blocking(move || {
+        create_worktree_inner(
+            &app,
+            app.state::<Roots>().inner(),
+            root_id,
+            branch,
+            upstream,
+        )
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
+// `upstream` starts the branch from the remote's default branch as last fetched instead of the folder's
+// commit, which in a clone Lite or the user keeps may sit on any branch; a clone without one starts from
+// its commit.
 fn create_worktree_inner(
     app: &AppHandle,
     roots: &Roots,
     root_id: String,
     branch: String,
+    upstream: bool,
 ) -> Result<DirectoryGrant, String> {
     let (folder, recovery) = match root_path(roots, &root_id) {
         Ok(folder) => (folder, None),
@@ -5894,6 +6340,11 @@ fn create_worktree_inner(
     // git needs --orphan for the same start, and the record simply has no ancestor to check later.
     let head = match recovery.as_ref() {
         Some(recorded) => (!recorded.head.is_empty()).then(|| recorded.head.clone()),
+        None if upstream => {
+            command_output(&git, &folder, &["rev-parse", "refs/remotes/origin/HEAD"])
+                .or_else(|_| command_output(&git, &folder, &["rev-parse", "HEAD"]))
+                .ok()
+        }
         None => command_output(&git, &folder, &["rev-parse", "HEAD"]).ok(),
     };
     let delete_branch = !restoring || !branch_exists(&git, &repo, branch)?;
@@ -6056,7 +6507,7 @@ async fn restore_worktree(
         }
         return grant_directory(&app, roots.inner(), path, Some(root_id)).map(Some);
     }
-    create_worktree_inner(&app, roots.inner(), root_id, String::new()).map(Some)
+    create_worktree_inner(&app, roots.inner(), root_id, String::new(), false).map(Some)
 }
 
 // What closing a worktree session needs to know before it asks. recorded is false when Lite has
@@ -6715,6 +7166,7 @@ pub fn run() {
             write_session,
             watch_shell_agent,
             resize_session,
+            acknowledge_output,
             stop_session,
             set_keep_awake,
             delete_session_data,
@@ -6730,6 +7182,11 @@ pub fn run() {
             git_remote,
             directory_probe,
             create_worktree,
+            github_repositories,
+            prepare_repository,
+            refresh_repository,
+            repositories_directory,
+            choose_repositories_directory,
             restore_worktree,
             worktree_state,
             remove_worktree,
@@ -6771,6 +7228,16 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::ffi::OsStr;
+    use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn github_names_stay_one_folder_deep() {
+        assert_eq!(github_name("ultralytics"), Ok("ultralytics"));
+        assert_eq!(github_name("lite.js-2_x"), Ok("lite.js-2_x"));
+        for name in ["", ".", "..", "a/b", "a\\b", "~", "name with space"] {
+            assert!(github_name(name).is_err(), "{name:?} passed");
+        }
+    }
 
     #[test]
     fn session_locale_is_utf8_only_on_macos() {
@@ -6955,5 +7422,101 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
 
         assert_eq!(error, "Git status contains a non-UTF-8 path");
+    }
+
+    fn counting_channel() -> (Channel<InvokeResponseBody>, Arc<AtomicUsize>) {
+        let received = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&received);
+        let channel = Channel::new(move |body| {
+            if let InvokeResponseBody::Raw(bytes) = body {
+                count.fetch_add(bytes.len(), Ordering::Relaxed);
+            }
+            Ok(())
+        });
+        (channel, received)
+    }
+
+    // Floods a reader with far more output than the page could ever owe.
+    fn flood(
+        channel: Channel<InvokeResponseBody>,
+    ) -> (
+        Arc<Mutex<Channel<InvokeResponseBody>>>,
+        Arc<Backlog>,
+        Arc<AtomicBool>,
+        thread::JoinHandle<()>,
+    ) {
+        let output = Arc::new(Mutex::new(channel));
+        let backlog = Arc::new(Backlog::default());
+        let alive = Arc::new(AtomicBool::new(true));
+        let reader = thread::spawn({
+            let output = Arc::clone(&output);
+            let backlog = Arc::clone(&backlog);
+            let alive = Arc::clone(&alive);
+            move || {
+                forward_output(
+                    std::io::repeat(b'x').take(64 << 20),
+                    &backlog,
+                    &alive,
+                    |bytes| {
+                        let channel = output.lock().unwrap().clone();
+                        let _ = channel.send(InvokeResponseBody::Raw(bytes.to_vec()));
+                    },
+                )
+            }
+        });
+        (output, backlog, alive, reader)
+    }
+
+    // Nothing acknowledges in these tests, so once a page has been sent more than the limit the
+    // reader cannot send it another byte: it has paused.
+    fn wait_past(received: &AtomicUsize, bytes: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let sent = received.load(Ordering::Relaxed);
+            if sent > bytes {
+                return sent;
+            }
+            assert!(Instant::now() < deadline, "only {sent} bytes arrived");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn output_waits_for_the_page_to_draw_what_it_was_sent() {
+        let (channel, received) = counting_channel();
+        let (_output, backlog, alive, reader) = flood(channel);
+        let first = wait_past(&received, MAX_BACKLOG);
+        assert!(
+            first <= MAX_BACKLOG + 8192,
+            "sent {first} bytes nobody drew"
+        );
+
+        backlog.acknowledge(first);
+        wait_past(&received, first);
+
+        alive.store(false, Ordering::Relaxed);
+        backlog.wake();
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn reattaching_mid_flood_moves_output_to_the_new_page() {
+        let (old, old_received) = counting_channel();
+        let (output, backlog, alive, reader) = flood(old);
+        let stalled = wait_past(&old_received, MAX_BACKLOG);
+
+        // The old page never acknowledges what it left undrawn, so only reattaching can resume.
+        let (new, new_received) = counting_channel();
+        reattach_output(&output, &backlog, new).unwrap();
+        let resumed = wait_past(&new_received, MAX_BACKLOG);
+        assert!(
+            resumed <= MAX_BACKLOG + 8192,
+            "sent {resumed} bytes to the new page"
+        );
+        assert_eq!(old_received.load(Ordering::Relaxed), stalled);
+
+        alive.store(false, Ordering::Relaxed);
+        backlog.wake();
+        reader.join().unwrap();
     }
 }

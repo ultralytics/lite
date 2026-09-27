@@ -69,7 +69,7 @@ chmod +x Lite_*_linux_amd64.AppImage
 ./Lite_*_linux_amd64.AppImage
 ```
 
-After installing Lite, open **Settings** from the gear in the top bar and choose **Check for updates** under About to install signed updates and restart Lite. Lite never checks for updates in the background.
+After installing Lite, open **Settings** from the gear in the top bar and choose **Check for updates** under About to install signed updates and restart Lite. A release build also checks once after launch and shows the result on the version badge; Lite never downloads or installs an update without you.
 
 ## 🚀 First Run
 

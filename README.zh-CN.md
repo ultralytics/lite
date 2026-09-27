@@ -67,7 +67,7 @@ chmod +x Lite_*_linux_amd64.AppImage
 ./Lite_*_linux_amd64.AppImage
 ```
 
-安装 Lite 之后，点击顶栏的齿轮打开 **设置**，在“关于”中选择 **Check for Updates**，即可安装带签名的更新并重启 Lite。Lite 从不在后台检查更新。
+安装 Lite 之后，点击顶栏的齿轮打开 **设置**，在“关于”中选择 **Check for Updates**，即可安装带签名的更新并重启 Lite。正式版启动后还会检查一次，并在版本徽标上显示结果；Lite 从不在未经你操作的情况下下载或安装更新。
 
 ## 🚀 首次运行
 

@@ -18,7 +18,7 @@ NEVER push to `main`. NEVER force push. Always start work in a new git worktree 
 
 Repo-specific rules that sharpen these principles here:
 
-- **Stay quiet**: no indexing, file watchers, telemetry, cloud service, or idle background work. Read files, Git state, and provider usage only on explicit user interaction, and bound file and terminal memory.
+- **Stay quiet**: no indexing, file watchers, telemetry, cloud service, or idle background work beyond the single release check a release build makes after launch. Read files, Git state, and provider usage only on explicit user interaction, and bound file and terminal memory.
 - **Providers own their sign-in**: never read, copy, or proxy a CLI's credential store. A key the user hands to Lite is Lite's to keep — owner-only in the app data folder, handed to a session through the provider's environment variable, never written into provider configuration.
 - **Launch through the user's PATH**: a launched app inherits a bare PATH and the PATH given to a child does not locate the program, so resolve provider CLIs against the login shell's PATH and run them by full path.
 - **Platform behavior lives in Rust** and the interface stays platform-neutral, so macOS, Windows, and Linux share one codebase.
@@ -41,6 +41,7 @@ After opening a PR:
 ```bash
 bun install
 bun run tauri dev
+bun run format
 bun run check
 bun test
 cargo fmt --check --manifest-path src-tauri/Cargo.toml
@@ -48,24 +49,20 @@ cargo test --manifest-path src-tauri/Cargo.toml
 bun run tauri build --debug --no-bundle
 ```
 
-Use the Bun version in `package.json`, stable Rust, and Tauri's platform prerequisites. `bun install` applies the xterm patch before tests. `bun run local` builds a separate Lite Dev app with separate data. CI builds on macOS, Windows, and Linux; verify all affected platform branches. Terminal/UI changes also need desktop validation with background sessions and alternate screens.
+Use the Bun version in `package.json`, stable Rust, and Tauri's platform prerequisites. Ultralytics Actions formats with Prettier, not Biome, and never runs `cargo fmt`, so run `bun run format` and `cargo fmt` yourself. `bun run local` builds a separate Lite Dev app with separate data. CI builds on macOS, Windows, and Linux; verify all affected platform branches. Terminal/UI changes also need desktop validation with background sessions and alternate screens.
 
 ## Where to look
 
 - Session launch and resume → `src/App.tsx` and `spawn_session`/`session_arguments` in `src-tauri/src/lib.rs`.
 - Harness and provider registration → `src/types.ts`, `src/provider-auth.tsx`, `src/brand-icons.tsx`, and the native launch/auth/SSH matches in `src-tauri/src/lib.rs`.
 - Terminal rendering → `src/terminal.tsx`; output/status → `src/output-store.ts`; files/Git → `src/inspector.tsx`.
-- Native commands and platform behavior → `src-tauri/src/`.
-- Shared UI primitives → `src/components/ui/`.
-- Terminal regression coverage → `tests/terminal-resize.test.ts`.
-- Dependency patch → `patches/`.
-- Build and checks → `package.json`, `.github/workflows/ci.yml`.
+- Releases → bump `version` in `src-tauri/Cargo.toml` (and `Cargo.lock`); `publish.yml` publishes when it changes on `main`.
 
 ## Pitfalls
 
 - **The xterm patch is load-bearing.** `patches/@xterm%2Fxterm@6.0.0.patch` changes `Viewport.ts`/`Buffer.ts` sources _and_ the built `lib/xterm.mjs`, and switches the package `main` to the ESM build so `bun test` can import it. `@xterm/xterm` is pinned exactly to `6.0.0` for that reason; bumping it means regenerating the patch (`bun patch`) and re-running `tests/terminal-resize.test.ts`. `bun install` must have run before `bun test`.
 - **Output is a channel, not an event.** Session bytes arrive through the `Channel` passed to `spawn_session`. A page reload (or any later `spawn_session` for an id whose PTY is still alive) reattaches to the running PTY instead of respawning, and `launch()` returns early when `runs.current` already holds the session. Do not route terminal bytes through `emit`.
-- **Private OSC 6973 must stay in sync** between the Rust emitters (`capture_claude_status`, the rebuild command) and the `METADATA` regex in `output-store.ts`; the "output activity" test in `tests/github-items.test.ts` pins the parsing.
+- **Private OSC 6973 must stay in sync** between the Rust emitters (`capture_claude_status`, the `rebuild` mode of `spawn_session`) and the `METADATA` regex in `output-store.ts`; the "output activity" test in `tests/github-items.test.ts` pins the parsing.
 - **Codex identity depends on the title.** `CODEX_NOTIFICATION_ARGS` sets `tui.terminal_title=["session-id","thread"]`; `receiveOutput` recognizes the `<hex-id> | <name>` shape and calls `record_codex_session`. Removing or reordering those args breaks resume.
 - **`write_text_file` checks before it replaces.** It refuses when the bytes on disk differ from `original` (a check, not a lock: another writer can still land between check and write); the editor must send the contents it last loaded or last saved successfully (`FilesPanel` does). The same rule holds over SSH (`cmp -s`).
 

@@ -169,9 +169,10 @@ function sessionGitHubItems(sessionId: string) {
   return (sessions[sessionId] ?? []).filter((item) => !removed.has(itemKey(item.url)));
 }
 
-function retainGitHubItems(sessionId: string, updates: GitHubItem[]) {
+function retainGitHubItems(sessionId: string, updates: GitHubItem[], disowned = new Set<string>()) {
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
-  const items = mergeGitHubItems(sessions[sessionId] ?? [], updates);
+  const current = (sessions[sessionId] ?? []).filter((item) => !disowned.has(itemKey(item.url)));
+  const items = mergeGitHubItems(current, updates);
   sessions[sessionId] = items;
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
   return sessionGitHubItems(sessionId);
@@ -214,7 +215,7 @@ interface RepositoryGroup {
   url: string | null;
 }
 
-function relativeAge(timestamp: string) {
+export function relativeAge(timestamp: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(timestamp)) / 1000));
   if (seconds < 60) return seconds < 10 ? "just now" : `${seconds} sec ago`;
   const minutes = Math.floor(seconds / 60);
@@ -375,15 +376,33 @@ const formatNumber = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 1,
 });
 
-// A quota window turns over on the minute as far as anyone using it is concerned, so it is named to
-// the minute; the seconds only ever changed the width of the line.
-const formatTime = new Intl.DateTimeFormat(undefined, {
-  year: "numeric",
-  month: "numeric",
-  day: "numeric",
-  hour: "numeric",
-  minute: "2-digit",
-});
+const formatClock = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const formatWeekday = new Intl.DateTimeFormat(undefined, { weekday: "long" });
+const formatDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
+
+// A moment ahead as someone planning around it asks about it: how long until then, and which day and time
+// that is — "in 3 hr 20 min · today 8:40 PM", "in 4 days · Tuesday 5:20 PM". The counterpart of relativeAge.
+function timeUntil(seconds: number) {
+  const at = new Date(seconds * 1000);
+  const left = at.getTime() - Date.now();
+  const minutes = Math.round(left / 60000);
+  const hours = Math.floor(minutes / 60);
+  const wait =
+    left <= 0
+      ? "now"
+      : minutes < 1
+        ? "in under a minute"
+        : minutes < 60
+          ? `in ${minutes} min`
+          : hours < 48
+            ? `in ${hours} hr${hours < 10 && minutes % 60 ? ` ${minutes % 60} min` : ""}`
+            : `in ${Math.round(hours / 24)} days`;
+  const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const days = Math.round((midnight(at) - midnight(new Date())) / 86_400_000);
+  const day =
+    days === 0 ? "today" : days === 1 ? "tomorrow" : days < 7 ? formatWeekday.format(at) : formatDay.format(at);
+  return `${wait} · ${day} ${formatClock.format(at)}`;
+}
 
 function Loading({ label }: { label: string }) {
   return (
@@ -401,12 +420,14 @@ export function SearchInput({
   placeholder,
   onChange,
   inputRef,
+  onKeyDown,
   className = "shrink-0 p-2",
 }: {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
   inputRef?: Ref<HTMLInputElement>;
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
   className?: string;
 }) {
   return (
@@ -423,6 +444,7 @@ export function SearchInput({
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape") onChange("");
+            onKeyDown?.(event);
           }}
         />
       </InputGroup>
@@ -1529,7 +1551,11 @@ function GitPanel({
           const updates = checked.filter((item) =>
             known.has(itemKey(item.url)) ? item.title !== null : likely.has(item),
           );
-          setItems(retainGitHubItems(sessionId, updates));
+          // An item GitHub left out of its answer is one GitHub says does not exist, such as a link
+          // a redraw clipped, so the session forgets it rather than keeping it as printed.
+          const answered = new Set(checked.map((item) => itemKey(item.url)));
+          const disowned = new Set(urls.map(itemKey).filter((key) => !answered.has(key)));
+          setItems(retainGitHubItems(sessionId, updates, disowned));
         }
       })
       .catch(() => {})
@@ -1615,10 +1641,12 @@ function GitPanel({
   const removedRepositories = new Set(
     [...removedGitHubItems(sessionId)].map((item) => item.slice(0, item.lastIndexOf("#"))),
   );
+  // A link waits for its GitHub check before it is shown; only one GitHub could not answer shows as printed.
+  const checking = new Set(loadingUrls.map(itemKey));
   const repositories = repositoryGroups(
     remote,
     status ?? null,
-    mergeGitHubItems(loadingUrls.map(pendingGitHubItem), items),
+    items.filter((item) => item.state !== null || !checking.has(itemKey(item.url))),
   ).filter((repository) => !repository.url || !removedRepositories.has(githubRepositoryKey(repository.url)));
   const itemRepositories = new Set(items.map((item) => githubRepositoryKey(item.url)));
   // Searching narrows each card to what matches — a changed path, an item's title or number, or the
@@ -1786,7 +1814,7 @@ function UsagePanel({
                 >
                   <Meter label={window.label} value={window.usedPercent} />
                   {window.resetsAt != null ? (
-                    <ItemDescription>Resets {formatTime.format(window.resetsAt * 1000)}</ItemDescription>
+                    <ItemDescription>Resets {timeUntil(window.resetsAt)}</ItemDescription>
                   ) : null}
                 </Item>
               ))}
@@ -1796,8 +1824,7 @@ function UsagePanel({
                   <ItemTitle className="text-lg tabular-nums">{usage.bankedResets} available</ItemTitle>
                   {usage.bankedResetExpiries.map((expiresAt, index) => (
                     <ItemDescription key={index}>
-                      Reset {index + 1}:{" "}
-                      {expiresAt == null ? "No expiry" : `Expires ${formatTime.format(expiresAt * 1000)}`}
+                      Reset {index + 1}: {expiresAt == null ? "No expiry" : `Expires ${timeUntil(expiresAt)}`}
                     </ItemDescription>
                   ))}
                   {usage.bankedResets > usage.bankedResetExpiries.length ? (

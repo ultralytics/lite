@@ -1,34 +1,67 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
 import { invoke } from "@tauri-apps/api/core";
-import { Check, CircleAlert, Download, FolderOpen, RefreshCw, TriangleAlert } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
-
-import { ActionIconButton, Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+  Check,
+  ChevronDown,
+  CircleAlert,
+  CircleCheck,
+  Download,
+  FolderOpen,
+  GitBranch,
+  Lock,
+  RefreshCw,
+  Server,
+  TriangleAlert,
+  X,
+} from "lucide-react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+
+import { GitHubLogomark, GitLogomark, ProviderIcon } from "@/brand-icons";
+import { ActionIconButton, Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Kbd } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, ProviderRow } from "@/provider-auth";
-import { defaultSessionName, type Session, sessionLabel } from "@/types";
+import { relativeAge, SearchInput } from "@/inspector";
+import { cn } from "@/lib/utils";
+import {
+  ApiKeyDialog,
+  AUTH_PROVIDERS,
+  type KeyProvider,
+  type ProviderAuth,
+  ProviderAuthDescription,
+  providerName,
+} from "@/provider-auth";
+import { IS_MAC } from "@/shortcuts";
+import { type Agent, agentLabel, defaultSessionName, folderName, type Session, sessionLabel, tilde } from "@/types";
 
 export const SESSION_CHOICES = [
   ...Object.values(AUTH_PROVIDERS),
   { id: "shell", agent: "shell" as const, provider: undefined, label: "Your login shell" },
 ];
-const harnesses = [...new Set(SESSION_CHOICES.map((option) => option.agent).filter((agent) => agent !== "shell"))];
+type Choice = (typeof SESSION_CHOICES)[number];
+// One row per harness, in a fixed order so its number key never moves. Codex is one row whatever
+// provider it runs against; the provider is a choice inside the row.
+const HARNESSES: Agent[] = [...new Set(SESSION_CHOICES.map((option) => option.agent))];
+const CODEX_CHOICES = SESSION_CHOICES.filter((option) => option.agent === "codex");
 const CHOICE_KEY = "lite.newSession.choice.v1";
-const NAME_KEY = "lite.newSession.name.v1";
+const CODEX_KEY = "lite.newSession.codexProvider.v1";
+const SOURCE_KEY = "lite.newSession.source.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
 // A Codex provider serving several models offers the choice here, remembered per provider so each keeps
@@ -49,15 +82,19 @@ function storedCodexChoice(key: string, values: readonly string[], fallback: str
   return stored && values.includes(stored) ? stored : fallback;
 }
 
-function remoteUnsupported(remote: boolean, choice: (typeof SESSION_CHOICES)[number]) {
+function remoteUnsupported(remote: boolean, choice: Choice) {
   return remote && choice.agent === "codex" && choice.provider !== "openai";
 }
 
 let updateChecks: Promise<Record<string, boolean | null>> | undefined;
 
+// The last repository list GitHub answered with. A reopened dialog shows it at once while it asks again,
+// so the list is only ever waited for on the first opening.
+let lastRepositories: GitHubRepositories | undefined;
+
 function checkAgentUpdates() {
   updateChecks ??= Promise.all(
-    harnesses.map(async (agent) => {
+    HARNESSES.filter((agent) => agent !== "shell").map(async (agent) => {
       try {
         return [agent, await invoke<boolean>("agent_update_available", { agent })] as const;
       } catch {
@@ -72,7 +109,7 @@ function checkAgentUpdates() {
   return updateChecks;
 }
 
-// The quiet heading that separates the two questions the dialog asks, in the sidebar's own label style.
+// The quiet heading that separates the dialog's groups, in the sidebar's own label style.
 const SECTION = "text-[11px] font-medium tracking-wide text-muted-foreground uppercase";
 
 interface DirectoryGrant {
@@ -85,6 +122,7 @@ interface Repository {
   branch: string;
   root: string;
   worktree: string;
+  remote: string | null;
 }
 
 interface DirectoryProbe {
@@ -99,25 +137,105 @@ interface Availability {
   detail: string;
 }
 
+interface GitHubRepository {
+  owner: string;
+  name: string;
+  private: boolean;
+  pushedAt: string | null;
+  language: string | null;
+  color: string | null;
+  // A clone Lite already knows, which a session uses instead of cloning again.
+  local: string | null;
+}
+
+interface GitHubRepositories {
+  signedIn: boolean;
+  repositories: GitHubRepository[];
+}
+
+type Source = "github" | "local" | "ssh";
+
+const fullName = (repository: { owner: string; name: string }) => `${repository.owner}/${repository.name}`;
+
+function Tile({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <span
+      className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background/60", className)}
+    >
+      {children}
+    </span>
+  );
+}
+
+// The vendor whose mark a harness carries: OpenAI's for Codex, the harness's own otherwise.
+const harnessVendor = (agent: Agent) => (agent === "codex" ? "openai" : undefined);
+
+// The line under a harness: its provider's name, then what the row has to say about it. The provider's
+// mark joins the name only when it is not the harness's own, which the row's main mark already shows. The
+// tone colors the status's check mark alone.
+function ProviderLine({ choice, tone, children }: { choice: Choice; tone?: string; children: ReactNode }) {
+  const provider = providerName(choice);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      {provider ? (
+        <>
+          {choice.provider !== harnessVendor(choice.agent) ? (
+            <ProviderIcon agent={choice.agent} provider={choice.provider} className="size-3 shrink-0" />
+          ) : null}
+          <span className="shrink-0 text-foreground/75">{provider}</span>
+          <span aria-hidden="true">·</span>
+        </>
+      ) : null}
+      <span className={cn("min-w-0 truncate [&_svg]:size-3", tone)}>{children}</span>
+    </span>
+  );
+}
+
+// A repository or folder the user can pick. The picked one turns green once Lite has confirmed a session
+// can start there, the same green the folder field shows when its folder exists.
+const pickRow = (active: boolean, ready: boolean) =>
+  cn(
+    "flex w-full items-center gap-3 rounded-lg border px-2 py-1.5 text-left transition-colors duration-300 outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+    active && ready
+      ? "border-success/40 bg-success/10"
+      : active
+        ? "border-foreground/15 bg-accent"
+        : "border-transparent hover:bg-accent/60",
+  );
+
+// The mark a picked row carries once it is confirmed.
+const readyMark = <CircleCheck aria-label="Ready" className="size-4 shrink-0 text-success" />;
+
 export function NewSessionDialog({
   open: isOpen,
   choice: chosen,
   initialPath,
   remoteSsh,
+  sessions,
   onOpenChange,
   onCreate,
+  onGitHubSignIn,
+  onApiKeys,
 }: {
   open: boolean;
   // A choice made outside the dialog — a welcome tile — which the dialog opens on.
   choice?: string;
   initialPath?: string;
   remoteSsh: boolean;
+  sessions: Session[];
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
+  onGitHubSignIn: () => void;
+  // Settings, opened where API keys are kept.
+  onApiKeys: () => void;
 }) {
   const [choiceId, setChoiceId] = useState(() => {
     const stored = localStorage.getItem(CHOICE_KEY);
     return SESSION_CHOICES.find((option) => option.id === stored)?.id ?? SESSION_CHOICES[0].id;
+  });
+  const [codexId, setCodexId] = useState<string>(() => {
+    const stored = localStorage.getItem(CODEX_KEY);
+    return CODEX_CHOICES.find((option) => option.id === stored)?.id ?? CODEX_CHOICES[0].id;
   });
   const [pickers, setPickers] = useState<CodexPicker[]>([]);
   const [codexChoices, setCodexChoices] = useState<Record<string, string>>({});
@@ -125,37 +243,74 @@ export function NewSessionDialog({
     localStorage.setItem(key, value);
     setCodexChoices((current) => ({ ...current, [key]: value }));
   }
+  const [sourceSelected, setSourceSelected] = useState<Source>(() => {
+    const stored = localStorage.getItem(SOURCE_KEY);
+    return stored === "local" || stored === "ssh" ? stored : "github";
+  });
+  const source: Source = sourceSelected === "ssh" && !remoteSsh ? "local" : sourceSelected;
+  const opensOnSsh = useRef(false);
+  opensOnSsh.current = source === "ssh";
+  const remote = source === "ssh";
   const [directory, setDirectory] = useState<DirectoryGrant>();
   const [path, setPath] = useState("");
-  const [remoteSelected, setRemoteSelected] = useState(false);
-  const remote = remoteSsh && remoteSelected;
   const [host, setHost] = useState(() => localStorage.getItem(SSH_HOST_KEY) ?? "");
   const [availability, setAvailability] = useState<Record<string, Availability | null>>({});
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [installing, setInstalling] = useState("");
   // Undefined while checking, null when the registry could not answer, otherwise whether an update exists.
   const [updates, setUpdates] = useState<Record<string, boolean | null>>({});
-  // Creation runs the worktree command against the dialog's grant, so closing must wait for it:
-  // a Cancel mid-command would revoke the grant the command is still using.
-  const [creating, setCreating] = useState(false);
+  // What creation is doing right now. Creation runs commands against the dialog's grant, so closing
+  // must wait for it: a Cancel mid-command would revoke the grant the command is still using.
+  // The launch under way: the harness, where it runs, each step as it reads while running and once done,
+  // and how many are done.
+  const [launching, setLaunching] = useState<{
+    choice: Choice;
+    place: string;
+    steps: [running: string, done: string][];
+    done: number;
+    // Why the step after the done ones failed; the card stays up with it until the user goes back.
+    error?: string;
+  }>();
+  const advance = () => setLaunching((current) => current && { ...current, done: current.done + 1 });
   const [error, setError] = useState("");
   // Undefined while checking, null outside a repository, otherwise the repository's main checkout.
   const [repo, setRepo] = useState<string | null>();
   const [folder, setFolder] = useState<"checking" | "missing" | "directory" | "other">("checking");
   const [worktree, setWorktree] = useState("");
   const [worktreeOn, setWorktreeOn] = useState(() => localStorage.getItem(WORKTREE_KEY) === "true");
+  // The branch the worktree would get if the field stays empty; Rust picks the same one.
+  const [suggestedBranch, setSuggestedBranch] = useState("");
   const [branch, setBranch] = useState("");
-  const [title, setTitle] = useState<string | undefined>(() =>
-    localStorage.getItem(NAME_KEY) === "true" ? "" : undefined,
-  );
-  const choice = SESSION_CHOICES.find((option) => option.id === choiceId) ?? SESSION_CHOICES[0];
-  const unsupported = remoteUnsupported(remote, choice);
-  const status = availability[choice.id];
+  const [title, setTitle] = useState("");
+  const [repositoriesRoot, setRepositoriesRoot] = useState("");
+  const [github, setGitHub] = useState<GitHubRepositories>();
+  const [query, setQuery] = useState("");
+  // GitHub's own matches for the query, beyond the repositories already listed.
+  const [found, setFound] = useState<{ query: string; repositories: GitHubRepository[] }>();
+  const [selectedName, setSelectedName] = useState("");
+  // The provider whose missing API key the user is supplying.
+  const [keyFor, setKeyFor] = useState<KeyProvider>();
+  const searchRef = useRef<HTMLInputElement>(null);
+  // The folders Lite's local sessions ran in, which GitHub's list is matched against for existing clones.
+  const knownRef = useRef<string[]>([]);
+  knownRef.current = [
+    ...new Set(sessions.flatMap((session) => (session.host || session.mode ? [] : [session.repo ?? session.cwd]))),
+  ];
+  const folderRef = useRef<HTMLInputElement>(null);
+  const [folderProbes, setFolderProbes] = useState<Record<string, DirectoryProbe | null>>({});
+  const codexChoice = CODEX_CHOICES.find((option) => option.id === codexId) ?? CODEX_CHOICES[0];
+  const harnessChoice = (agent: Agent) =>
+    agent === "codex" ? codexChoice : (SESSION_CHOICES.find((option) => option.agent === agent) ?? codexChoice);
+  const lastChoice = SESSION_CHOICES.find((option) => option.id === choiceId) ?? SESSION_CHOICES[0];
+  const lastAgent = lastChoice.agent;
   useEffect(() => {
-    if (isOpen && chosen) setChoiceId(chosen);
+    if (isOpen && chosen) {
+      const option = SESSION_CHOICES.find((entry) => entry.id === chosen);
+      setChoiceId(chosen);
+      if (option?.agent === "codex") setCodexId(chosen);
+    }
   }, [isOpen, chosen]);
-  // An agent that is not installed cannot take a session yet, so the dialog offers to install it instead.
-  const missing = !remote && status && !status.available ? status : undefined;
+
   // Each explicit open asks every harness in parallel. Concurrent opens share the same work, while a
   // later open checks again so a newly published version or a failed registry request does not stay stale.
   useEffect(() => {
@@ -170,11 +325,201 @@ export function NewSessionDialog({
     };
   }, [isOpen, remote]);
 
-  // A typed path settles for a moment before it is probed, so a folder is never looked up once per
-  // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
-  // would name.
   useEffect(() => {
-    if (!isOpen || remote || !path.trim()) {
+    if (!isOpen) return;
+    let disposed = false;
+    setError("");
+    setAvailability({});
+    setAuth(undefined);
+    setFound(undefined);
+    setQuery("");
+    void invoke<string>("repositories_directory")
+      .then((root) => {
+        if (!disposed) setRepositoriesRoot(root);
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    // A local folder is no default for an SSH host, so the SSH tab opens with its field empty, even if a
+    // folder was left from an opening that fell back to the Local tab.
+    if (opensOnSsh.current) setPath("");
+    else
+      void invoke<DirectoryGrant | null>("default_directory", { path: initialPath ?? null })
+        .then((selected) => {
+          if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
+          else if (selected) {
+            setDirectory(selected);
+            setPath(selected.path);
+          }
+        })
+        .catch((reason) => {
+          if (!disposed) setError(String(reason));
+        });
+    void invoke<CodexPicker[]>("codex_pickers")
+      .then((result) => {
+        if (disposed) return;
+        setPickers(result);
+        setCodexChoices(
+          Object.fromEntries(
+            result.flatMap((picker) => [
+              [
+                modelKey(picker.id),
+                storedCodexChoice(
+                  modelKey(picker.id),
+                  picker.models.map(([slug]) => slug),
+                  picker.models[0][0],
+                ),
+              ],
+              [levelKey(picker.id), storedCodexChoice(levelKey(picker.id), picker.levels, "high")],
+            ]),
+          ),
+        );
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    void invoke<ProviderAuth[]>("provider_auth")
+      .then((result) => {
+        if (!disposed) setAuth(result);
+      })
+      .catch((reason) => {
+        if (!disposed) setError(String(reason));
+      });
+    // Installation and provider setup can change while the app runs, so refresh them on each open.
+    for (const option of SESSION_CHOICES) {
+      void invoke<Availability>("agent_availability", { agent: option.agent, provider: option.provider })
+        .then((result) => {
+          if (!disposed) setAvailability((current) => ({ ...current, [option.id]: result }));
+        })
+        .catch((reason) => {
+          if (!disposed) {
+            setAvailability((current) => ({ ...current, [option.id]: null }));
+            setError(`Could not check ${sessionLabel(option)}: ${reason}`);
+          }
+        });
+    }
+    return () => {
+      disposed = true;
+    };
+  }, [initialPath, isOpen]);
+
+  // GitHub is asked for the list only while its tab shows. A reopened dialog shows the last list at once
+  // while it asks again.
+  const onGitHub = source === "github";
+  useEffect(() => {
+    if (!isOpen || !onGitHub) return;
+    let disposed = false;
+    setGitHub(lastRepositories);
+    void invoke<GitHubRepositories>("github_repositories", { query: "", known: knownRef.current })
+      .then((result) => {
+        lastRepositories = result;
+        if (!disposed) setGitHub(result);
+      })
+      .catch((reason) => {
+        if (!disposed) {
+          setGitHub(lastRepositories ?? { signedIn: true, repositories: [] });
+          setError(String(reason));
+        }
+      });
+    return () => {
+      disposed = true;
+    };
+  }, [isOpen, onGitHub]);
+
+  // GitHub is searched once typing pauses, for repositories the user's own list does not hold.
+  const search = query.trim();
+  useEffect(() => {
+    if (!isOpen || source !== "github" || !github?.signedIn || search.length < 2) return;
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      void invoke<GitHubRepositories>("github_repositories", { query: search, known: knownRef.current })
+        .then((result) => {
+          if (!disposed) setFound({ query: search, repositories: result.repositories });
+        })
+        .catch(() => {
+          if (!disposed) setFound({ query: search, repositories: [] });
+        });
+    }, 350);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [github?.signedIn, isOpen, search, source]);
+
+  // Folders the user already ran sessions in, newest first, each asked once per opening which kind it is.
+  const recentFolders = useMemo(() => {
+    const folders: string[] = [];
+    for (const session of [...sessions].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))) {
+      const place = session.repo ?? session.cwd;
+      if (!session.host && !session.mode && !folders.includes(place)) folders.push(place);
+    }
+    return folders.slice(0, 6);
+  }, [sessions]);
+  useEffect(() => {
+    if (!isOpen || source !== "local") return;
+    let disposed = false;
+    for (const place of recentFolders)
+      void invoke<DirectoryProbe>("directory_probe", { path: place })
+        .then((probe) => {
+          if (!disposed) setFolderProbes((current) => ({ ...current, [place]: probe }));
+        })
+        .catch(() => {
+          if (!disposed) setFolderProbes((current) => ({ ...current, [place]: null }));
+        });
+    return () => {
+      disposed = true;
+    };
+  }, [isOpen, recentFolders, source]);
+
+  const separator = repositoriesRoot.includes("\\") ? "\\" : "/";
+  // Where a repository's clone is or will be: the one Lite knows, else its own under the repositories folder.
+  const clonePath = (repository: GitHubRepository) =>
+    repository.local ?? [repositoriesRoot, repository.name].join(separator);
+  const listed = github?.repositories ?? [];
+  // The repositories Lite's own sessions ran in, newest first, wherever their clones are.
+  const recent: GitHubRepository[] = [];
+  for (const session of [...sessions].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))) {
+    const repository = listed.find((entry) => !session.host && session.repo === clonePath(entry));
+    if (repositoriesRoot && repository && !recent.includes(repository)) recent.push(repository);
+  }
+  const known = new Map<string, GitHubRepository>();
+  for (const repository of [...listed, ...(found?.repositories ?? [])])
+    if (!known.has(fullName(repository).toLowerCase())) known.set(fullName(repository).toLowerCase(), repository);
+  const needle = search.toLowerCase();
+  const matches = (repository: GitHubRepository) => !needle || fullName(repository).toLowerCase().includes(needle);
+  const recentNames = new Set(recent.map((repository) => fullName(repository).toLowerCase()));
+  const groups: { label: string; repositories: GitHubRepository[] }[] = needle
+    ? [
+        {
+          label: "Matches",
+          repositories: [...known.values()].filter(
+            (repository) =>
+              matches(repository) && !found?.repositories.some((entry) => fullName(entry) === fullName(repository)),
+          ),
+        },
+        { label: "On GitHub", repositories: found?.query === search ? found.repositories : [] },
+      ]
+    : [
+        {
+          label: "Recent in Lite",
+          repositories: recent,
+        },
+        {
+          label: "Your repositories",
+          repositories: listed.filter((repository) => !recentNames.has(fullName(repository).toLowerCase())),
+        },
+      ];
+  const visible = groups.flatMap((group) => group.repositories);
+  // Only a repository on screen can be the one a click starts in.
+  const selected = visible.find((repository) => fullName(repository) === selectedName) ?? visible[0];
+
+  // The folder a session would start from: the Local tab's path, or the GitHub tab's repository where
+  // Lite already knows a clone of it. Both tabs ask it the same question, so a clone shows the same
+  // worktree, branch, and name on either. A typed path settles for a moment before it is probed, so a
+  // folder is never looked up once per keystroke. The probe is read-only and needs no grant.
+  const probePath = source === "local" ? path.trim() : source === "github" ? (selected?.local ?? "") : "";
+  useEffect(() => {
+    if (!isOpen || !probePath) {
       setRepo(null);
       setFolder("checking");
       setWorktree("");
@@ -183,14 +528,13 @@ export function NewSessionDialog({
     setRepo(undefined);
     let disposed = false;
     const probe = window.setTimeout(() => {
-      void invoke<DirectoryProbe>("directory_probe", { path: path.trim() })
+      void invoke<DirectoryProbe>("directory_probe", { path: probePath })
         .then(({ exists, isDirectory, repository }) => {
           if (disposed) return;
           setFolder(isDirectory ? "directory" : exists ? "other" : "missing");
-          const root = repository?.root ?? null;
-          setRepo(root);
+          setRepo(repository?.root ?? null);
           setWorktree(repository?.worktree ?? "");
-          setBranch(repository?.branch ?? "");
+          setSuggestedBranch(repository?.branch ?? "");
         })
         .catch(() => {
           if (!disposed) {
@@ -204,156 +548,145 @@ export function NewSessionDialog({
       disposed = true;
       window.clearTimeout(probe);
     };
-  }, [isOpen, path, remote]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    let disposed = false;
-    setError("");
-    setAvailability({});
-    setAuth(undefined);
-    if (!remote) {
-      void invoke<DirectoryGrant | null>("default_directory", { path: initialPath ?? null })
-        .then((selected) => {
-          if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
-          else if (selected) {
-            setDirectory(selected);
-            setPath(selected.path);
-          }
-        })
-        .catch((reason) => {
-          if (!disposed) setError(String(reason));
-        });
-      void invoke<CodexPicker[]>("codex_pickers")
-        .then((result) => {
-          if (disposed) return;
-          setPickers(result);
-          setCodexChoices(
-            Object.fromEntries(
-              result.flatMap((picker) => [
-                [
-                  modelKey(picker.id),
-                  storedCodexChoice(
-                    modelKey(picker.id),
-                    picker.models.map(([slug]) => slug),
-                    picker.models[0][0],
-                  ),
-                ],
-                [levelKey(picker.id), storedCodexChoice(levelKey(picker.id), picker.levels, "high")],
-              ]),
-            ),
-          );
-        })
-        .catch((reason) => {
-          if (!disposed) setError(String(reason));
-        });
-      void invoke<ProviderAuth[]>("provider_auth")
-        .then((result) => {
-          if (!disposed) setAuth(result);
-        })
-        .catch((reason) => {
-          if (!disposed) setError(String(reason));
-        });
-      // Installation and provider setup can change while the app runs, so refresh them on each open.
-      for (const option of SESSION_CHOICES) {
-        void invoke<Availability>("agent_availability", { agent: option.agent, provider: option.provider })
-          .then((result) => {
-            if (!disposed) setAvailability((current) => ({ ...current, [option.id]: result }));
-          })
-          .catch((reason) => {
-            if (!disposed) {
-              setAvailability((current) => ({ ...current, [option.id]: null }));
-              setError(`Could not check ${sessionLabel(option)}: ${reason}`);
-            }
-          });
-      }
-    }
-    return () => {
-      disposed = true;
-    };
-  }, [initialPath, isOpen, remote]);
+  }, [isOpen, probePath]);
+  const running = (repository: GitHubRepository) =>
+    sessions.filter((session) => !session.host && session.repo === clonePath(repository)).length;
 
   async function chooseFolder() {
     setError("");
     try {
-      const selected = await invoke<DirectoryGrant | null>("choose_directory");
-      if (selected) {
+      const picked = await invoke<DirectoryGrant | null>("choose_directory");
+      if (picked) {
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
-        setDirectory(selected);
-        setPath(selected.path);
-        setFolder("directory");
-        setRepo(undefined);
-        setWorktree("");
+        setDirectory(picked);
+        setPath(picked.path);
       }
     } catch (reason) {
       setError(String(reason));
     }
   }
 
-  async function grant(): Promise<DirectoryGrant | undefined> {
+  async function grant(): Promise<DirectoryGrant> {
     if (directory && directory.path === path.trim() && directory.host === (remote ? host.trim() : null))
       return directory;
-    try {
-      const selected = await invoke<DirectoryGrant>(remote ? "use_ssh_directory" : "use_directory", {
-        path,
-        ...(remote ? { host: host.trim() } : {}),
-      });
-      if (directory) void invoke("revoke_directory", { rootId: directory.id });
-      setDirectory(selected);
-      setPath(selected.path);
-      setError("");
-      return selected;
-    } catch (reason) {
-      setError(String(reason));
-      return undefined;
+    const granted = await invoke<DirectoryGrant>(remote ? "use_ssh_directory" : "use_directory", {
+      path,
+      ...(remote ? { host: host.trim() } : {}),
+    });
+    if (directory) void invoke("revoke_directory", { rootId: directory.id });
+    setDirectory(granted);
+    setPath(granted.path);
+    return granted;
+  }
+
+  function changeSource(next: Source) {
+    localStorage.setItem(SOURCE_KEY, next);
+    // A folder granted for one place must not follow the user to another.
+    if (directory && (next === "ssh") !== remote) {
+      void invoke("revoke_directory", { rootId: directory.id });
+      setDirectory(undefined);
+      setPath("");
     }
+    setError("");
+    setSourceSelected(next);
   }
 
   function changeOpen(open: boolean) {
-    if (!open && (installing || creating)) return;
+    if (!open && (installing || (launching && !launching.error))) return;
+    if (!open) setLaunching(undefined);
     if (!open && directory) {
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
     }
     // A cancelled dialog stays mounted, so a name typed into it must not wait for the next session.
     if (!open) {
-      setTitle((current) => (current === undefined ? undefined : ""));
-      setRemoteSelected(false);
+      setTitle("");
+      setBranch("");
     }
     onOpenChange(open);
   }
 
-  async function create() {
-    setCreating(true);
+  async function create(choice: Choice) {
+    setError("");
     try {
-      let folder = await grant();
-      if (!folder) return;
+      let place: DirectoryGrant;
       let worktree = false;
-      // The probe's answer can lag the folder field, so the granted folder is asked directly:
-      // the worktree and the recorded repository always describe where the session will run.
       let root: string | null = null;
-      if (!remote)
-        try {
-          root = (await invoke<DirectoryProbe>("directory_probe", { path: folder.path })).repository?.root ?? null;
-        } catch (reason) {
-          setError(String(reason));
-          return;
-        }
-      // The toggle must still describe this folder: root === repo fails when the folder changed
-      // after the probe that enabled the option, and a worktree is never made on a stale answer.
-      if (root && root === repo && worktreeOn) {
-        try {
-          folder = await invoke<DirectoryGrant>("create_worktree", {
-            rootId: folder.id,
-            branch: branch.trim(),
-          });
+      let fallbackName: string;
+      if (source === "github") {
+        if (!selected) return;
+        const repository = selected;
+        setLaunching({
+          choice,
+          place: fullName(repository),
+          // A clone that exists is used as it is; only a repository with none is cloned first.
+          steps: [
+            ...(repository.local
+              ? []
+              : [[`Cloning ${fullName(repository)}`, `Cloned ${fullName(repository)}`] as [string, string]]),
+            ...(worktreeOn ? [["Creating worktree", "Created worktree"] as [string, string]] : []),
+            [`Starting ${agentLabel(choice.agent)}`, `Started ${agentLabel(choice.agent)}`],
+          ],
+          done: 0,
+        });
+        const main = await invoke<DirectoryGrant>("prepare_repository", {
+          owner: repository.owner,
+          name: repository.name,
+          local: repository.local,
+        });
+        if (!repository.local) advance();
+        place = main;
+        if (worktreeOn) {
+          try {
+            place = await invoke<DirectoryGrant>("create_worktree", {
+              rootId: main.id,
+              branch: branch.trim(),
+              upstream: true,
+            });
+          } catch (reason) {
+            void invoke("revoke_directory", { rootId: main.id });
+            throw reason;
+          }
+          advance();
           worktree = true;
-        } catch (reason) {
-          setError(String(reason));
-          return;
         }
+        // The clone catches up with GitHub once the session is under way, for the next worktree.
+        void invoke("refresh_repository", { rootId: place.id }).catch(() => {});
+        root = main.path;
+        fallbackName = defaultSessionName(place.path);
+        // The Local tab's folder was granted for a session that is not this one.
+        if (directory) void invoke("revoke_directory", { rootId: directory.id });
+        setSelectedName(fullName(repository));
+      } else {
+        const making = !remote && Boolean(repo) && worktreeOn;
+        setLaunching({
+          choice,
+          place: placeLabel,
+          steps: [
+            ...(making ? [["Creating worktree", "Created worktree"] as [string, string]] : []),
+            [`Starting ${agentLabel(choice.agent)}`, `Started ${agentLabel(choice.agent)}`],
+          ],
+          done: 0,
+        });
+        place = await grant();
+        // The probe's answer can lag the folder field, so the granted folder is asked directly:
+        // the worktree and the recorded repository always describe where the session will run.
+        if (!remote)
+          root = (await invoke<DirectoryProbe>("directory_probe", { path: place.path })).repository?.root ?? null;
+        // The switch must still describe this folder: root === repo fails when the folder changed
+        // after the probe that enabled the option, and a worktree is never made on a stale answer.
+        if (root && root === repo && worktreeOn) {
+          place = await invoke<DirectoryGrant>("create_worktree", {
+            rootId: place.id,
+            branch: branch.trim(),
+            upstream: false,
+          });
+          advance();
+          worktree = true;
+        }
+        fallbackName = defaultSessionName(place.path);
       }
-      const name = title?.trim() ?? "";
+      const name = title.trim();
       const panel = pickers.find((picker) => picker.id === choice.id);
       onCreate({
         id: crypto.randomUUID(),
@@ -361,25 +694,28 @@ export function NewSessionDialog({
         provider: choice.provider,
         model: panel && codexChoices[modelKey(panel.id)],
         reasoningEffort: panel && codexChoices[levelKey(panel.id)],
-        cwd: folder.path,
-        host: folder.host ?? undefined,
-        rootId: folder.id,
-        name: name || defaultSessionName(folder.path),
+        cwd: place.path,
+        host: place.host ?? undefined,
+        rootId: place.id,
+        name: name || fallbackName,
         running: false,
         renamed: Boolean(name),
         worktree,
         repo: root || undefined,
       });
+      localStorage.setItem(CHOICE_KEY, choice.id);
+      setChoiceId(choice.id);
       setDirectory(undefined);
-      setTitle((current) => (current === undefined ? undefined : ""));
-      setRemoteSelected(false);
+      setTitle("");
+      setBranch("");
       onOpenChange(false);
-    } finally {
-      setCreating(false);
+      setLaunching(undefined);
+    } catch (reason) {
+      setLaunching((current) => (current ? { ...current, error: String(reason) } : current));
     }
   }
 
-  async function install(option: (typeof SESSION_CHOICES)[number] = choice) {
+  async function install(option: Choice) {
     const updating = !availability[option.id]?.installable;
     const label = sessionLabel({ agent: option.agent });
     setInstalling(option.id);
@@ -422,386 +758,813 @@ export function NewSessionDialog({
     }
   }
 
-  // Everything the dialog can be asked for arrives here: the submit button, Enter from the folder field,
-  // and a second click on the agent already chosen. An agent that is not installed reads them all as a
-  // request to install it, which is the only one of the two it can answer.
-  const folderReady = remote
-    ? host.trim() && path.trim()
-    : path.trim() && folder !== "other" && status && repo !== undefined && (!repo || !worktreeOn || branch.trim());
-  const ready = !unsupported && !installing && !creating && Boolean(missing || folderReady);
-  function start() {
-    if (missing?.installable) void install();
-    else if (missing)
+  // Where the session would run is settled: a repository chosen, a folder that can be one, or a host
+  // and path. Only then does an agent row start anything.
+  const placeReady =
+    source === "github"
+      ? Boolean(selected && github?.signedIn)
+      : remote
+        ? Boolean(host.trim() && path.trim())
+        : Boolean(path.trim() && folder !== "other" && repo !== undefined);
+  // Green is kept for a place Lite has confirmed: a repository it can clone or fetch, or a folder that
+  // exists. A folder about to be created stays amber and an SSH host is only checked once a session starts.
+  const confirmed = placeReady && (source === "github" || folder === "directory");
+  const busy = Boolean(installing || launching);
+  // The session the user asked for starts once the provider answers that its new key makes it ready.
+  async function keySaved(choice?: Choice) {
+    if (!choice) return;
+    const status = await invoke<Availability>("agent_availability", {
+      agent: choice.agent,
+      provider: choice.provider,
+    });
+    setAvailability((current) => ({ ...current, [choice.id]: status }));
+    if (status.available) await create(choice);
+    else setError(status.detail);
+  }
+
+  function launch(agent: Agent) {
+    const choice = harnessChoice(agent);
+    const status = availability[choice.id];
+    // Locally an agent starts only once its check answered that it can; SSH checks on the host.
+    if (busy || !placeReady || remoteUnsupported(remote, choice) || (!remote && !status)) return;
+    if (!remote && status && !status.available) setUp(choice);
+    else void create(choice);
+  }
+
+  // What an agent that is not ready needs, wherever the session would run: its install, its API key, or
+  // its setup guide.
+  function setUp(choice: Choice) {
+    if (availability[choice.id]?.installable) void install(choice);
+    else if ("variable" in choice && !choice.signIn) setKeyFor(choice);
+    else
       void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
         setError(String(reason)),
       );
-    else void create();
   }
 
+  // Enter anywhere in the dialog starts the agent used last; the number keys start the others.
   function submit(event: FormEvent) {
     event.preventDefault();
-    start();
+    launch(lastAgent);
   }
+  function numberKey(event: KeyboardEvent) {
+    if (!(IS_MAC ? event.metaKey : event.ctrlKey) || event.altKey || event.key < "1" || event.key > "9") return;
+    const agent = HARNESSES[Number(event.key) - 1];
+    if (!agent) return;
+    event.preventDefault();
+    launch(agent);
+  }
+  function moveSelection(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const at = visible.findIndex((repository) => selected && fullName(repository) === fullName(selected));
+    const next = visible[Math.min(visible.length - 1, Math.max(0, at + (event.key === "ArrowDown" ? 1 : -1)))];
+    if (next) setSelectedName(fullName(next));
+  }
+
+  const worktreeHere = worktreeOn && (source === "github" || (source === "local" && Boolean(repo)));
+  // The worktree a session would get and its branch: what the probe named for a clone that exists, or
+  // the first of each beside a clone about to be made.
+  const planned =
+    source === "github" && selected && !selected.local
+      ? { worktree: `${clonePath(selected)}-worktree-1`, branch: "lite/worktree-1" }
+      : { worktree, branch: suggestedBranch };
+  const defaultBranch = planned.branch;
+  const defaultName = worktreeHere
+    ? folderName(planned.worktree)
+    : source === "github"
+      ? (selected?.name ?? "")
+      : path.trim()
+        ? defaultSessionName(path.trim())
+        : "";
+  const whereLine =
+    source === "github"
+      ? !selected
+        ? ""
+        : worktreeOn
+          ? `${selected.local ? "New" : "Clones, then new"} worktree in ${tilde(planned.worktree)}`
+          : selected.local
+            ? `Runs directly in ${tilde(clonePath(selected))}`
+            : `Clones to ${tilde(clonePath(selected))}, then runs there`
+      : remote
+        ? host.trim() && path.trim()
+          ? `Runs on ${host.trim()} in ${path.trim()}`
+          : ""
+        : worktreeHere
+          ? worktree && `New worktree in ${tilde(worktree)}`
+          : folder === "missing"
+            ? `Creates and runs in ${tilde(path.trim())}`
+            : path.trim() && folder === "directory"
+              ? `Runs directly in ${tilde(path.trim())}`
+              : "";
+  const placeLabel =
+    source === "github" ? (selected ? fullName(selected) : "") : remote ? host.trim() : folderName(path.trim());
+  const mod = IS_MAC ? "⌘" : "Ctrl+";
+
+  function agentRow(agent: Agent, index: number) {
+    const choice = harnessChoice(agent);
+    const state = availability[choice.id];
+    const unsupported = remoteUnsupported(remote, choice);
+    const panel = pickers.find((picker) => picker.id === choice.id);
+    const authProvider = "signIn" in choice ? choice : undefined;
+    const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
+    const update = updates[agent];
+    const managed = agent !== "shell" && state && !state.installable;
+    // A registry that could not answer knows of no update, so only one it reported is offered.
+    const updatable = !remote && managed && update === true;
+    // The check mark carries the harness's version: grey while checking, amber when an update waits,
+    // green when it is current.
+    const tone =
+      !remote && managed && update === false
+        ? "[&_svg]:text-green-600 dark:[&_svg]:text-green-400"
+        : updatable
+          ? "[&_svg]:text-amber-600 dark:[&_svg]:text-amber-400"
+          : undefined;
+    const status = unsupported ? (
+      "Local workspace only"
+    ) : remote ? (
+      `Runs on ${host.trim() || "SSH host"}`
+    ) : state === null ? (
+      "Check failed"
+    ) : state && !state.available ? (
+      "variable" in choice && !choice.signIn ? (
+        "Add an API key"
+      ) : (
+        "Setup required"
+      )
+    ) : panel && state ? (
+      <span className="flex items-center gap-1.5">
+        <Check className="size-3.5 shrink-0" />
+        {panel.models.find(([slug]) => slug === codexChoices[modelKey(panel.id)])?.[1]} ·{" "}
+        {codexChoices[levelKey(panel.id)]} thinking
+      </span>
+    ) : authProvider ? (
+      <ProviderAuthDescription provider={authProvider} status={authStatus} />
+    ) : state ? (
+      "Available"
+    ) : (
+      "Checking…"
+    );
+    const disabled = busy || !placeReady || unsupported || (!remote && !state);
+    return (
+      <div
+        key={agent}
+        className={`group flex items-center gap-1 rounded-xl border pr-2 transition-colors ${agent === lastAgent ? "border-foreground/20 bg-accent/60" : "bg-card"} ${disabled ? "opacity-60" : "hover:border-foreground/25 hover:bg-accent"}`}
+      >
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => launch(agent)}
+          aria-label={`Start ${agentLabel(agent)}${placeLabel ? ` in ${placeLabel}` : ""}`}
+          className="flex h-14 min-w-0 flex-1 items-center gap-3 rounded-xl pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
+        >
+          <Tile>
+            <ProviderIcon agent={agent} provider={harnessVendor(agent)} className="size-5" />
+          </Tile>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="flex items-center gap-2 text-sm font-medium">
+              {agentLabel(agent)}
+              {agent === lastAgent ? (
+                <span className="rounded-full border px-1.5 text-[10px] font-medium text-muted-foreground">
+                  Last used
+                </span>
+              ) : null}
+            </span>
+            <ProviderLine choice={choice} tone={tone}>
+              {status}
+            </ProviderLine>
+          </span>
+          <Kbd className="hidden opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100 sm:inline-flex">
+            {mod}
+            {index + 1}
+          </Kbd>
+        </button>
+        {updatable ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            className="text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
+            aria-label={`Update ${agentLabel(agent)} to the latest version`}
+            disabled={busy}
+            onClick={() => void install(choice)}
+          >
+            <RefreshCw className={installing === choice.id ? "animate-spin" : undefined} />
+            {installing === choice.id ? "Updating…" : "Update"}
+          </Button>
+        ) : null}
+        {agent === "codex" ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-sm"
+                  aria-label="Codex provider, model and thinking"
+                  disabled={busy}
+                >
+                  <ChevronDown aria-hidden="true" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-64">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Provider</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={codexChoice.id}
+                  onValueChange={(id) => {
+                    localStorage.setItem(CODEX_KEY, id as string);
+                    setCodexId(id as string);
+                  }}
+                >
+                  {CODEX_CHOICES.map((option) => (
+                    <DropdownMenuRadioItem
+                      key={option.id}
+                      value={option.id}
+                      disabled={remoteUnsupported(remote, option)}
+                    >
+                      <ProviderIcon agent={option.agent} provider={option.provider} className="size-4" />
+                      <span className="flex-1">{providerName(option)}</span>
+                      {availability[option.id] && !availability[option.id]?.available ? (
+                        <span className="text-xs text-amber-600 dark:text-amber-400">Add key</span>
+                      ) : null}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+              {panel ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Model</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={codexChoices[modelKey(panel.id)]}
+                      onValueChange={(slug) => chooseCodex(modelKey(panel.id), slug as string)}
+                    >
+                      {panel.models.map(([slug, label]) => (
+                        <DropdownMenuRadioItem key={slug} value={slug} disabled={!panel.modelChoice}>
+                          {label}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel>Thinking</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={codexChoices[levelKey(panel.id)]}
+                      onValueChange={(level) => chooseCodex(levelKey(panel.id), level as string)}
+                    >
+                      {panel.levels.map((level) => (
+                        <DropdownMenuRadioItem key={level} value={level} className="capitalize">
+                          {level}
+                        </DropdownMenuRadioItem>
+                      ))}
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuGroup>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </div>
+    );
+  }
+
+  function setupRow(agent: Agent) {
+    const choice = harnessChoice(agent);
+    const state = availability[choice.id];
+    const installable = Boolean(state?.installable);
+    return (
+      <div key={agent} className="flex h-12 items-center gap-3 rounded-xl border border-dashed pr-2 pl-3">
+        <Tile className="size-8 opacity-60 grayscale-[60%]">
+          <ProviderIcon agent={agent} provider={harnessVendor(agent)} className="size-4" />
+        </Tile>
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="text-sm font-medium text-muted-foreground">{agentLabel(agent)}</span>
+          <ProviderLine choice={choice}>{installable ? "Not installed" : "Setup required"}</ProviderLine>
+        </span>
+        {installable ? (
+          <ActionIconButton
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            tooltip={installing === choice.id ? `Installing ${agentLabel(agent)}…` : `Install ${agentLabel(agent)}`}
+            aria-label={`Install ${agentLabel(agent)}`}
+            disabled={busy}
+            onClick={() => void install(choice)}
+          >
+            {installing === choice.id ? <Spinner /> : <Download />}
+          </ActionIconButton>
+        ) : (
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => setUp(choice)}>
+            Set up
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  // A harness needs setup when the harness itself does. A Codex provider without its key stays in the
+  // Codex row, where the menu can still switch to a provider that is ready.
+  const needsSetup = (agent: Agent) => {
+    const state = availability[SESSION_CHOICES.find((option) => option.agent === agent)?.id ?? ""];
+    return !remote && Boolean(state && !state.available);
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
-      <DialogContent className="sm:min-h-[32rem] sm:max-w-xl">
-        <form onSubmit={submit} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-          <DialogHeader>
+      <DialogContent
+        initialFocus={() => searchRef.current ?? folderRef.current ?? true}
+        showCloseButton={!launching || Boolean(launching.error)}
+        className={launching ? "gap-0 p-5 sm:max-w-xs" : "gap-0 p-0 sm:h-[min(40rem,calc(100dvh-2rem))] sm:max-w-4xl"}
+      >
+        {/* While a session starts, the dialog becomes its progress card. The choices stay mounted, so a
+            failed step brings them back as they were, with the error. */}
+        <form
+          onSubmit={submit}
+          onKeyDown={numberKey}
+          className={cn("flex min-h-0 min-w-0 flex-1 flex-col", launching && "hidden")}
+        >
+          <DialogHeader className="px-5 pt-4 pb-3">
             <DialogTitle>New session</DialogTitle>
-            <DialogDescription>Pick a project folder, then choose the agent that should work in it.</DialogDescription>
+            <DialogDescription className="sr-only">
+              Choose where the session runs, then the agent that starts it.
+            </DialogDescription>
           </DialogHeader>
-          <DialogBody className="min-w-0 space-y-4">
-            {remoteSsh ? (
-              <div className="flex items-center gap-2">
-                <Label htmlFor="remote-workspace" className={SECTION}>
-                  Remote SSH
-                </Label>
-                <Switch
-                  id="remote-workspace"
-                  checked={remote}
-                  disabled={creating}
-                  onCheckedChange={(checked) => {
-                    if (directory) void invoke("revoke_directory", { rootId: directory.id });
-                    setDirectory(undefined);
-                    setPath("");
-                    setRemoteSelected(checked);
-                  }}
-                />
-              </div>
-            ) : null}
-            {remote ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="ssh-host" className={SECTION}>
-                  SSH host
-                </Label>
-                <Input
-                  id="ssh-host"
-                  value={host}
-                  className="font-mono"
-                  placeholder="user@server or SSH config name"
-                  name="ssh-host"
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => {
-                    setHost(event.target.value);
-                    localStorage.setItem(SSH_HOST_KEY, event.target.value);
-                  }}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Uses your SSH config and agent sign-in on the Linux server. Connect once from a terminal first; key
-                  authentication must be non-interactive.
-                </p>
-              </div>
-            ) : null}
-            <div className="space-y-1.5">
-              <Label htmlFor="project-folder" className={SECTION}>
-                Project folder
-              </Label>
-              <div className="flex gap-2">
-                <div className="relative min-w-0 flex-1">
-                  <Input
-                    id="project-folder"
-                    value={path}
-                    className={`pr-8 font-mono ${folder === "directory" ? "border-success focus-visible:border-success focus-visible:ring-success/20" : folder === "missing" ? "border-amber-500 focus-visible:border-amber-500 focus-visible:ring-amber-500/20" : ""}`}
-                    placeholder={remote ? "/home/user/project" : "Type or choose a project folder…"}
-                    name="project-folder"
-                    autoComplete="off"
-                    aria-invalid={folder === "other" || undefined}
-                    aria-describedby={folder === "missing" || folder === "other" ? "project-folder-status" : undefined}
-                    onChange={(event) => {
-                      setPath(event.target.value);
-                      // The worktree section describes the probed folder; while a new one is being
-                      // typed there is nothing true to show, so it hides until the probe answers.
-                      setFolder("checking");
-                      setRepo(undefined);
-                      setWorktree("");
-                    }}
-                  />
-                  {folder === "directory" ? (
-                    <Check
-                      className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-success"
-                      aria-hidden="true"
-                    />
-                  ) : folder === "missing" ? (
-                    <TriangleAlert
-                      className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-amber-500"
-                      aria-hidden="true"
-                    />
-                  ) : folder === "other" ? (
-                    <CircleAlert
-                      className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-destructive"
-                      aria-hidden="true"
-                    />
+          <div className="grid min-h-0 flex-1 grid-cols-1 overflow-y-auto border-t sm:grid-cols-2 sm:overflow-hidden">
+            <div className="flex min-h-0 min-w-0 flex-col border-b sm:border-r sm:border-b-0">
+              <Tabs value={source} onValueChange={(value) => changeSource(value as Source)} className="px-3 pt-3 pb-2">
+                <TabsList className="w-full">
+                  <TabsTrigger value="github" disabled={busy}>
+                    <GitHubLogomark className="size-3.5" />
+                    GitHub
+                  </TabsTrigger>
+                  <TabsTrigger value="local" disabled={busy}>
+                    <FolderOpen />
+                    Local
+                  </TabsTrigger>
+                  {remoteSsh ? (
+                    <TabsTrigger value="ssh" disabled={busy}>
+                      <Server />
+                      SSH
+                    </TabsTrigger>
                   ) : null}
-                </div>
-                <ActionIconButton
-                  variant="outline"
-                  size="icon"
-                  tooltip="Browse"
-                  aria-label="Browse for a folder"
-                  disabled={remote}
-                  onClick={() => void chooseFolder()}
-                >
-                  <FolderOpen />
-                </ActionIconButton>
-              </div>
-              {folder === "missing" ? (
-                <p id="project-folder-status" className="text-xs text-amber-600 dark:text-amber-400">
-                  This folder does not exist and will be created.
-                </p>
-              ) : folder === "other" ? (
-                <p id="project-folder-status" className="text-xs text-destructive">
-                  This path is not a folder.
-                </p>
-              ) : null}
-            </div>
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <Label htmlFor="custom-session-name" className={SECTION}>
-                  Name{" "}
-                  <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
-                    Optional
-                  </span>
-                </Label>
-                <Switch
-                  id="custom-session-name"
-                  checked={title !== undefined}
-                  onCheckedChange={(checked) => {
-                    localStorage.setItem(NAME_KEY, String(checked));
-                    setTitle(checked ? "" : undefined);
-                  }}
-                />
-              </div>
-              {title !== undefined ? (
-                <Input
-                  id="session-title"
-                  value={title}
-                  placeholder="Name this session…"
-                  name="session-title"
-                  autoComplete="off"
-                  aria-label="Session name"
-                  onChange={(event) => setTitle(event.target.value)}
-                />
-              ) : null}
-            </div>
-            {repo ? (
-              <div className="space-y-2">
-                <div className="flex items-center gap-2">
-                  <Label htmlFor="new-worktree" className={SECTION}>
-                    Worktree{" "}
-                    <span className="text-[10px] font-normal tracking-normal text-muted-foreground/70 normal-case">
-                      Optional
+                </TabsList>
+              </Tabs>
+              {source === "github" ? (
+                github && !github.signedIn ? (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
+                    <span className="flex size-12 items-center justify-center rounded-xl border bg-card">
+                      <GitHubLogomark className="size-6" />
                     </span>
-                  </Label>
-                  <Switch
-                    id="new-worktree"
-                    checked={worktreeOn}
-                    onCheckedChange={(checked) => {
-                      localStorage.setItem(WORKTREE_KEY, String(checked));
-                      setWorktreeOn(checked);
-                    }}
-                  />
-                </div>
-                {worktreeOn ? (
-                  <div className="min-w-0 space-y-1.5">
-                    <Label htmlFor="worktree-branch">New branch</Label>
-                    <Input
-                      id="worktree-branch"
-                      value={branch}
-                      className="font-mono"
-                      placeholder="Branch for the worktree…"
-                      name="worktree-branch"
-                      autoComplete="off"
-                      spellCheck={false}
-                      onChange={(event) => setBranch(event.target.value)}
-                    />
-                    <p className="max-w-full truncate font-mono text-xs text-muted-foreground" title={worktree}>
-                      {worktree}
+                    <p className="text-sm font-medium">Connect GitHub</p>
+                    <p className="max-w-72 text-xs text-muted-foreground">
+                      Lite lists and clones your repositories through the GitHub CLI’s own sign-in. Lite never sees your
+                      token.
                     </p>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-            <div className="space-y-1.5">
-              <p className={SECTION}>Agent</p>
-              <div className="grid min-w-0 grid-cols-2 gap-2">
-                {SESSION_CHOICES.map((option) => {
-                  const active = choiceId === option.id;
-                  const unsupported = remoteUnsupported(remote, option);
-                  const panel = pickers.find((picker) => picker.id === option.id);
-                  const state = availability[option.id];
-                  const update = updates[option.agent];
-                  const managed = option.agent !== "shell" && state && !state.installable;
-                  // A registry that could not answer knows of no update, so only one it reported is
-                  // offered — by the button and by the mark beside the version alike.
-                  const updatable = managed && update === true;
-                  // What the icon offers, if it is there at all.
-                  const action = state?.installable
-                    ? ({ label: "Install", working: "Installing" } as const)
-                    : updatable
-                      ? ({ label: "Update", working: "Updating" } as const)
-                      : undefined;
-                  const busy = installing === option.id;
-                  const authProvider = "signIn" in option ? option : undefined;
-                  const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
-                  return (
-                    <div
-                      key={option.id}
-                      className={`relative min-w-0 ${active && panel ? "rounded-lg bg-secondary" : ""}`}
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        changeOpen(false);
+                        onGitHubSignIn();
+                      }}
                     >
-                      <Button
-                        type="button"
-                        size="lg"
-                        variant={active && !panel ? "secondary" : active ? "ghost" : "outline"}
-                        className={`h-14 w-full min-w-0 justify-start overflow-hidden pl-3 ${action ? "pr-11" : "pr-3"} ${active && panel ? "rounded-b-none" : ""} ${managed && update === false ? "[&_[data-slot=item-description]_svg]:text-green-600 dark:[&_[data-slot=item-description]_svg]:text-green-400" : updatable ? "[&_[data-slot=item-description]_svg]:text-amber-600 dark:[&_[data-slot=item-description]_svg]:text-amber-400" : ""}`}
-                        aria-pressed={active}
-                        disabled={Boolean(installing) || unsupported}
-                        title={"note" in option ? option.note : sessionLabel(option)}
-                        onClick={() => {
-                          if (active && ready) start();
-                          else {
-                            localStorage.setItem(CHOICE_KEY, option.id);
-                            setChoiceId(option.id);
-                          }
-                        }}
-                      >
-                        <ProviderRow option={option}>
-                          {unsupported ? (
-                            "Local workspace only"
-                          ) : remote ? (
-                            `Runs on ${host.trim() || "SSH host"}`
-                          ) : state === null ? (
-                            "Check failed"
-                          ) : state && !state.available ? (
-                            state.installable ? (
-                              "Not installed"
-                            ) : (
-                              "Setup required"
-                            )
-                          ) : authProvider ? (
-                            <ProviderAuthDescription provider={authProvider} status={authStatus} />
-                          ) : state ? (
-                            "Available"
-                          ) : (
-                            "Checking…"
-                          )}
-                        </ProviderRow>
-                      </Button>
-                      {active && panel ? (
-                        <div className="space-y-1 border-t px-3 py-2">
-                          <div className="flex items-center">
-                            <span id="codex-model-label" className="text-xs font-medium text-muted-foreground">
-                              Model
-                            </span>
-                            <fieldset
-                              className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
-                              aria-labelledby="codex-model-label"
-                              disabled={!panel.modelChoice}
-                            >
-                              {panel.models.map(([slug, label]) => (
-                                <Button
-                                  key={slug}
-                                  type="button"
-                                  size="xs"
-                                  variant={codexChoices[modelKey(panel.id)] === slug ? "secondary" : "ghost"}
-                                  aria-pressed={codexChoices[modelKey(panel.id)] === slug}
-                                  onClick={() => chooseCodex(modelKey(panel.id), slug)}
-                                >
-                                  {label}
-                                </Button>
-                              ))}
-                            </fieldset>
-                          </div>
-                          <div className="flex items-center">
-                            <span id="codex-reasoning-label" className="text-xs font-medium text-muted-foreground">
-                              Thinking
-                            </span>
-                            <fieldset
-                              className="ml-auto flex rounded-lg border-0 bg-background/70 p-0.5"
-                              aria-labelledby="codex-reasoning-label"
-                            >
-                              {panel.levels.map((effort) => (
-                                <Button
-                                  key={effort}
-                                  type="button"
-                                  size="xs"
-                                  variant={codexChoices[levelKey(panel.id)] === effort ? "secondary" : "ghost"}
-                                  className="capitalize"
-                                  aria-pressed={codexChoices[levelKey(panel.id)] === effort}
-                                  onClick={() => chooseCodex(levelKey(panel.id), effort)}
-                                >
-                                  {effort}
-                                </Button>
-                              ))}
-                            </fieldset>
-                          </div>
+                      Sign in with GitHub CLI
+                    </Button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => changeSource("local")}>
+                      Use a local folder instead
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <SearchInput
+                      className="px-3 pb-1"
+                      inputRef={searchRef}
+                      value={query}
+                      placeholder="Search your repositories and GitHub…"
+                      onKeyDown={moveSelection}
+                      onChange={(value) => {
+                        setQuery(value);
+                        const first = [...known.values()].find((repository) =>
+                          fullName(repository).toLowerCase().includes(value.trim().toLowerCase()),
+                        );
+                        if (first) setSelectedName(fullName(first));
+                      }}
+                    />
+                    <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+                      {!github ? (
+                        <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+                          <Spinner /> Loading your repositories…
                         </div>
                       ) : null}
-                      {action ? (
-                        <ActionIconButton
-                          type="button"
-                          size="icon"
-                          variant="outline"
-                          className={`absolute right-2 ${active && panel ? "top-3" : "top-1/2 -mt-4"}`}
-                          tooltip={
-                            busy
-                              ? `${action.working} ${sessionLabel(option)}…`
-                              : action.label === "Install"
-                                ? `Install ${sessionLabel(option)}`
-                                : `Update ${sessionLabel(option)} to the latest version`
-                          }
-                          aria-label={
-                            action.label === "Install"
-                              ? `Install ${sessionLabel(option)}`
-                              : `Update ${sessionLabel(option)} to the latest version`
-                          }
-                          disabled={Boolean(installing)}
-                          onClick={() => void install(option)}
-                        >
-                          {action.label === "Install" ? (
-                            busy ? (
-                              <Spinner />
-                            ) : (
-                              <Download />
-                            )
-                          ) : (
-                            <RefreshCw className={busy ? "animate-spin" : undefined} />
-                          )}
-                        </ActionIconButton>
+                      {groups.map((group) =>
+                        group.repositories.length ? (
+                          <div key={group.label} className="pt-2">
+                            <p className={`px-2 pb-1 ${SECTION}`}>{group.label}</p>
+                            {group.repositories.map((repository) => {
+                              const active = Boolean(selected) && fullName(repository) === fullName(selected);
+                              const count = running(repository);
+                              return (
+                                <button
+                                  key={fullName(repository)}
+                                  type="button"
+                                  aria-pressed={active}
+                                  disabled={busy}
+                                  onClick={() => setSelectedName(fullName(repository))}
+                                  className={pickRow(active, confirmed)}
+                                >
+                                  <Tile>
+                                    <GitHubLogomark className="size-4.5" />
+                                  </Tile>
+                                  <span className="flex min-w-0 flex-1 flex-col">
+                                    <span className="flex min-w-0 items-center gap-1 text-sm">
+                                      <span className="truncate">
+                                        <span className="text-muted-foreground">{repository.owner}/</span>
+                                        <span className="font-medium">{repository.name}</span>
+                                      </span>
+                                      {repository.private ? (
+                                        <Lock aria-label="Private" className="size-3 shrink-0 text-muted-foreground" />
+                                      ) : null}
+                                    </span>
+                                    <span className="flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
+                                      {repository.language ? (
+                                        <>
+                                          <span
+                                            className="size-2 rounded-full"
+                                            style={{ background: repository.color ?? "currentColor" }}
+                                          />
+                                          {repository.language}
+                                        </>
+                                      ) : null}
+                                      {repository.language && repository.pushedAt ? <span>·</span> : null}
+                                      {repository.pushedAt ? relativeAge(repository.pushedAt) : null}
+                                      {repository.local ? (
+                                        <>
+                                          <span>·</span>
+                                          <span className="min-w-0 truncate font-mono" title={repository.local}>
+                                            {tilde(repository.local)}
+                                          </span>
+                                        </>
+                                      ) : null}
+                                    </span>
+                                  </span>
+                                  {count ? (
+                                    <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] text-success">
+                                      <span className="size-1.5 rounded-full bg-success" />
+                                      {count} running
+                                    </span>
+                                  ) : null}
+                                  {active && confirmed ? readyMark : null}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        ) : null,
+                      )}
+                      {search.length >= 2 && found?.query !== search ? (
+                        <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
+                          <Spinner /> Searching GitHub for “{search}”…
+                        </div>
+                      ) : null}
+                      {github && !visible.length && !(search.length >= 2 && found?.query !== search) ? (
+                        <p className="px-2 py-3 text-xs text-muted-foreground">
+                          {search ? "No repositories match." : "No repositories yet."}
+                        </p>
                       ) : null}
                     </div>
-                  );
-                })}
+                  </>
+                )
+              ) : (
+                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-3 pb-2">
+                  {remote ? (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="ssh-host">SSH host</Label>
+                      <Input
+                        id="ssh-host"
+                        value={host}
+                        className="font-mono"
+                        placeholder="user@server or SSH config name"
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) => {
+                          setHost(event.target.value);
+                          localStorage.setItem(SSH_HOST_KEY, event.target.value);
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  <div className="space-y-1.5">
+                    {remote ? <Label htmlFor="project-folder">Folder on host</Label> : null}
+                    <div className="flex gap-2">
+                      <div className="relative min-w-0 flex-1">
+                        <Input
+                          ref={folderRef}
+                          id="project-folder"
+                          value={path}
+                          className={`pr-8 font-mono ${folder === "directory" ? "border-success focus-visible:border-success focus-visible:ring-success/20" : folder === "missing" ? "border-amber-500 focus-visible:border-amber-500 focus-visible:ring-amber-500/20" : ""}`}
+                          placeholder={remote ? "/home/user/project" : "Type or choose a project folder…"}
+                          aria-label={remote ? undefined : "Project folder"}
+                          autoComplete="off"
+                          spellCheck={false}
+                          aria-invalid={folder === "other" || undefined}
+                          aria-describedby={
+                            folder === "missing" || folder === "other" ? "project-folder-status" : undefined
+                          }
+                          onChange={(event) => {
+                            setPath(event.target.value);
+                            setFolder("checking");
+                            setRepo(undefined);
+                            setWorktree("");
+                          }}
+                        />
+                        {folder === "directory" ? (
+                          <Check
+                            className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-success"
+                            aria-hidden="true"
+                          />
+                        ) : folder === "missing" ? (
+                          <TriangleAlert
+                            className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-amber-500"
+                            aria-hidden="true"
+                          />
+                        ) : folder === "other" ? (
+                          <CircleAlert
+                            className="absolute top-1/2 right-2 size-4 -translate-y-1/2 text-destructive"
+                            aria-hidden="true"
+                          />
+                        ) : null}
+                      </div>
+                      {remote ? null : (
+                        <ActionIconButton
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          tooltip="Browse"
+                          aria-label="Browse for a folder"
+                          onClick={() => void chooseFolder()}
+                        >
+                          <FolderOpen />
+                        </ActionIconButton>
+                      )}
+                    </div>
+                    {remote ? (
+                      <p className="text-xs text-muted-foreground">
+                        Uses your SSH config and agent sign-in on the Linux server. Connect once from a terminal first;
+                        key authentication must be non-interactive.
+                      </p>
+                    ) : folder === "missing" ? (
+                      <p id="project-folder-status" className="text-xs text-amber-600 dark:text-amber-400">
+                        This folder does not exist and will be created.
+                      </p>
+                    ) : folder === "other" ? (
+                      <p id="project-folder-status" className="text-xs text-destructive">
+                        This path is not a folder.
+                      </p>
+                    ) : null}
+                  </div>
+                  {!remote && recentFolders.length ? (
+                    <div>
+                      <p className={`px-1 pb-1 ${SECTION}`}>Recent folders</p>
+                      {recentFolders.map((place) => {
+                        const probe = folderProbes[place];
+                        const active = place === path.trim();
+                        const remoteName = probe?.repository?.remote?.replace(/^https:\/\/[^/]+\//, "");
+                        return (
+                          <button
+                            key={place}
+                            type="button"
+                            aria-pressed={active}
+                            disabled={busy}
+                            onClick={() => {
+                              setPath(place);
+                              setFolder("checking");
+                              setRepo(undefined);
+                            }}
+                            className={pickRow(active, confirmed)}
+                          >
+                            <Tile>
+                              {/* A GitHub clone, any other repository, or a plain folder. */}
+                              {probe?.repository?.remote?.startsWith("https://github.com/") ? (
+                                <GitHubLogomark className="size-4.5" />
+                              ) : probe?.repository ? (
+                                <GitLogomark className="size-4.5" />
+                              ) : (
+                                <FolderOpen className="size-4.5 text-muted-foreground" />
+                              )}
+                            </Tile>
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className="truncate text-sm font-medium">{folderName(place) || place}</span>
+                              <span className="truncate font-mono text-xs text-muted-foreground">{tilde(place)}</span>
+                            </span>
+                            {probe === undefined ? null : (
+                              <span className="max-w-40 shrink-0 truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                                {remoteName ?? (probe?.repository ? "Git" : "Folder")}
+                              </span>
+                            )}
+                            {active && confirmed ? readyMark : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </div>
+              )}
+              {github?.signedIn || source !== "github" ? (
+                <div
+                  className={cn(
+                    "m-3 mt-1 space-y-2 rounded-xl border bg-card/60 p-3 transition-colors duration-300",
+                    confirmed && "border-success/40",
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <Label htmlFor="session-title" className="w-12 shrink-0 text-xs text-muted-foreground">
+                      Name
+                    </Label>
+                    <Input
+                      id="session-title"
+                      value={title}
+                      className="h-8"
+                      placeholder={defaultName || "Session name"}
+                      autoComplete="off"
+                      onChange={(event) => setTitle(event.target.value)}
+                    />
+                  </div>
+                  {worktreeHere ? (
+                    <div className="flex items-center gap-3">
+                      <Label htmlFor="worktree-branch" className="w-12 shrink-0 text-xs text-muted-foreground">
+                        Branch
+                      </Label>
+                      <Input
+                        id="worktree-branch"
+                        value={branch}
+                        className="h-8 font-mono text-xs"
+                        placeholder={defaultBranch || "New branch"}
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) => setBranch(event.target.value)}
+                      />
+                    </div>
+                  ) : null}
+                  <div
+                    className={cn(
+                      "flex min-h-5 items-center gap-2 text-xs transition-colors duration-300",
+                      confirmed && whereLine ? "text-foreground/80" : "text-muted-foreground",
+                    )}
+                  >
+                    {confirmed && whereLine ? (
+                      <CircleCheck aria-label="Ready" className="size-3.5 shrink-0 text-success" />
+                    ) : worktreeHere ? (
+                      <GitBranch aria-hidden="true" className="size-3.5 shrink-0" />
+                    ) : (
+                      <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate font-mono" title={whereLine}>
+                      {whereLine}
+                    </span>
+                    {(source === "github" && selected) || (source === "local" && repo) ? (
+                      <>
+                        <Label htmlFor="new-worktree" className="text-xs text-muted-foreground">
+                          Worktree
+                        </Label>
+                        <Switch
+                          id="new-worktree"
+                          checked={worktreeOn}
+                          onCheckedChange={(checked) => {
+                            localStorage.setItem(WORKTREE_KEY, String(checked));
+                            setWorktreeOn(checked);
+                          }}
+                        />
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <div className="flex min-h-0 min-w-0 flex-col bg-muted/20">
+              <div className="flex items-center justify-between gap-3 px-4 pt-4 pb-2">
+                <p className={SECTION}>Start with</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {placeReady ? (
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "size-1.5 shrink-0 rounded-full",
+                          confirmed ? "bg-success" : "bg-muted-foreground",
+                        )}
+                      />
+                      in {placeLabel}
+                    </span>
+                  ) : source === "github" && !github?.signedIn ? (
+                    "Connect GitHub first"
+                  ) : (
+                    "Choose where it runs"
+                  )}
+                </p>
+              </div>
+              <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto px-3 pb-3">
+                {HARNESSES.map((agent, index) => (needsSetup(agent) ? null : agentRow(agent, index)))}
+                {HARNESSES.some(needsSetup) ? (
+                  <>
+                    <div className={`flex items-center gap-2 px-1 pt-2 ${SECTION}`}>
+                      Needs setup
+                      <span className="h-px flex-1 bg-border" />
+                    </div>
+                    {HARNESSES.filter(needsSetup).map(setupRow)}
+                  </>
+                ) : null}
+                {error ? <p className="px-1 pt-1 text-xs text-destructive">{error}</p> : null}
               </div>
             </div>
-            {/* Written by the folder and by the setup guide alike, so it sits with neither and above both. */}
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
-          </DialogBody>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={creating}
-              onClick={() =>
-                installing
-                  ? void invoke("cancel_install").catch((reason) => setError(String(reason)))
-                  : changeOpen(false)
-              }
-            >
-              {installing ? `Cancel ${availability[installing]?.installable ? "install" : "update"}` : "Cancel"}
-            </Button>
-            <Button type="submit" disabled={!ready}>
-              {(!remote && !status) || (installing && missing?.installable) ? <Spinner /> : null}
-              {installing && missing?.installable
-                ? `Installing ${sessionLabel(choice)}…`
-                : missing?.installable
-                  ? `Install ${sessionLabel(choice)}`
-                  : missing
-                    ? "Open setup guide"
-                    : "Start session"}
-            </Button>
-          </DialogFooter>
+          </div>
+          <div className="hidden items-center gap-4 border-t px-5 py-2.5 text-xs text-muted-foreground sm:flex">
+            <span className="flex items-center gap-1.5">
+              <Kbd>↑↓</Kbd> Choose
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd>↵</Kbd> Start {agentLabel(lastAgent)}
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Kbd>
+                {mod}1–{HARNESSES.length}
+              </Kbd>{" "}
+              Start an agent
+            </span>
+          </div>
         </form>
+        {launching ? (
+          <div role="status" aria-live="polite" className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Tile className="size-10">
+                <ProviderIcon
+                  agent={launching.choice.agent}
+                  provider={harnessVendor(launching.choice.agent)}
+                  className="size-5"
+                />
+              </Tile>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Starting {agentLabel(launching.choice.agent)}</p>
+                <p className="truncate text-xs text-muted-foreground">in {launching.place}</p>
+              </div>
+            </div>
+            <ol className="space-y-2.5 text-sm">
+              {launching.steps.map(([running, done], index) => (
+                <li
+                  key={running}
+                  className={cn("flex items-center gap-2.5", index > launching.done && "text-muted-foreground")}
+                >
+                  {index < launching.done ? (
+                    <Check aria-label="Done" className="size-4 shrink-0 text-success" />
+                  ) : index === launching.done && launching.error ? (
+                    <X aria-label="Failed" className="size-4 shrink-0 text-destructive" />
+                  ) : index === launching.done ? (
+                    <Spinner className="size-4 shrink-0" />
+                  ) : (
+                    <span className="size-4 shrink-0 rounded-full border" />
+                  )}
+                  {index < launching.done
+                    ? done
+                    : index === launching.done && !launching.error
+                      ? `${running}…`
+                      : running}
+                </li>
+              ))}
+            </ol>
+            {launching.error ? (
+              <>
+                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs break-words text-destructive">
+                  {launching.error}
+                </p>
+                <Button type="button" variant="outline" className="w-full" onClick={() => setLaunching(undefined)}>
+                  Back
+                </Button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+        <ApiKeyDialog
+          provider={keyFor}
+          replacing={false}
+          saveLabel="Save and start"
+          footer={
+            <Button
+              type="button"
+              variant="link"
+              className="px-0"
+              onClick={() => {
+                setKeyFor(undefined);
+                changeOpen(false);
+                onApiKeys();
+              }}
+            >
+              Manage keys in Settings
+            </Button>
+          }
+          onClose={() => setKeyFor(undefined)}
+          onSaved={() => keySaved(keyFor)}
+        />
       </DialogContent>
     </Dialog>
   );

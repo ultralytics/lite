@@ -2,52 +2,50 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import {
-  Bell,
-  Coffee,
+  Check,
   ExternalLink,
-  Eye,
-  EyeOff,
-  FolderCog,
   Info,
   Keyboard,
   KeyRound,
   Moon,
+  Pencil,
+  Plus,
   RefreshCw,
   RotateCcw,
-  Server,
   SlidersHorizontal,
   Sun,
   Trash2,
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 
-import { GitHubLogomark, UltralyticsLogomark } from "@/brand-icons";
+import { GitHubLogomark, ProviderIcon, UltralyticsLogomark } from "@/brand-icons";
 import { ActionIconButton, Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogBody,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import {
-  Item,
-  ItemActions,
-  ItemContent,
-  ItemDescription,
-  ItemFooter,
-  ItemGroup,
-  ItemMedia,
-  ItemTitle,
-} from "@/components/ui/item";
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { including, without } from "@/lib/utils";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, ProviderRow, providerName } from "@/provider-auth";
+import {
+  ApiKeyDialog,
+  AUTH_PROVIDERS,
+  KEY_PROVIDERS,
+  type KeyProvider,
+  type ProviderAuth,
+  providerName,
+} from "@/provider-auth";
 import {
   eventCombo,
   FIXED_SHORTCUTS,
@@ -62,9 +60,12 @@ import {
   useShortcutKeys,
 } from "@/shortcuts";
 import type { Theme } from "@/theme";
-import type { Agent } from "@/types";
+import { type Agent, agentLabel, tilde } from "@/types";
 
-const providers = Object.values(AUTH_PROVIDERS);
+// A row inside a section's list: the list draws the frame, each row only the line above it.
+const ROW = "rounded-none border-x-0 border-b-0 first:border-t-0";
+
+const SIGN_INS = Object.values(AUTH_PROVIDERS).filter((option) => option.signIn);
 
 // One shortcut row: the caps it answers to, which turn into a recorder on a click and take the next
 // chord pressed. A chord another shortcut already holds, or one without a modifier, is refused with a
@@ -82,8 +83,10 @@ function ShortcutRow({
   const [error, setError] = useState("");
   const { label } = SHORTCUTS[id];
   return (
-    <li className="flex items-center gap-3 py-1.5">
-      <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
+    <Item role="listitem" variant="outline" size="xs" className={ROW}>
+      <ItemContent>
+        <ItemTitle className="font-normal">{label}</ItemTitle>
+      </ItemContent>
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
       {keys !== SHORTCUTS[id].keys ? (
         <ActionIconButton
@@ -138,12 +141,63 @@ function ShortcutRow({
       >
         {recording ? "Press keys…" : <ShortcutCaps keys={keys} />}
       </button>
-    </li>
+    </Item>
+  );
+}
+
+// A titled group of settings drawn as one list with divided rows, the way system settings group them.
+function Section({
+  title,
+  description,
+  action,
+  children,
+}: {
+  title: string;
+  description?: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2">
+      <div className="flex items-end justify-between gap-4 px-1">
+        <div className="min-w-0">
+          <h3 className="text-sm font-medium">{title}</h3>
+          {description ? <p className="text-xs text-muted-foreground">{description}</p> : null}
+        </div>
+        {action}
+      </div>
+      <ItemGroup className="gap-0 rounded-lg border">{children}</ItemGroup>
+    </section>
+  );
+}
+
+// One setting: what it is and what it does on the left, its control on the right.
+function Setting({
+  title,
+  description,
+  media,
+  children,
+}: {
+  title: ReactNode;
+  description: ReactNode;
+  media?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Item role="listitem" variant="outline" className={ROW}>
+      {media ? <ItemMedia variant="icon">{media}</ItemMedia> : null}
+      <ItemContent className="min-w-0">
+        <ItemTitle>{title}</ItemTitle>
+        <ItemDescription className="truncate">{description}</ItemDescription>
+      </ItemContent>
+      <ItemActions>{children}</ItemActions>
+    </Item>
   );
 }
 
 export function SettingsDialog({
   open: isOpen,
+  tab = "general",
   onOpenChange,
   onSignIn,
   notifications,
@@ -162,6 +216,8 @@ export function SettingsDialog({
   onFileBrowserChange,
 }: {
   open: boolean;
+  // The tab the dialog opens on.
+  tab?: string;
   onOpenChange: (open: boolean) => void;
   onSignIn: (agent: Agent) => void;
   notifications: boolean;
@@ -181,13 +237,19 @@ export function SettingsDialog({
 }) {
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [hideHidden, setHideHidden] = useState<boolean>();
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [editing, setEditing] = useState<Set<string>>(new Set());
-  const [revealed, setRevealed] = useState<Set<string>>(new Set());
+  const [repositories, setRepositories] = useState("");
+  // The vendor whose key is being added or replaced.
+  const [keying, setKeying] = useState<KeyProvider>();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notificationsSupported, setNotificationsSupported] = useState<boolean>();
   const [recording, setRecording] = useState<ShortcutId | null>(null);
+
+  // The keys Lite holds, one per vendor, in the vendors' own order.
+  const saved = KEY_PROVIDERS.flatMap((option) => {
+    const status = auth?.find((entry) => entry.name === option.id);
+    return status?.keyHint ? [{ option, status }] : [];
+  });
 
   const read = useCallback(async () => {
     setAuth(await invoke<ProviderAuth[]>("provider_auth"));
@@ -196,44 +258,13 @@ export function SettingsDialog({
   useEffect(() => {
     if (!isOpen) return;
     setError("");
-    setDrafts({});
-    setEditing(new Set());
-    setRevealed(new Set());
     void Promise.all([
       read(),
       invoke<boolean>("notifications_supported").then(setNotificationsSupported),
       invoke<boolean>("hide_hidden_files").then(setHideHidden),
+      invoke<string>("repositories_directory").then(setRepositories),
     ]).catch((reason) => setError(String(reason)));
   }, [isOpen, read]);
-
-  function edit(id: string, open: boolean) {
-    setEditing((current) => (open ? including(current, id) : without(current, id)));
-    if (!open) setDrafts((current) => ({ ...current, [id]: "" }));
-  }
-
-  function reveal(id: string) {
-    setRevealed((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  async function save(id: string) {
-    setError("");
-    setBusy(id);
-    try {
-      await invoke("save_api_key", { name: id, key: drafts[id] ?? "" });
-      setDrafts((current) => ({ ...current, [id]: "" }));
-      edit(id, false);
-      await read();
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setBusy("");
-    }
-  }
 
   async function remove(id: string) {
     setError("");
@@ -260,6 +291,16 @@ export function SettingsDialog({
     }
   }
 
+  async function changeRepositories() {
+    setError("");
+    try {
+      const chosen = await invoke<string | null>("choose_repositories_directory");
+      if (chosen) setRepositories(chosen);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   async function changeHideHidden(hide: boolean) {
     setError("");
     setBusy("hidden-files");
@@ -276,25 +317,28 @@ export function SettingsDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:h-[36rem] sm:max-w-3xl">
+      <DialogContent className="sm:h-[38rem] sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
-          <DialogDescription>Personalize Lite and manage how agent sessions sign in.</DialogDescription>
+          <DialogDescription className="sr-only">
+            Change how Lite looks, runs sessions, signs in, and answers the keyboard.
+          </DialogDescription>
         </DialogHeader>
+        {error ? (
+          <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
         <DialogBody className="flex">
-          <Tabs defaultValue="general" orientation="vertical" className="min-h-full w-full gap-6">
+          <Tabs defaultValue={tab} orientation="vertical" className="min-h-full w-full gap-6">
             <TabsList variant="line" className="w-36 shrink-0 items-stretch justify-start border-r pr-4">
               <TabsTrigger value="general">
                 <SlidersHorizontal />
                 General
               </TabsTrigger>
-              <TabsTrigger value="keys">
+              <TabsTrigger value="accounts">
                 <KeyRound />
-                API keys
-              </TabsTrigger>
-              <TabsTrigger value="files">
-                <FolderCog />
-                Files
+                Accounts
               </TabsTrigger>
               <TabsTrigger value="shortcuts">
                 <Keyboard />
@@ -305,189 +349,178 @@ export function SettingsDialog({
                 About
               </TabsTrigger>
             </TabsList>
-            <TabsContent value="general" className="min-w-0">
-              <h2 className="text-base font-semibold">General</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">Personalize how Lite looks and responds.</p>
-              <ItemGroup>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">{theme === "dark" ? <Moon /> : <Sun />}</ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Dark mode</ItemTitle>
-                    <ItemDescription>Use Lite’s dark appearance.</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch
-                      aria-label="Dark mode"
-                      checked={theme === "dark"}
-                      onCheckedChange={(checked) => onThemeChange(checked ? "dark" : "light")}
-                    />
-                  </ItemActions>
-                </Item>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <Coffee />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Keep system awake</ItemTitle>
-                    <ItemDescription>
-                      Prevent automatic sleep and display shutoff while a session is active.
-                    </ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch aria-label="Keep system awake" checked={keepAwake} onCheckedChange={onKeepAwakeChange} />
-                  </ItemActions>
-                </Item>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <Server />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Remote SSH</ItemTitle>
-                    <ItemDescription>Show Remote SSH workspaces when creating a session.</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch aria-label="Remote SSH" checked={remoteSsh} onCheckedChange={onRemoteSshChange} />
-                  </ItemActions>
-                </Item>
+            <TabsContent value="general" className="min-w-0 space-y-6">
+              <Section title="Appearance">
+                <Setting title="Theme" description="How Lite and its terminals look.">
+                  <fieldset aria-label="Theme" className="flex rounded-lg border-0 bg-muted p-0.5">
+                    {(
+                      [
+                        ["light", Sun, "Light"],
+                        ["dark", Moon, "Dark"],
+                      ] as const
+                    ).map(([value, Icon, label]) => (
+                      <Button
+                        key={value}
+                        size="sm"
+                        variant={theme === value ? "outline" : "ghost"}
+                        aria-pressed={theme === value}
+                        className={theme === value ? "shadow-xs" : "text-muted-foreground"}
+                        onClick={() => onThemeChange(value)}
+                      >
+                        <Icon />
+                        {label}
+                      </Button>
+                    ))}
+                  </fieldset>
+                </Setting>
+              </Section>
+              <Section title="Sessions">
+                <Setting
+                  title="Repositories folder"
+                  description={
+                    <span className="font-mono text-xs" title={repositories}>
+                      {repositories ? tilde(repositories) : "…"}
+                    </span>
+                  }
+                >
+                  <Button variant="outline" size="sm" onClick={() => void changeRepositories()}>
+                    Change…
+                  </Button>
+                </Setting>
+                <Setting title="SSH hosts" description="Offer an SSH tab when starting a session.">
+                  <Switch aria-label="SSH hosts" checked={remoteSsh} onCheckedChange={onRemoteSshChange} />
+                </Setting>
+                <Setting title="Keep computer awake" description="Prevent sleep while any session is working.">
+                  <Switch aria-label="Keep computer awake" checked={keepAwake} onCheckedChange={onKeepAwakeChange} />
+                </Setting>
                 {notificationsSupported ? (
-                  <Item variant="outline">
-                    <ItemMedia variant="icon">
-                      <Bell />
-                    </ItemMedia>
-                    <ItemContent>
-                      <ItemTitle>macOS notifications</ItemTitle>
-                      <ItemDescription>Notify you when a background session is ready.</ItemDescription>
-                    </ItemContent>
-                    <ItemActions>
-                      <Switch
-                        aria-label="macOS notifications"
-                        checked={notifications}
-                        disabled={busy === "notifications"}
-                        onCheckedChange={(checked) => void changeNotifications(checked)}
-                      />
-                    </ItemActions>
-                  </Item>
+                  <Setting title="Notifications" description="Tell you when a background session is ready.">
+                    <Switch
+                      aria-label="Notifications"
+                      checked={notifications}
+                      disabled={busy === "notifications"}
+                      onCheckedChange={(checked) => void changeNotifications(checked)}
+                    />
+                  </Setting>
                 ) : null}
-              </ItemGroup>
+              </Section>
+              <Section title="File browser">
+                <Setting
+                  title="Show hidden files"
+                  description="Include files and folders whose names begin with a period."
+                >
+                  <Switch
+                    aria-label="Show hidden files"
+                    checked={hideHidden === false}
+                    disabled={hideHidden === undefined || busy === "hidden-files"}
+                    onCheckedChange={(show) => void changeHideHidden(!show)}
+                  />
+                </Setting>
+              </Section>
             </TabsContent>
-            <TabsContent value="keys" className="min-w-0">
-              <h2 className="text-base font-semibold">API keys</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">
-                Saved keys stay on this computer and take priority over provider sign-in.
-              </p>
-              <ItemGroup>
-                {providers.map((option) => {
-                  const status = auth?.find((entry) => entry.name === option.id);
-                  const open = editing.has(option.id);
-                  const draft = drafts[option.id] ?? "";
-                  const shown = revealed.has(option.id);
+            <TabsContent value="accounts" className="min-w-0 space-y-6">
+              <Section
+                title="API keys"
+                description="One key per vendor, kept on this computer. A saved key comes before the vendor’s sign-in."
+                action={
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button size="sm" className="shrink-0">
+                          <Plus />
+                          Add key
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="end" className="w-52">
+                      {KEY_PROVIDERS.map((option) => (
+                        <DropdownMenuItem key={option.id} onClick={() => setKeying(option)}>
+                          <ProviderIcon agent={option.agent} provider={option.provider} className="size-4" />
+                          {providerName(option)}
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                }
+              >
+                {saved.length ? (
+                  saved.map(({ option, status }) => (
+                    <Setting
+                      key={option.id}
+                      media={<ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />}
+                      title={providerName(option)}
+                      description={
+                        <>
+                          <span className="font-mono">{status.keyHint}…</span> · Used by {agentLabel(option.agent)}
+                        </>
+                      }
+                    >
+                      <ActionIconButton
+                        size="icon-sm"
+                        tooltip={`Replace the ${providerName(option)} key`}
+                        aria-label={`Replace the ${providerName(option)} key`}
+                        onClick={() => setKeying(option)}
+                      >
+                        <Pencil />
+                      </ActionIconButton>
+                      <ActionIconButton
+                        size="icon-sm"
+                        className="hover:text-destructive"
+                        tooltip={`Remove the ${providerName(option)} key`}
+                        aria-label={`Remove the ${providerName(option)} key`}
+                        disabled={busy === option.id}
+                        onClick={() => void remove(option.id)}
+                      >
+                        {busy === option.id ? <Spinner /> : <Trash2 />}
+                      </ActionIconButton>
+                    </Setting>
+                  ))
+                ) : (
+                  <Item role="listitem" className="justify-center py-6 text-muted-foreground">
+                    {auth ? "No API keys yet. Add one to use a vendor without signing in through its CLI." : "…"}
+                  </Item>
+                )}
+              </Section>
+              <Section
+                title="Sign-ins"
+                description="Each CLI keeps its own sign-in. Lite runs the sign-in and never reads it."
+              >
+                {SIGN_INS.map((option) => {
+                  const signedIn = auth?.find((entry) => entry.name === option.id)?.cliAuthMethod === "provider";
                   return (
-                    <Item key={option.id} variant="outline">
-                      <ProviderRow option={option}>
-                        <ProviderAuthDescription provider={option} status={status} />
-                      </ProviderRow>
-                      {open ? null : (
-                        <ItemActions>
-                          {!status?.keyHint && !status?.cliAuthMethod && option.signIn ? (
-                            <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
-                              Sign in
-                            </Button>
-                          ) : null}
-                          {"variable" in option ? (
-                            <Button variant="ghost" size="sm" onClick={() => edit(option.id, true)}>
-                              {status?.keyHint ? "Replace API key" : "Use API key"}
-                            </Button>
-                          ) : null}
-                          {status?.keyHint ? (
-                            <ActionIconButton
-                              size="icon-sm"
-                              className="hover:text-destructive"
-                              tooltip="Delete this key"
-                              aria-label={`Delete the ${providerName(option)} key`}
-                              disabled={busy === option.id}
-                              onClick={() => void remove(option.id)}
-                            >
-                              {busy === option.id ? <Spinner /> : <Trash2 />}
-                            </ActionIconButton>
-                          ) : null}
-                        </ItemActions>
-                      )}
-                      {open && "variable" in option ? (
-                        <ItemFooter>
-                          <InputGroup>
-                            <InputGroupInput
-                              autoFocus
-                              type={shown ? "text" : "password"}
-                              value={draft}
-                              className="font-mono"
-                              placeholder="Paste a key"
-                              aria-label={`${providerName(option)} API key`}
-                              onChange={(event) =>
-                                setDrafts((current) => ({ ...current, [option.id]: event.target.value }))
-                              }
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" && draft.trim()) void save(option.id);
-                                if (event.key === "Escape") edit(option.id, false);
-                              }}
-                            />
-                            <InputGroupAddon align="inline-end">
-                              <InputGroupButton
-                                size="icon-xs"
-                                aria-label={shown ? "Hide the key" : "Show the key"}
-                                onClick={() => reveal(option.id)}
-                              >
-                                {shown ? <EyeOff /> : <Eye />}
-                              </InputGroupButton>
-                            </InputGroupAddon>
-                          </InputGroup>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            disabled={!draft.trim() || busy === option.id}
-                            onClick={() => void save(option.id)}
-                          >
-                            {busy === option.id ? <Spinner /> : null}
-                            Save
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => edit(option.id, false)}>
-                            Cancel
-                          </Button>
-                        </ItemFooter>
-                      ) : null}
-                    </Item>
+                    <Setting
+                      key={option.id}
+                      media={<ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />}
+                      title={agentLabel(option.agent)}
+                      description={
+                        !auth ? (
+                          "Checking…"
+                        ) : signedIn ? (
+                          <span className="flex items-center gap-1.5">
+                            <Check className="size-3.5 text-success" />
+                            Signed in
+                          </span>
+                        ) : (
+                          "Not signed in"
+                        )
+                      }
+                    >
+                      <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
+                        {signedIn ? "Sign in again" : "Sign in"}
+                      </Button>
+                    </Setting>
                   );
                 })}
-              </ItemGroup>
+              </Section>
+              <ApiKeyDialog
+                provider={keying}
+                replacing={saved.some(({ option }) => option.id === keying?.id)}
+                onClose={() => setKeying(undefined)}
+                onSaved={read}
+              />
             </TabsContent>
-            <TabsContent value="files" className="min-w-0">
-              <h2 className="text-base font-semibold">Files</h2>
-              <p className="mt-1 mb-4 text-sm text-muted-foreground">Choose which files appear in the browser.</p>
-              <ItemGroup>
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <EyeOff />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Hide hidden files</ItemTitle>
-                    <ItemDescription>Hide files and folders whose names begin with a period.</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Switch
-                      aria-label="Hide hidden files"
-                      checked={hideHidden ?? false}
-                      disabled={hideHidden === undefined || busy === "hidden-files"}
-                      onCheckedChange={(hide) => void changeHideHidden(hide)}
-                    />
-                  </ItemActions>
-                </Item>
-              </ItemGroup>
-            </TabsContent>
-            <TabsContent value="shortcuts" className="min-w-0">
-              <h2 className="text-base font-semibold">Keyboard shortcuts</h2>
-              <p className="mt-1 mb-2 text-sm text-muted-foreground">
-                Click a shortcut and press the keys you would rather use.
-              </p>
-              <ul className="divide-y">
+            <TabsContent value="shortcuts" className="min-w-0 space-y-6">
+              <Section title="Customizable" description="Click a shortcut, then press the keys you would rather use.">
                 {SHORTCUT_IDS.map((id) => (
                   <ShortcutRow
                     key={id}
@@ -496,30 +529,29 @@ export function SettingsDialog({
                     onRecord={(on) => setRecording((current) => (on ? id : current === id ? null : current))}
                   />
                 ))}
-              </ul>
+              </Section>
               {FIXED_SHORTCUTS.map(({ title, rows }) => (
-                <div key={title}>
-                  <h3 className="mt-5 mb-1 text-xs font-medium text-muted-foreground">{title}</h3>
-                  <ul className="divide-y">
-                    {rows.map(({ label, keys }) => (
-                      <li key={label} className="flex items-center gap-3 py-1.5">
-                        <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-                        <span className="flex items-center gap-1.5 pr-1.5">
-                          {keys.map((combo, index) => (
-                            <span key={combo} className="flex items-center gap-1.5">
-                              {index ? <span className="text-xs text-muted-foreground">/</span> : null}
-                              <ShortcutCaps keys={combo} />
-                            </span>
-                          ))}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                <Section key={title} title={title}>
+                  {rows.map(({ label, keys }) => (
+                    <Item key={label} role="listitem" variant="outline" size="xs" className={ROW}>
+                      <ItemContent>
+                        <ItemTitle className="font-normal">{label}</ItemTitle>
+                      </ItemContent>
+                      <span className="flex items-center gap-1.5 pr-1.5">
+                        {keys.map((combo, index) => (
+                          <span key={combo} className="flex items-center gap-1.5">
+                            {index ? <span className="text-xs text-muted-foreground">/</span> : null}
+                            <ShortcutCaps keys={combo} />
+                          </span>
+                        ))}
+                      </span>
+                    </Item>
+                  ))}
+                </Section>
               ))}
             </TabsContent>
-            <TabsContent value="about" className="min-w-0">
-              <div className="flex flex-col items-center pt-3 text-center">
+            <TabsContent value="about" className="min-w-0 space-y-6">
+              <div className="flex flex-col items-center pt-2 text-center">
                 <UltralyticsLogomark className="size-14" />
                 <div className="mt-3 flex items-center gap-2">
                   <h2 className="text-xl font-semibold">Lite</h2>
@@ -528,54 +560,10 @@ export function SettingsDialog({
                 <p className="mt-1 max-w-sm text-sm text-muted-foreground">
                   A fast, local workspace for AI coding agents, with no indexing, telemetry, or cloud service.
                 </p>
-              </div>
-              <ItemGroup className="mt-6 gap-2.5">
-                <Item variant="outline">
-                  <ItemMedia variant="icon">
-                    <GitHubLogomark />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Open source</ItemTitle>
-                    <ItemDescription>AGPL-3.0 · github.com/ultralytics/lite</ItemDescription>
-                  </ItemContent>
-                  <ItemActions>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
-                    >
-                      View repository
-                      <ExternalLink />
-                    </Button>
-                  </ItemActions>
-                </Item>
-              </ItemGroup>
-              <div className="mt-4 flex items-start justify-between gap-4">
-                <dl className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
-                  {commit ? (
-                    <>
-                      <dt className="text-muted-foreground">Revision</dt>
-                      <dd className="truncate font-mono">{commit}</dd>
-                    </>
-                  ) : null}
-                  {built ? (
-                    <>
-                      <dt className="text-muted-foreground">Built</dt>
-                      <dd className="truncate">{built}</dd>
-                    </>
-                  ) : null}
-                  {repo ? (
-                    <>
-                      <dt className="text-muted-foreground">Working tree</dt>
-                      <dd className="truncate font-mono" title={repo}>
-                        {repo}
-                      </dd>
-                    </>
-                  ) : null}
-                </dl>
                 <Button
                   variant="outline"
                   size="sm"
+                  className="mt-4"
                   onClick={() => {
                     onOpenChange(false);
                     onCheckForUpdates();
@@ -585,17 +573,47 @@ export function SettingsDialog({
                   Check for updates
                 </Button>
               </div>
+              <Section title="Details">
+                {commit ? (
+                  <Setting title="Revision" description={<span className="font-mono">{commit}</span>}>
+                    {null}
+                  </Setting>
+                ) : null}
+                {built ? (
+                  <Setting title="Built" description={built}>
+                    {null}
+                  </Setting>
+                ) : null}
+                {repo ? (
+                  <Setting
+                    title="Working tree"
+                    description={
+                      <span className="font-mono" title={repo}>
+                        {repo}
+                      </span>
+                    }
+                  >
+                    {null}
+                  </Setting>
+                ) : null}
+                <Setting
+                  media={<GitHubLogomark />}
+                  title="Open source"
+                  description="AGPL-3.0 · github.com/ultralytics/lite"
+                >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
+                  >
+                    View repository
+                    <ExternalLink />
+                  </Button>
+                </Setting>
+              </Section>
             </TabsContent>
           </Tabs>
         </DialogBody>
-        <DialogFooter className={error ? "sm:justify-between" : undefined}>
-          {error ? (
-            <p role="alert" className="self-center text-sm text-destructive">
-              {error}
-            </p>
-          ) : null}
-          <Button onClick={() => onOpenChange(false)}>Done</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   );
