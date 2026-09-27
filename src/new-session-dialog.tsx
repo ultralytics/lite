@@ -759,6 +759,8 @@ export function NewSessionDialog({
       `Runs on ${host.trim() || "SSH host"}`
     ) : state === null ? (
       "Check failed"
+    ) : state && !state.available ? (
+      "Setup required"
     ) : panel ? (
       `${panel.models.find(([slug]) => slug === codexChoices[modelKey(panel.id)])?.[1] ?? ""} · ${codexChoices[levelKey(panel.id)] ?? ""} thinking`
     ) : authProvider ? (
@@ -913,8 +915,10 @@ export function NewSessionDialog({
     );
   }
 
+  // A harness needs setup when the harness itself does. A Codex provider without its key stays in the
+  // Codex row, where the menu can still switch to a provider that is ready.
   const needsSetup = (agent: Agent) => {
-    const state = availability[harnessChoice(agent).id];
+    const state = availability[SESSION_CHOICES.find((option) => option.agent === agent)?.id ?? ""];
     return !remote && Boolean(state && !state.available);
   };
 
