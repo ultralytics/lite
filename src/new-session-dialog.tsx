@@ -164,8 +164,9 @@ function Tile({ children, className }: { children: ReactNode; className?: string
 const harnessVendor = (agent: Agent) => (agent === "codex" ? "openai" : undefined);
 
 // The line under a harness: its provider's name, then what the row has to say about it. The provider's
-// mark joins the name only when it is not the harness's own, which the row's main mark already shows.
-function ProviderLine({ choice, children }: { choice: Choice; children: ReactNode }) {
+// mark joins the name only when it is not the harness's own, which the row's main mark already shows. The
+// tone colors the status's check mark alone.
+function ProviderLine({ choice, tone, children }: { choice: Choice; tone?: string; children: ReactNode }) {
   const provider = providerName(choice);
   return (
     <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
@@ -178,7 +179,7 @@ function ProviderLine({ choice, children }: { choice: Choice; children: ReactNod
           <span aria-hidden="true">·</span>
         </>
       ) : null}
-      <span className="min-w-0 truncate [&_svg]:size-3">{children}</span>
+      <span className={cn("min-w-0 truncate [&_svg]:size-3", tone)}>{children}</span>
     </span>
   );
 }
@@ -777,6 +778,14 @@ export function NewSessionDialog({
     const managed = agent !== "shell" && state && !state.installable;
     // A registry that could not answer knows of no update, so only one it reported is offered.
     const updatable = !remote && managed && update === true;
+    // The check mark carries the harness's version: grey while checking, amber when an update waits,
+    // green when it is current.
+    const tone =
+      !remote && managed && update === false
+        ? "[&_svg]:text-green-600 dark:[&_svg]:text-green-400"
+        : updatable
+          ? "[&_svg]:text-amber-600 dark:[&_svg]:text-amber-400"
+          : undefined;
     const status = unsupported ? (
       "Local workspace only"
     ) : remote ? (
@@ -789,8 +798,12 @@ export function NewSessionDialog({
       ) : (
         "Setup required"
       )
-    ) : panel ? (
-      `${panel.models.find(([slug]) => slug === codexChoices[modelKey(panel.id)])?.[1] ?? ""} · ${codexChoices[levelKey(panel.id)] ?? ""} thinking`
+    ) : panel && state ? (
+      <span className="flex items-center gap-1.5">
+        <Check className="size-3.5 shrink-0" />
+        {panel.models.find(([slug]) => slug === codexChoices[modelKey(panel.id)])?.[1]} ·{" "}
+        {codexChoices[levelKey(panel.id)]} thinking
+      </span>
     ) : authProvider ? (
       <ProviderAuthDescription provider={authProvider} status={authStatus} />
     ) : state ? (
@@ -823,7 +836,9 @@ export function NewSessionDialog({
                 </span>
               ) : null}
             </span>
-            <ProviderLine choice={choice}>{status}</ProviderLine>
+            <ProviderLine choice={choice} tone={tone}>
+              {status}
+            </ProviderLine>
           </span>
           <Kbd className="hidden sm:inline-flex">
             {mod}
