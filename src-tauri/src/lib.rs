@@ -2474,7 +2474,7 @@ fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathB
     // rather than sharing it.
     let path = root.join(name);
     let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
-    let mut command = if path.exists() {
+    let commands: Vec<Command> = if path.exists() {
         let git = resolve_executable("git").unwrap_or_else(|| "git".into());
         let expected = format!("https://github.com/{owner}/{name}");
         let remote = origin_url(&git, &path);
@@ -2485,21 +2485,28 @@ fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathB
                 remote.as_deref().unwrap_or("something else")
             ));
         }
-        // The fetch signs in the way gh's clone did: through gh as Git's credential helper for GitHub.
-        let mut fetch = Command::new(git);
-        fetch.arg("-C").arg(&path).args([
-            "-c",
-            "credential.https://github.com.helper=",
-            "-c",
-            &format!(
-                "credential.https://github.com.helper=!\"{}\" auth git-credential",
-                path_text(&gh)
-            ),
-            "fetch",
-            "--quiet",
-            "origin",
-        ]);
-        fetch
+        // Both reach GitHub the way gh's clone did: through gh as Git's credential helper. The fetch
+        // moves the branches; set-head follows a default branch GitHub has since changed, which fetch
+        // leaves alone and the next worktree starts from.
+        let helper = format!(
+            "credential.https://github.com.helper=!\"{}\" auth git-credential",
+            path_text(&gh)
+        );
+        [
+            &["fetch", "--quiet", "origin"][..],
+            &["remote", "set-head", "origin", "--auto"],
+        ]
+        .into_iter()
+        .map(|args| {
+            let mut command = Command::new(&git);
+            command
+                .arg("-C")
+                .arg(&path)
+                .args(["-c", "credential.https://github.com.helper=", "-c", &helper])
+                .args(args);
+            command
+        })
+        .collect()
     } else {
         fs::create_dir_all(root).map_err(|error| error.to_string())?;
         let mut clone = Command::new(&gh);
@@ -2511,13 +2518,15 @@ fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathB
             "--",
             "--filter=blob:none",
         ]);
-        clone
+        vec![clone]
     };
-    // Git, and gh running git, need the user's PATH, which a launched app does not have.
-    if let Some(path) = user_path() {
-        command.env("PATH", path);
+    for mut command in commands {
+        // Git, and gh running git, need the user's PATH, which a launched app does not have.
+        if let Some(path) = user_path() {
+            command.env("PATH", path);
+        }
+        command_text(&mut command)?;
     }
-    command_text(&mut command)?;
     Ok(path)
 }
 

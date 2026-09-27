@@ -482,10 +482,8 @@ export function NewSessionDialog({
         },
       ];
   const visible = groups.flatMap((group) => group.repositories);
-  const selected =
-    visible.find((repository) => fullName(repository) === selectedName) ??
-    known.get(selectedName.toLowerCase()) ??
-    visible[0];
+  // Only a repository on screen can be the one a click starts in.
+  const selected = visible.find((repository) => fullName(repository) === selectedName) ?? visible[0];
   const running = (repository: GitHubRepository) =>
     sessions.filter((session) => !session.host && session.repo === clonePath(repository)).length;
 
@@ -679,7 +677,8 @@ export function NewSessionDialog({
   function launch(agent: Agent) {
     const choice = harnessChoice(agent);
     const status = availability[choice.id];
-    if (busy || !placeReady || remoteUnsupported(remote, choice)) return;
+    // Locally an agent starts only once its check answered that it can; SSH checks on the host.
+    if (busy || !placeReady || remoteUnsupported(remote, choice) || (!remote && !status)) return;
     if (!remote && status && !status.available) {
       if (status.installable) void install(choice);
       else
@@ -770,7 +769,7 @@ export function NewSessionDialog({
     ) : (
       "Checking…"
     );
-    const disabled = busy || !placeReady || unsupported;
+    const disabled = busy || !placeReady || unsupported || (!remote && !state);
     return (
       <div
         key={agent}
