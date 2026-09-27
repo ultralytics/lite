@@ -382,7 +382,7 @@ export function SettingsDialog({
             <TabsContent value="keys" className="min-w-0">
               <h2 className="text-base font-semibold">API keys</h2>
               <p className="mt-1 mb-4 text-sm text-muted-foreground">
-                Saved keys stay on this computer and take priority over provider sign-in.
+                One key per vendor, kept on this computer. A saved key takes priority over the vendor’s own sign-in.
               </p>
               <ItemGroup>
                 {providers.map((option) => {
@@ -391,7 +391,7 @@ export function SettingsDialog({
                   const draft = drafts[option.id] ?? "";
                   return (
                     <Item key={option.id} variant="outline">
-                      <ProviderRow option={option}>
+                      <ProviderRow option={option} title={providerName(option)}>
                         <ProviderAuthDescription provider={option} status={status} />
                       </ProviderRow>
                       {open ? null : (

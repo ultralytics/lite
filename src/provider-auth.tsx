@@ -110,9 +110,12 @@ export function providerName(option: { provider?: ModelProvider; label?: string 
 // instead, with the provider on the line beneath.
 export function ProviderRow({
   option,
+  title = sessionLabel(option),
   children,
 }: {
   option: { agent: Agent; provider?: ModelProvider };
+  // The harness by default; the settings list names the vendor a key belongs to instead.
+  title?: string;
   children?: ReactNode;
 }) {
   return (
@@ -121,7 +124,7 @@ export function ProviderRow({
         <ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />
       </ItemMedia>
       <ItemContent className="gap-0.5">
-        <ItemTitle className="w-full truncate">{sessionLabel(option)}</ItemTitle>
+        <ItemTitle className="w-full truncate">{title}</ItemTitle>
         <ItemDescription className="truncate text-xs leading-4">{children}</ItemDescription>
       </ItemContent>
     </>
