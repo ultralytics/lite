@@ -10,12 +10,10 @@ import {
   GitBranch,
   Lock,
   RefreshCw,
-  Search,
   Server,
   TriangleAlert,
-  X,
 } from "lucide-react";
-import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
 import { GitHubLogomark, GitLogomark, ProviderIcon } from "@/brand-icons";
 import { ActionIconButton, Button } from "@/components/ui/button";
@@ -31,13 +29,14 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Kbd } from "@/components/ui/kbd";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
+import { relativeAge, SearchInput } from "@/inspector";
+import { cn } from "@/lib/utils";
 import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, providerName } from "@/provider-auth";
 import { IS_MAC } from "@/shortcuts";
 import { type Agent, agentLabel, defaultSessionName, folderName, type Session, sessionLabel } from "@/types";
@@ -144,24 +143,39 @@ type Source = "github" | "local" | "ssh";
 
 const fullName = (repository: { owner: string; name: string }) => `${repository.owner}/${repository.name}`;
 
-function pushedAgo(pushedAt: string | null) {
-  if (!pushedAt) return "";
-  const minutes = Math.max(0, (Date.now() - Date.parse(pushedAt)) / 60000);
-  if (minutes < 60) return `${Math.round(minutes)}m ago`;
-  if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h ago`;
-  if (minutes < 60 * 24 * 30) return `${Math.round(minutes / 60 / 24)}d ago`;
-  return new Date(pushedAt).toLocaleDateString(undefined, { month: "short", year: "numeric" });
-}
-
-function Tile({ children, className = "" }: { children: ReactNode; className?: string }) {
+function Tile({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <span
-      className={`flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background/60 ${className}`}
+      className={cn("flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background/60", className)}
     >
       {children}
     </span>
   );
 }
+
+// The line under a harness: its provider's mark and name, then what the row has to say about it.
+function ProviderLine({ choice, children }: { choice: Choice; children: ReactNode }) {
+  const provider = providerName(choice);
+  return (
+    <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+      {provider ? (
+        <>
+          <ProviderIcon agent={choice.agent} provider={choice.provider} className="size-3 shrink-0" />
+          <span className="shrink-0 text-foreground/75">{provider}</span>
+          <span aria-hidden="true">·</span>
+        </>
+      ) : null}
+      <span className="min-w-0 truncate [&_svg]:size-3">{children}</span>
+    </span>
+  );
+}
+
+// A repository or folder the user can pick, marked while it is the one picked.
+const pickRow = (active: boolean) =>
+  cn(
+    "flex w-full items-center gap-3 rounded-lg border px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+    active ? "border-foreground/15 bg-accent" : "border-transparent hover:bg-accent/60",
+  );
 
 export function NewSessionDialog({
   open: isOpen,
@@ -230,6 +244,7 @@ export function NewSessionDialog({
   // GitHub's own matches for the query, beyond the repositories already listed.
   const [found, setFound] = useState<{ query: string; repositories: GitHubRepository[] }>();
   const [selectedName, setSelectedName] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
   const [folderProbes, setFolderProbes] = useState<Record<string, DirectoryProbe | null>>({});
   const codexChoice = CODEX_CHOICES.find((option) => option.id === codexId) ?? CODEX_CHOICES[0];
   const harnessChoice = (agent: Agent) =>
@@ -732,7 +747,6 @@ export function NewSessionDialog({
     const managed = agent !== "shell" && state && !state.installable;
     // A registry that could not answer knows of no update, so only one it reported is offered.
     const updatable = !remote && managed && update === true;
-    const provider = providerName(choice);
     const status = unsupported ? (
       "Local workspace only"
     ) : remote ? (
@@ -773,16 +787,7 @@ export function NewSessionDialog({
                 </span>
               ) : null}
             </span>
-            <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              {provider ? (
-                <>
-                  <ProviderIcon agent={choice.agent} provider={choice.provider} className="size-3 shrink-0" />
-                  <span className="shrink-0 text-foreground/75">{provider}</span>
-                  <span aria-hidden="true">·</span>
-                </>
-              ) : null}
-              <span className="min-w-0 truncate [&_svg]:size-3">{agent === "shell" ? "Your login shell" : status}</span>
-            </span>
+            <ProviderLine choice={choice}>{status}</ProviderLine>
           </span>
           <Kbd className="hidden sm:inline-flex">
             {mod}
@@ -887,20 +892,12 @@ export function NewSessionDialog({
     const installable = Boolean(state?.installable);
     return (
       <div key={agent} className="flex h-12 items-center gap-3 rounded-xl border border-dashed pr-2 pl-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg border opacity-60 grayscale-[60%]">
+        <Tile className="size-8 opacity-60 grayscale-[60%]">
           <ProviderIcon agent={agent} provider={agent === "codex" ? "openai" : undefined} className="size-4" />
-        </span>
+        </Tile>
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="text-sm font-medium text-muted-foreground">{agentLabel(agent)}</span>
-          <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground/80">
-            {providerName(choice) ? (
-              <>
-                <ProviderIcon agent={choice.agent} provider={choice.provider} className="size-3 opacity-60" />
-                {providerName(choice)} ·
-              </>
-            ) : null}{" "}
-            {installable ? "Not installed" : "Setup required"}
-          </span>
+          <ProviderLine choice={choice}>{installable ? "Not installed" : "Setup required"}</ProviderLine>
         </span>
         <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => launch(agent)}>
           {installing === choice.id ? <Spinner /> : installable ? <Download /> : null}
@@ -917,7 +914,10 @@ export function NewSessionDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={changeOpen}>
-      <DialogContent className="gap-0 p-0 sm:h-[min(40rem,calc(100dvh-2rem))] sm:max-w-4xl">
+      <DialogContent
+        initialFocus={() => searchRef.current ?? true}
+        className="gap-0 p-0 sm:h-[min(40rem,calc(100dvh-2rem))] sm:max-w-4xl"
+      >
         <form onSubmit={submit} onKeyDown={numberKey} className="flex min-h-0 min-w-0 flex-1 flex-col">
           <DialogHeader className="px-5 pt-4 pb-3">
             <DialogTitle>New session</DialogTitle>
@@ -972,37 +972,20 @@ export function NewSessionDialog({
                   </div>
                 ) : (
                   <>
-                    <div className="px-3 pb-1">
-                      <InputGroup>
-                        <InputGroupAddon>
-                          <Search />
-                        </InputGroupAddon>
-                        <InputGroupInput
-                          autoFocus
-                          value={query}
-                          placeholder="Search your repositories and GitHub…"
-                          aria-label="Search repositories"
-                          autoComplete="off"
-                          spellCheck={false}
-                          onKeyDown={moveSelection}
-                          onChange={(event) => {
-                            const value = event.target.value;
-                            setQuery(value);
-                            const first = [...known.values()].find((repository) =>
-                              fullName(repository).toLowerCase().includes(value.trim().toLowerCase()),
-                            );
-                            if (first) setSelectedName(fullName(first));
-                          }}
-                        />
-                        {query ? (
-                          <InputGroupAddon align="inline-end">
-                            <InputGroupButton size="icon-xs" aria-label="Clear search" onClick={() => setQuery("")}>
-                              <X />
-                            </InputGroupButton>
-                          </InputGroupAddon>
-                        ) : null}
-                      </InputGroup>
-                    </div>
+                    <SearchInput
+                      className="px-3 pb-1"
+                      inputRef={searchRef}
+                      value={query}
+                      placeholder="Search your repositories and GitHub…"
+                      onKeyDown={moveSelection}
+                      onChange={(value) => {
+                        setQuery(value);
+                        const first = [...known.values()].find((repository) =>
+                          fullName(repository).toLowerCase().includes(value.trim().toLowerCase()),
+                        );
+                        if (first) setSelectedName(fullName(first));
+                      }}
+                    />
                     <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
                       {!github ? (
                         <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
@@ -1023,7 +1006,7 @@ export function NewSessionDialog({
                                   aria-pressed={active}
                                   disabled={busy}
                                   onClick={() => setSelectedName(fullName(repository))}
-                                  className={`flex w-full items-center gap-3 rounded-lg border px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${active ? "border-foreground/15 bg-accent" : "border-transparent hover:bg-accent/60"}`}
+                                  className={pickRow(active)}
                                 >
                                   <span className="relative">
                                     <Tile>
@@ -1055,7 +1038,7 @@ export function NewSessionDialog({
                                         </>
                                       ) : null}
                                       {repository.language && repository.pushedAt ? <span>·</span> : null}
-                                      {pushedAgo(repository.pushedAt)}
+                                      {repository.pushedAt ? relativeAge(repository.pushedAt) : null}
                                     </span>
                                   </span>
                                   {count ? (
@@ -1188,7 +1171,7 @@ export function NewSessionDialog({
                               setFolder("checking");
                               setRepo(undefined);
                             }}
-                            className={`flex w-full items-center gap-3 rounded-lg border px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${active ? "border-foreground/15 bg-accent" : "border-transparent hover:bg-accent/60"}`}
+                            className={pickRow(active)}
                           >
                             <Tile>
                               {/* A GitHub clone, any other repository, or a plain folder. */}

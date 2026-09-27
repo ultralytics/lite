@@ -1189,12 +1189,17 @@ fn remove_entry(path: &Path) -> Result<(), String> {
 }
 
 fn command_output(git: &Path, directory: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(git)
-        .arg("-C")
-        .arg(path_text(directory))
-        .args(args)
-        .output()
-        .map_err(|error| error.to_string())?;
+    command_text(
+        Command::new(git)
+            .arg("-C")
+            .arg(path_text(directory))
+            .args(args),
+    )
+}
+
+// A command's trimmed output, or what it printed to stderr when it failed.
+fn command_text(command: &mut Command) -> Result<String, String> {
+    let output = command.output().map_err(|error| error.to_string())?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
     } else {
@@ -1224,6 +1229,14 @@ fn last_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
         .app_data_dir()
         .map_err(|error| error.to_string())?
         .join("last-directory"))
+}
+
+fn repositories_record_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?
+        .join("repositories-directory"))
 }
 
 fn hide_hidden_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1986,20 +1999,32 @@ fn default_directory(
         .transpose()
 }
 
-#[tauri::command]
-async fn choose_directory(
-    app: AppHandle,
-    roots: State<'_, Roots>,
-) -> Result<Option<DirectoryGrant>, String> {
-    let mut dialog = app.dialog().file().set_title("Choose a project");
-    if let Some(path) = default_directory_path(&app) {
+// The folder the user picks, canonical, starting from `start` when there is one; nothing if they cancel.
+fn pick_folder(
+    app: &AppHandle,
+    title: &str,
+    start: Option<PathBuf>,
+) -> Result<Option<PathBuf>, String> {
+    let mut dialog = app.dialog().file().set_title(title);
+    if let Some(path) = start {
         dialog = dialog.set_directory(path);
     }
     let Some(path) = dialog.blocking_pick_folder() else {
         return Ok(None);
     };
-    let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
+    fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn choose_directory(
+    app: AppHandle,
+    roots: State<'_, Roots>,
+) -> Result<Option<DirectoryGrant>, String> {
+    let Some(path) = pick_folder(&app, "Choose a project", default_directory_path(&app))? else {
+        return Ok(None);
+    };
     write_atomic(&last_directory_path(&app)?, path_text(&path).as_bytes())?;
     grant_directory(&app, &roots, path, None).map(Some)
 }
@@ -2098,11 +2123,7 @@ fn github_item_parts(url: &str) -> Option<(String, String, String)> {
     let mut parts = url.strip_prefix("https://github.com/")?.split('/');
     let owner = parts.next().filter(|part| !part.is_empty())?;
     let repository = parts.next().filter(|part| !part.is_empty())?;
-    if [owner, repository].iter().any(|part| {
-        !part
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "-._".contains(character))
-    }) {
+    if github_name(owner).is_err() || github_name(repository).is_err() {
         return None;
     }
     if !matches!(parts.next()?, "pull" | "issues") {
@@ -2287,12 +2308,7 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
 // Where Lite keeps the repositories it clones. The user may move it; otherwise it is `lite` in the home
 // folder, which every platform has.
 fn repositories_directory_path(app: &AppHandle) -> Result<PathBuf, String> {
-    let record = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?
-        .join("repositories-directory");
-    match fs::read_to_string(record) {
+    match fs::read_to_string(repositories_record_path(app)?) {
         Ok(path) => Ok(PathBuf::from(path)),
         Err(_) => Ok(app
             .path()
@@ -2310,30 +2326,24 @@ fn repositories_directory(app: AppHandle) -> Result<String, String> {
 #[tauri::command]
 async fn choose_repositories_directory(app: AppHandle) -> Result<Option<String>, String> {
     let current = repositories_directory_path(&app)?;
-    let mut dialog = app
-        .dialog()
-        .file()
-        .set_title("Choose where Lite keeps repositories");
-    if current.is_dir() {
-        dialog = dialog.set_directory(current);
-    }
-    let Some(path) = dialog.blocking_pick_folder() else {
+    let Some(path) = pick_folder(
+        &app,
+        "Choose where Lite keeps repositories",
+        current.is_dir().then_some(current),
+    )?
+    else {
         return Ok(None);
     };
-    let path = fs::canonicalize(path.into_path().map_err(|error| error.to_string())?)
-        .map_err(|error| error.to_string())?;
     write_atomic(
-        &app.path()
-            .app_data_dir()
-            .map_err(|error| error.to_string())?
-            .join("repositories-directory"),
+        &repositories_record_path(&app)?,
         path_text(&path).as_bytes(),
     )?;
     Ok(Some(path_text(&path)))
 }
 
-// An owner or repository name as GitHub allows it. Both become folder names under the repositories
-// folder, so the dot names that mean "here" and "up" are refused along with every separator.
+// An owner or repository name as GitHub allows it. Names are embedded in GraphQL queries and become
+// folder names under the repositories folder, so the dot names that mean "here" and "up" are refused
+// along with every separator.
 fn github_name(name: &str) -> Result<&str, String> {
     if name.is_empty()
         || name == "."
@@ -2463,25 +2473,20 @@ fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathB
     // One folder per repository name: a same-named repository of another owner is refused below
     // rather than sharing it.
     let path = root.join(name);
-    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    if path.exists() {
-        let remote =
-            command_output(&git, &path, &["remote", "get-url", "origin"]).map_err(|_| {
-                format!(
-                    "{} exists and is not a clone of {owner}/{name}",
-                    path_text(&path)
-                )
-            })?;
-        let expected = format!("https://github.com/{owner}/{name}").to_lowercase();
-        if browse_url(&remote).map(|url| url.to_lowercase()) != Some(expected) {
+    let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
+    let mut command = if path.exists() {
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let expected = format!("https://github.com/{owner}/{name}");
+        let remote = origin_url(&git, &path);
+        if remote.as_ref().map(|url| url.to_lowercase()) != Some(expected.to_lowercase()) {
             return Err(format!(
-                "{} is a clone of {remote}, not {owner}/{name}",
-                path_text(&path)
+                "{} holds {}, not {expected}",
+                path_text(&path),
+                remote.as_deref().unwrap_or("something else")
             ));
         }
         // The fetch signs in the way gh's clone did: through gh as Git's credential helper for GitHub.
-        let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
-        let mut fetch = Command::new(&git);
+        let mut fetch = Command::new(git);
         fetch.arg("-C").arg(&path).args([
             "-c",
             "credential.https://github.com.helper=",
@@ -2494,34 +2499,25 @@ fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathB
             "--quiet",
             "origin",
         ]);
-        if let Some(path) = user_path() {
-            fetch.env("PATH", path);
-        }
-        let output = fetch.output().map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
-        }
-        return Ok(path);
-    }
-    let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
-    fs::create_dir_all(root).map_err(|error| error.to_string())?;
-    let mut clone = Command::new(gh);
-    clone.args([
-        "repo",
-        "clone",
-        &format!("{owner}/{name}"),
-        &path_text(&path),
-        "--",
-        "--filter=blob:none",
-    ]);
-    // gh runs git itself, and a launched app's bare PATH does not reach it.
+        fetch
+    } else {
+        fs::create_dir_all(root).map_err(|error| error.to_string())?;
+        let mut clone = Command::new(&gh);
+        clone.args([
+            "repo",
+            "clone",
+            &format!("{owner}/{name}"),
+            &path_text(&path),
+            "--",
+            "--filter=blob:none",
+        ]);
+        clone
+    };
+    // Git, and gh running git, need the user's PATH, which a launched app does not have.
     if let Some(path) = user_path() {
-        clone.env("PATH", path);
+        command.env("PATH", path);
     }
-    let output = clone.output().map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
-    }
+    command_text(&mut command)?;
     Ok(path)
 }
 
@@ -6016,11 +6012,13 @@ async fn git_remote(roots: State<'_, Roots>, root_id: String) -> Result<Option<S
     }
     let path = root_path(&roots, &root_id)?;
     let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    Ok(
-        command_output(&git, &path, &["remote", "get-url", "origin"])
-            .ok()
-            .and_then(|remote| browse_url(&remote)),
-    )
+    Ok(origin_url(&git, &path))
+}
+
+fn origin_url(git: &Path, path: &Path) -> Option<String> {
+    command_output(git, path, &["remote", "get-url", "origin"])
+        .ok()
+        .and_then(|remote| browse_url(&remote))
 }
 
 // The repository that owns a path's worktrees, reached from any of them: a normal repository's
@@ -6154,9 +6152,7 @@ async fn directory_probe(app: AppHandle, path: String) -> Result<DirectoryProbe,
             worktree: path_text(&candidate.path),
             branch: candidate.branch,
             root: path_text(&root),
-            remote: command_output(&git, &path, &["remote", "get-url", "origin"])
-                .ok()
-                .and_then(|remote| browse_url(&remote)),
+            remote: origin_url(&git, &path),
         }),
     })
 }

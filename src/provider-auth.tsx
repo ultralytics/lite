@@ -103,9 +103,10 @@ export function providerName(option: { provider?: ModelProvider; label?: string 
   return option.provider ? providerLabel(option.provider) : (option.label ?? "");
 }
 
-// The one way a provider is drawn anywhere in Lite: its mark, its name, and a single line beneath. The
-// welcome grid, the new-session dialog, and the settings list all render this, so the mark size, the name,
-// and the line's type can only be changed for all three at once. Each passes its own words as children.
+// The one way a provider is drawn in a list: its mark, its name, and a single line beneath. The welcome
+// grid and the settings list both render this, so the mark size, the name, and the line's type can only be
+// changed for both at once. Each passes its own words as children. The new-session dialog draws harnesses
+// instead, with the provider on the line beneath.
 export function ProviderRow({
   option,
   children,

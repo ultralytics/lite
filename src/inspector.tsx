@@ -215,7 +215,7 @@ interface RepositoryGroup {
   url: string | null;
 }
 
-function relativeAge(timestamp: string) {
+export function relativeAge(timestamp: string) {
   const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(timestamp)) / 1000));
   if (seconds < 60) return seconds < 10 ? "just now" : `${seconds} sec ago`;
   const minutes = Math.floor(seconds / 60);
@@ -402,12 +402,14 @@ export function SearchInput({
   placeholder,
   onChange,
   inputRef,
+  onKeyDown,
   className = "shrink-0 p-2",
 }: {
   value: string;
   placeholder: string;
   onChange: (value: string) => void;
   inputRef?: Ref<HTMLInputElement>;
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLInputElement>) => void;
   className?: string;
 }) {
   return (
@@ -424,6 +426,7 @@ export function SearchInput({
           onChange={(event) => onChange(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Escape") onChange("");
+            onKeyDown?.(event);
           }}
         />
       </InputGroup>
