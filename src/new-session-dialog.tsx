@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Server,
   TriangleAlert,
+  X,
 } from "lucide-react";
 import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 
@@ -143,7 +144,8 @@ interface GitHubRepository {
   pushedAt: string | null;
   language: string | null;
   color: string | null;
-  cloned: boolean;
+  // A clone Lite already knows, which a session uses instead of cloning again.
+  local: string | null;
 }
 
 interface GitHubRepositories {
@@ -264,6 +266,8 @@ export function NewSessionDialog({
     place: string;
     steps: [running: string, done: string][];
     done: number;
+    // Why the step after the done ones failed; the card stays up with it until the user goes back.
+    error?: string;
   }>();
   const advance = () => setLaunching((current) => current && { ...current, done: current.done + 1 });
   const [error, setError] = useState("");
@@ -285,6 +289,11 @@ export function NewSessionDialog({
   // The provider whose missing API key the user is supplying.
   const [keyFor, setKeyFor] = useState<KeyProvider>();
   const searchRef = useRef<HTMLInputElement>(null);
+  // The folders Lite's local sessions ran in, which GitHub's list is matched against for existing clones.
+  const knownRef = useRef<string[]>([]);
+  knownRef.current = [
+    ...new Set(sessions.flatMap((session) => (session.host || session.mode ? [] : [session.repo ?? session.cwd]))),
+  ];
   const folderRef = useRef<HTMLInputElement>(null);
   const [folderProbes, setFolderProbes] = useState<Record<string, DirectoryProbe | null>>({});
   const codexChoice = CODEX_CHOICES.find((option) => option.id === codexId) ?? CODEX_CHOICES[0];
@@ -314,41 +323,6 @@ export function NewSessionDialog({
     };
   }, [isOpen, remote]);
 
-  // A typed path settles for a moment before it is probed, so a folder is never looked up once per
-  // keystroke. The probe is read-only and needs no grant: it asks git about the folder the grant
-  // would name.
-  useEffect(() => {
-    if (!isOpen || source !== "local" || !path.trim()) {
-      setRepo(null);
-      setFolder("checking");
-      setWorktree("");
-      return;
-    }
-    setRepo(undefined);
-    let disposed = false;
-    const probe = window.setTimeout(() => {
-      void invoke<DirectoryProbe>("directory_probe", { path: path.trim() })
-        .then(({ exists, isDirectory, repository }) => {
-          if (disposed) return;
-          setFolder(isDirectory ? "directory" : exists ? "other" : "missing");
-          setRepo(repository?.root ?? null);
-          setWorktree(repository?.worktree ?? "");
-          setSuggestedBranch(repository?.branch ?? "");
-        })
-        .catch(() => {
-          if (!disposed) {
-            setRepo(null);
-            setFolder("other");
-            setWorktree("");
-          }
-        });
-    }, 250);
-    return () => {
-      disposed = true;
-      window.clearTimeout(probe);
-    };
-  }, [isOpen, path, source]);
-
   useEffect(() => {
     if (!isOpen) return;
     let disposed = false;
@@ -365,7 +339,7 @@ export function NewSessionDialog({
       .catch((reason) => {
         if (!disposed) setError(String(reason));
       });
-    void invoke<GitHubRepositories>("github_repositories", { query: "" })
+    void invoke<GitHubRepositories>("github_repositories", { query: "", known: knownRef.current })
       .then((result) => {
         lastRepositories = result;
         if (!disposed) setGitHub(result);
@@ -441,7 +415,7 @@ export function NewSessionDialog({
     if (!isOpen || source !== "github" || !github?.signedIn || search.length < 2) return;
     let disposed = false;
     const timer = window.setTimeout(() => {
-      void invoke<GitHubRepositories>("github_repositories", { query: search })
+      void invoke<GitHubRepositories>("github_repositories", { query: search, known: knownRef.current })
         .then((result) => {
           if (!disposed) setFound({ query: search, repositories: result.repositories });
         })
@@ -481,10 +455,11 @@ export function NewSessionDialog({
   }, [isOpen, recentFolders, source]);
 
   const separator = repositoriesRoot.includes("\\") ? "\\" : "/";
-  const clonePath = (repository: { name: string }) => [repositoriesRoot, repository.name].join(separator);
+  // Where a repository's clone is or will be: the one Lite knows, else its own under the repositories folder.
+  const clonePath = (repository: GitHubRepository) =>
+    repository.local ?? [repositoriesRoot, repository.name].join(separator);
   const listed = github?.repositories ?? [];
-  // The repositories Lite's own sessions ran in, newest first: the user's repositories cloned under
-  // the repositories folder.
+  // The repositories Lite's own sessions ran in, newest first, wherever their clones are.
   const recent: GitHubRepository[] = [];
   for (const session of [...sessions].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))) {
     const repository = listed.find((entry) => !session.host && session.repo === clonePath(entry));
@@ -520,6 +495,43 @@ export function NewSessionDialog({
   const visible = groups.flatMap((group) => group.repositories);
   // Only a repository on screen can be the one a click starts in.
   const selected = visible.find((repository) => fullName(repository) === selectedName) ?? visible[0];
+
+  // The folder a session would start from: the Local tab's path, or the GitHub tab's repository where
+  // Lite already knows a clone of it. Both tabs ask it the same question, so a clone shows the same
+  // worktree, branch, and name on either. A typed path settles for a moment before it is probed, so a
+  // folder is never looked up once per keystroke. The probe is read-only and needs no grant.
+  const probePath = source === "local" ? path.trim() : source === "github" ? (selected?.local ?? "") : "";
+  useEffect(() => {
+    if (!isOpen || !probePath) {
+      setRepo(null);
+      setFolder("checking");
+      setWorktree("");
+      return;
+    }
+    setRepo(undefined);
+    let disposed = false;
+    const probe = window.setTimeout(() => {
+      void invoke<DirectoryProbe>("directory_probe", { path: probePath })
+        .then(({ exists, isDirectory, repository }) => {
+          if (disposed) return;
+          setFolder(isDirectory ? "directory" : exists ? "other" : "missing");
+          setRepo(repository?.root ?? null);
+          setWorktree(repository?.worktree ?? "");
+          setSuggestedBranch(repository?.branch ?? "");
+        })
+        .catch(() => {
+          if (!disposed) {
+            setRepo(null);
+            setFolder("other");
+            setWorktree("");
+          }
+        });
+    }, 250);
+    return () => {
+      disposed = true;
+      window.clearTimeout(probe);
+    };
+  }, [isOpen, probePath]);
   const running = (repository: GitHubRepository) =>
     sessions.filter((session) => !session.host && session.repo === clonePath(repository)).length;
 
@@ -563,7 +575,8 @@ export function NewSessionDialog({
   }
 
   function changeOpen(open: boolean) {
-    if (!open && (installing || launching)) return;
+    if (!open && (installing || (launching && !launching.error))) return;
+    if (!open) setLaunching(undefined);
     if (!open && directory) {
       void invoke("revoke_directory", { rootId: directory.id });
       setDirectory(undefined);
@@ -589,11 +602,12 @@ export function NewSessionDialog({
         setLaunching({
           choice,
           place: fullName(repository),
+          // A clone that exists is used as it is; only a repository with none is cloned first.
           steps: [
-            repository.cloned
-              ? [`Fetching ${fullName(repository)}`, `Fetched ${fullName(repository)}`]
-              : [`Cloning ${fullName(repository)}`, `Cloned ${fullName(repository)}`],
-            ["Creating worktree", "Created worktree"],
+            ...(repository.local
+              ? []
+              : [[`Cloning ${fullName(repository)}`, `Cloned ${fullName(repository)}`] as [string, string]]),
+            ...(worktreeOn ? [["Creating worktree", "Created worktree"] as [string, string]] : []),
             [`Starting ${agentLabel(choice.agent)}`, `Started ${agentLabel(choice.agent)}`],
           ],
           done: 0,
@@ -601,22 +615,28 @@ export function NewSessionDialog({
         const main = await invoke<DirectoryGrant>("prepare_repository", {
           owner: repository.owner,
           name: repository.name,
+          local: repository.local,
         });
-        advance();
-        try {
-          place = await invoke<DirectoryGrant>("create_worktree", {
-            rootId: main.id,
-            branch: branch.trim(),
-            upstream: true,
-          });
-        } catch (reason) {
-          void invoke("revoke_directory", { rootId: main.id });
-          throw reason;
+        if (!repository.local) advance();
+        place = main;
+        if (worktreeOn) {
+          try {
+            place = await invoke<DirectoryGrant>("create_worktree", {
+              rootId: main.id,
+              branch: branch.trim(),
+              upstream: true,
+            });
+          } catch (reason) {
+            void invoke("revoke_directory", { rootId: main.id });
+            throw reason;
+          }
+          advance();
+          worktree = true;
         }
-        advance();
-        worktree = true;
+        // The clone catches up with GitHub once the session is under way, for the next worktree.
+        void invoke("refresh_repository", { rootId: place.id }).catch(() => {});
         root = main.path;
-        fallbackName = repository.name;
+        fallbackName = defaultSessionName(place.path);
         // The Local tab's folder was granted for a session that is not this one.
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
         setSelectedName(fullName(repository));
@@ -672,10 +692,9 @@ export function NewSessionDialog({
       setTitle("");
       setBranch("");
       onOpenChange(false);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
       setLaunching(undefined);
+    } catch (reason) {
+      setLaunching((current) => (current ? { ...current, error: String(reason) } : current));
     }
   }
 
@@ -783,22 +802,30 @@ export function NewSessionDialog({
     if (next) setSelectedName(fullName(next));
   }
 
-  const worktreeHere = source === "github" || (source === "local" && Boolean(repo) && worktreeOn);
-  // A GitHub worktree's branch is numbered once the clone is in hand; Rust picks it then.
-  const defaultBranch = source === "github" ? "lite/worktree-N" : suggestedBranch;
-  const defaultName =
-    source === "github"
+  const worktreeHere = worktreeOn && (source === "github" || (source === "local" && Boolean(repo)));
+  // The worktree a session would get and its branch: what the probe named for a clone that exists, or
+  // the first of each beside a clone about to be made.
+  const planned =
+    source === "github" && selected && !selected.local
+      ? { worktree: `${clonePath(selected)}-worktree-1`, branch: "lite/worktree-1" }
+      : { worktree, branch: suggestedBranch };
+  const defaultBranch = planned.branch;
+  const defaultName = worktreeHere
+    ? folderName(planned.worktree)
+    : source === "github"
       ? (selected?.name ?? "")
-      : worktreeHere
-        ? folderName(worktree)
-        : path.trim()
-          ? defaultSessionName(path.trim())
-          : "";
+      : path.trim()
+        ? defaultSessionName(path.trim())
+        : "";
   const whereLine =
     source === "github"
-      ? selected
-        ? `New worktree beside ${tilde(clonePath(selected))}`
-        : ""
+      ? !selected
+        ? ""
+        : worktreeOn
+          ? `${selected.local ? "New" : "Clones, then new"} worktree in ${tilde(planned.worktree)}`
+          : selected.local
+            ? `Runs directly in ${tilde(clonePath(selected))}`
+            : `Clones to ${tilde(clonePath(selected))}, then runs there`
       : remote
         ? host.trim() && path.trim()
           ? `Runs on ${host.trim()} in ${path.trim()}`
@@ -1030,9 +1057,16 @@ export function NewSessionDialog({
     <Dialog open={isOpen} onOpenChange={changeOpen}>
       <DialogContent
         initialFocus={() => searchRef.current ?? folderRef.current ?? true}
-        className="gap-0 p-0 sm:h-[min(40rem,calc(100dvh-2rem))] sm:max-w-4xl"
+        showCloseButton={!launching || Boolean(launching.error)}
+        className={launching ? "gap-0 p-5 sm:max-w-xs" : "gap-0 p-0 sm:h-[min(40rem,calc(100dvh-2rem))] sm:max-w-4xl"}
       >
-        <form onSubmit={submit} onKeyDown={numberKey} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {/* While a session starts, the dialog becomes its progress card. The choices stay mounted, so a
+            failed step brings them back as they were, with the error. */}
+        <form
+          onSubmit={submit}
+          onKeyDown={numberKey}
+          className={cn("flex min-h-0 min-w-0 flex-1 flex-col", launching && "hidden")}
+        >
           <DialogHeader className="px-5 pt-4 pb-3">
             <DialogTitle>New session</DialogTitle>
             <DialogDescription className="sr-only">
@@ -1135,7 +1169,7 @@ export function NewSessionDialog({
                                         <Lock aria-label="Private" className="size-3 shrink-0 text-muted-foreground" />
                                       ) : null}
                                     </span>
-                                    <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                    <span className="flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
                                       {repository.language ? (
                                         <>
                                           <span
@@ -1147,6 +1181,14 @@ export function NewSessionDialog({
                                       ) : null}
                                       {repository.language && repository.pushedAt ? <span>·</span> : null}
                                       {repository.pushedAt ? relativeAge(repository.pushedAt) : null}
+                                      {repository.local ? (
+                                        <>
+                                          <span>·</span>
+                                          <span className="min-w-0 truncate font-mono" title={repository.local}>
+                                            {tilde(repository.local)}
+                                          </span>
+                                        </>
+                                      ) : null}
                                     </span>
                                   </span>
                                   {count ? (
@@ -1362,7 +1404,7 @@ export function NewSessionDialog({
                     <span className="min-w-0 flex-1 truncate font-mono" title={whereLine}>
                       {whereLine}
                     </span>
-                    {source === "local" && repo ? (
+                    {(source === "github" && selected) || (source === "local" && repo) ? (
                       <>
                         <Label htmlFor="new-worktree" className="text-xs text-muted-foreground">
                           Worktree
@@ -1431,47 +1473,57 @@ export function NewSessionDialog({
               Start an agent
             </span>
           </div>
-          {launching ? (
-            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-popover/80 backdrop-blur-sm">
-              <div
-                role="status"
-                aria-live="polite"
-                className="w-80 space-y-4 rounded-xl border bg-popover p-5 shadow-lg"
-              >
-                <div className="flex items-center gap-3">
-                  <Tile className="size-10">
-                    <ProviderIcon
-                      agent={launching.choice.agent}
-                      provider={harnessVendor(launching.choice.agent)}
-                      className="size-5"
-                    />
-                  </Tile>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium">Starting {agentLabel(launching.choice.agent)}</p>
-                    <p className="truncate text-xs text-muted-foreground">in {launching.place}</p>
-                  </div>
-                </div>
-                <ol className="space-y-2.5 text-sm">
-                  {launching.steps.map(([running, done], index) => (
-                    <li
-                      key={running}
-                      className={cn("flex items-center gap-2.5", index > launching.done && "text-muted-foreground")}
-                    >
-                      {index < launching.done ? (
-                        <Check aria-label="Done" className="size-4 shrink-0 text-success" />
-                      ) : index === launching.done ? (
-                        <Spinner className="size-4 shrink-0" />
-                      ) : (
-                        <span className="size-4 shrink-0 rounded-full border" />
-                      )}
-                      {index < launching.done ? done : index === launching.done ? `${running}…` : running}
-                    </li>
-                  ))}
-                </ol>
+        </form>
+        {launching ? (
+          <div role="status" aria-live="polite" className="space-y-4">
+            <div className="flex items-center gap-3">
+              <Tile className="size-10">
+                <ProviderIcon
+                  agent={launching.choice.agent}
+                  provider={harnessVendor(launching.choice.agent)}
+                  className="size-5"
+                />
+              </Tile>
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Starting {agentLabel(launching.choice.agent)}</p>
+                <p className="truncate text-xs text-muted-foreground">in {launching.place}</p>
               </div>
             </div>
-          ) : null}
-        </form>
+            <ol className="space-y-2.5 text-sm">
+              {launching.steps.map(([running, done], index) => (
+                <li
+                  key={running}
+                  className={cn("flex items-center gap-2.5", index > launching.done && "text-muted-foreground")}
+                >
+                  {index < launching.done ? (
+                    <Check aria-label="Done" className="size-4 shrink-0 text-success" />
+                  ) : index === launching.done && launching.error ? (
+                    <X aria-label="Failed" className="size-4 shrink-0 text-destructive" />
+                  ) : index === launching.done ? (
+                    <Spinner className="size-4 shrink-0" />
+                  ) : (
+                    <span className="size-4 shrink-0 rounded-full border" />
+                  )}
+                  {index < launching.done
+                    ? done
+                    : index === launching.done && !launching.error
+                      ? `${running}…`
+                      : running}
+                </li>
+              ))}
+            </ol>
+            {launching.error ? (
+              <>
+                <p className="rounded-lg bg-destructive/10 px-3 py-2 text-xs break-words text-destructive">
+                  {launching.error}
+                </p>
+                <Button type="button" variant="outline" className="w-full" onClick={() => setLaunching(undefined)}>
+                  Back
+                </Button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
         <ApiKeyDialog
           provider={keyFor}
           replacing={false}

@@ -2366,8 +2366,8 @@ struct GitHubRepository {
     pushed_at: Option<String>,
     language: Option<String>,
     color: Option<String>,
-    // Lite already holds a clone, so starting a session skips the download.
-    cloned: bool,
+    // A clone Lite already knows, so starting a session fetches there instead of cloning again.
+    local: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2381,7 +2381,11 @@ struct GitHubRepositories {
 // The user's own repositories, most recently pushed first, or GitHub's matches for a search. gh
 // carries the sign-in, so Lite never reads a token; a failed request asks gh whether anyone is
 // signed in at all, which is the one failure the dialog can fix.
-fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositories, String> {
+fn list_github_repositories(
+    root: &Path,
+    query: &str,
+    known: &[String],
+) -> Result<GitHubRepositories, String> {
     let Some(gh) = resolve_executable("gh") else {
         return Ok(GitHubRepositories {
             signed_in: false,
@@ -2430,6 +2434,32 @@ fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositori
     } else {
         &body["data"]["search"]["nodes"]
     };
+    // The clones Lite already knows — the folders its sessions ran in — by the GitHub repository each came
+    // from. Lite never looks further than that: it does not search the disk for repositories.
+    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+    let clones: HashMap<String, &String> = known
+        .iter()
+        .filter_map(|path| {
+            let url = origin_url(&git, Path::new(path))?;
+            Some((
+                url.strip_prefix("https://github.com/")?.to_lowercase(),
+                path,
+            ))
+        })
+        .collect();
+    // The folders those clones sit in are where the user keeps repositories, so a repository is also
+    // looked for by name beside them, and in the repositories folder.
+    // The user's own folders come first, so their clone is found before a copy Lite made.
+    let mut homes: Vec<PathBuf> = Vec::new();
+    for home in known
+        .iter()
+        .filter_map(|path| Path::new(path).parent())
+        .chain([root])
+    {
+        if !homes.iter().any(|seen| seen == home) {
+            homes.push(home.to_path_buf());
+        }
+    }
     let repositories = nodes
         .as_array()
         .into_iter()
@@ -2437,6 +2467,7 @@ fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositori
         .filter_map(|node| {
             let owner = node["owner"]["login"].as_str()?;
             let name = node["name"].as_str()?;
+            let full = format!("{owner}/{name}").to_lowercase();
             Some(GitHubRepository {
                 owner: owner.to_owned(),
                 name: name.to_owned(),
@@ -2444,9 +2475,21 @@ fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositori
                 pushed_at: node["pushedAt"].as_str().map(str::to_owned),
                 language: node["primaryLanguage"]["name"].as_str().map(str::to_owned),
                 color: node["primaryLanguage"]["color"].as_str().map(str::to_owned),
-                cloned: github_name(owner).is_ok()
-                    && github_name(name).is_ok()
-                    && root.join(name).join(".git").exists(),
+                local: clones.get(&full).map(|path| path.to_string()).or_else(|| {
+                    github_name(name).ok()?;
+                    homes
+                        .iter()
+                        .map(|home| home.join(name))
+                        .find(|path| {
+                            path.join(".git").exists()
+                                && origin_url(&git, path).is_some_and(|url| {
+                                    url.strip_prefix("https://github.com/").is_some_and(
+                                        |repository| repository.eq_ignore_ascii_case(&full),
+                                    )
+                                })
+                        })
+                        .map(|path| path_text(&path))
+                }),
             })
         })
         .collect();
@@ -2457,24 +2500,32 @@ fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositori
 }
 
 #[tauri::command]
-async fn github_repositories(app: AppHandle, query: String) -> Result<GitHubRepositories, String> {
+async fn github_repositories(
+    app: AppHandle,
+    query: String,
+    known: Vec<String>,
+) -> Result<GitHubRepositories, String> {
     let root = repositories_directory_path(&app)?;
-    tauri::async_runtime::spawn_blocking(move || list_github_repositories(&root, &query))
+    tauri::async_runtime::spawn_blocking(move || list_github_repositories(&root, &query, &known))
         .await
         .map_err(|error| error.to_string())?
 }
 
-// The repository's copy under the repositories folder, cloned on first use and fetched on every later
-// one, so a session's worktree starts from what GitHub has now. gh clones with the user's own sign-in
+// The repository's local clone: one the user already has, used as it is so a launch never waits on the
+// network, or Lite's own under the repositories folder, cloned on first use. gh clones with the user's own sign-in
 // and sets up a fork's upstream; a partial clone keeps the first download small. A folder already at
 // the path must be this repository's clone: Lite never adopts or overwrites anything else.
-fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathBuf, String> {
+fn prepare_repository_path(
+    root: &Path,
+    owner: &str,
+    name: &str,
+    local: Option<PathBuf>,
+) -> Result<PathBuf, String> {
     let (owner, name) = (github_name(owner)?, github_name(name)?);
-    // One folder per repository name: a same-named repository of another owner is refused below
-    // rather than sharing it.
-    let path = root.join(name);
-    let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
-    let commands: Vec<Command> = if path.exists() {
+    // A clone the user already has is used where it is. Otherwise Lite keeps one folder per repository
+    // name, and a same-named repository of another owner is refused below rather than sharing it.
+    let path = local.unwrap_or_else(|| root.join(name));
+    if path.exists() {
         let git = resolve_executable("git").unwrap_or_else(|| "git".into());
         let expected = format!("https://github.com/{owner}/{name}");
         let remote = origin_url(&git, &path);
@@ -2485,48 +2536,24 @@ fn prepare_repository_path(root: &Path, owner: &str, name: &str) -> Result<PathB
                 remote.as_deref().unwrap_or("something else")
             ));
         }
-        // Both reach GitHub the way gh's clone did: through gh as Git's credential helper. The fetch
-        // moves the branches; set-head follows a default branch GitHub has since changed, which fetch
-        // leaves alone and the next worktree starts from.
-        let helper = format!(
-            "credential.https://github.com.helper=!\"{}\" auth git-credential",
-            path_text(&gh)
-        );
-        [
-            &["fetch", "--quiet", "origin"][..],
-            &["remote", "set-head", "origin", "--auto"],
-        ]
-        .into_iter()
-        .map(|args| {
-            let mut command = Command::new(&git);
-            command
-                .arg("-C")
-                .arg(&path)
-                .args(["-c", "credential.https://github.com.helper=", "-c", &helper])
-                .args(args);
-            command
-        })
-        .collect()
-    } else {
-        fs::create_dir_all(root).map_err(|error| error.to_string())?;
-        let mut clone = Command::new(&gh);
-        clone.args([
-            "repo",
-            "clone",
-            &format!("{owner}/{name}"),
-            &path_text(&path),
-            "--",
-            "--filter=blob:none",
-        ]);
-        vec![clone]
-    };
-    for mut command in commands {
-        // Git, and gh running git, need the user's PATH, which a launched app does not have.
-        if let Some(path) = user_path() {
-            command.env("PATH", path);
-        }
-        command_text(&mut command)?;
+        return Ok(path);
     }
+    let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
+    fs::create_dir_all(root).map_err(|error| error.to_string())?;
+    let mut clone = Command::new(&gh);
+    clone.args([
+        "repo",
+        "clone",
+        &format!("{owner}/{name}"),
+        &path_text(&path),
+        "--",
+        "--filter=blob:none",
+    ]);
+    // gh runs git itself, and a launched app's bare PATH does not reach it.
+    if let Some(path) = user_path() {
+        clone.env("PATH", path);
+    }
+    command_text(&mut clone)?;
     Ok(path)
 }
 
@@ -2536,13 +2563,50 @@ async fn prepare_repository(
     roots: State<'_, Roots>,
     owner: String,
     name: String,
+    local: Option<String>,
 ) -> Result<DirectoryGrant, String> {
     let root = repositories_directory_path(&app)?;
-    let path =
-        tauri::async_runtime::spawn_blocking(move || prepare_repository_path(&root, &owner, &name))
-            .await
-            .map_err(|error| error.to_string())??;
+    let path = tauri::async_runtime::spawn_blocking(move || {
+        prepare_repository_path(&root, &owner, &name, local.map(PathBuf::from))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     grant_directory(&app, &roots, path, None)
+}
+
+// Brings a clone up to date once a session has started in it, so the next worktree starts from what
+// GitHub has without any launch waiting on the network. The fetch moves the branches; set-head follows a
+// default branch GitHub has since changed. Both sign in the way gh's clone did, with gh as Git's
+// credential helper.
+#[tauri::command]
+async fn refresh_repository(roots: State<'_, Roots>, root_id: String) -> Result<(), String> {
+    let path = root_path(&roots, &root_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let gh = resolve_executable("gh").ok_or("Could not find gh in your PATH")?;
+        let helper = format!(
+            "credential.https://github.com.helper=!\"{}\" auth git-credential",
+            path_text(&gh)
+        );
+        for args in [
+            &["fetch", "--quiet", "origin"][..],
+            &["remote", "set-head", "origin", "--auto"],
+        ] {
+            let mut command = Command::new(&git);
+            command
+                .arg("-C")
+                .arg(&path)
+                .args(["-c", "credential.https://github.com.helper=", "-c", &helper])
+                .args(args);
+            if let Some(path) = user_path() {
+                command.env("PATH", path);
+            }
+            command_text(&mut command)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -6193,8 +6257,9 @@ async fn create_worktree(
     .map_err(|error| error.to_string())?
 }
 
-// `upstream` starts the branch from the remote's default branch instead of the folder's commit: a
-// repository Lite cloned is only ever fetched, so its checkout lags what GitHub has.
+// `upstream` starts the branch from the remote's default branch as last fetched instead of the folder's
+// commit, which in a clone Lite or the user keeps may sit on any branch; a clone without one starts from
+// its commit.
 fn create_worktree_inner(
     app: &AppHandle,
     roots: &Roots,
@@ -6270,11 +6335,10 @@ fn create_worktree_inner(
     // git needs --orphan for the same start, and the record simply has no ancestor to check later.
     let head = match recovery.as_ref() {
         Some(recorded) => (!recorded.head.is_empty()).then(|| recorded.head.clone()),
-        None if upstream => Some(command_output(
-            &git,
-            &folder,
-            &["rev-parse", "refs/remotes/origin/HEAD"],
-        )?),
+        None if upstream => Some(
+            command_output(&git, &folder, &["rev-parse", "refs/remotes/origin/HEAD"])
+                .or_else(|_| command_output(&git, &folder, &["rev-parse", "HEAD"]))?,
+        ),
         None => command_output(&git, &folder, &["rev-parse", "HEAD"]).ok(),
     };
     let delete_branch = !restoring || !branch_exists(&git, &repo, branch)?;
@@ -7114,6 +7178,7 @@ pub fn run() {
             create_worktree,
             github_repositories,
             prepare_repository,
+            refresh_repository,
             repositories_directory,
             choose_repositories_directory,
             restore_worktree,
