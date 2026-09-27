@@ -34,7 +34,6 @@ export const SESSION_CHOICES = [
   { id: "shell", agent: "shell" as const, provider: undefined, label: "Your login shell" },
 ];
 type Choice = (typeof SESSION_CHOICES)[number];
-const harnesses = [...new Set(SESSION_CHOICES.map((option) => option.agent).filter((agent) => agent !== "shell"))];
 // One row per harness, in a fixed order so its number key never moves. Codex is one row whatever
 // provider it runs against; the provider is a choice inside the row.
 const HARNESSES: Agent[] = [...new Set(SESSION_CHOICES.map((option) => option.agent))];
@@ -42,11 +41,8 @@ const CODEX_CHOICES = SESSION_CHOICES.filter((option) => option.agent === "codex
 const CHOICE_KEY = "lite.newSession.choice.v1";
 const CODEX_KEY = "lite.newSession.codexProvider.v1";
 const SOURCE_KEY = "lite.newSession.source.v1";
-const REPOSITORY_KEY = "lite.newSession.repository.v1";
-const RECENT_KEY = "lite.newSession.recentRepositories.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
-const RECENT_LIMIT = 8;
 // A Codex provider serving several models offers the choice here, remembered per provider so each keeps
 // its own model and thinking level. Rust owns which models and levels exist, because the catalog it hands
 // Codex is built from the same list; this side only remembers which of them was picked.
@@ -73,7 +69,7 @@ let updateChecks: Promise<Record<string, boolean | null>> | undefined;
 
 function checkAgentUpdates() {
   updateChecks ??= Promise.all(
-    harnesses.map(async (agent) => {
+    HARNESSES.filter((agent) => agent !== "shell").map(async (agent) => {
       try {
         return [agent, await invoke<boolean>("agent_update_available", { agent })] as const;
       } catch {
@@ -127,28 +123,13 @@ interface GitHubRepository {
 }
 
 interface GitHubRepositories {
-  status: "ready" | "signedOut" | "missing";
+  signedIn: boolean;
   repositories: GitHubRepository[];
 }
 
 type Source = "github" | "local" | "ssh";
 
 const fullName = (repository: { owner: string; name: string }) => `${repository.owner}/${repository.name}`;
-
-function recentRepositories(): GitHubRepository[] {
-  try {
-    const stored = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
-    return Array.isArray(stored) ? stored : [];
-  } catch {
-    return [];
-  }
-}
-
-function rememberRepository(repository: GitHubRepository) {
-  const recent = [repository, ...recentRepositories().filter((entry) => fullName(entry) !== fullName(repository))];
-  localStorage.setItem(RECENT_KEY, JSON.stringify(recent.slice(0, RECENT_LIMIT)));
-  localStorage.setItem(REPOSITORY_KEY, fullName(repository));
-}
 
 function pushedAgo(pushedAt: string | null) {
   if (!pushedAt) return "";
@@ -157,14 +138,6 @@ function pushedAgo(pushedAt: string | null) {
   if (minutes < 60 * 24) return `${Math.round(minutes / 60)}h ago`;
   if (minutes < 60 * 24 * 30) return `${Math.round(minutes / 60 / 24)}d ago`;
   return new Date(pushedAt).toLocaleDateString(undefined, { month: "short", year: "numeric" });
-}
-
-// The folder's own mark: the GitHub mark for a clone of a GitHub repository, Git's for any other
-// repository, and a plain folder otherwise.
-function FolderMark({ probe }: { probe?: DirectoryProbe | null }) {
-  if (probe?.repository?.remote?.startsWith("https://github.com/")) return <GitHubLogomark className="size-4.5" />;
-  if (probe?.repository) return <GitLogomark className="size-4.5" />;
-  return <FolderOpen className="size-4.5 text-muted-foreground" />;
 }
 
 function Tile({ children, className = "" }: { children: ReactNode; className?: string }) {
@@ -243,8 +216,7 @@ export function NewSessionDialog({
   const [query, setQuery] = useState("");
   // GitHub's own matches for the query, beyond the repositories already listed.
   const [found, setFound] = useState<{ query: string; repositories: GitHubRepository[] }>();
-  const [selectedName, setSelectedName] = useState(() => localStorage.getItem(REPOSITORY_KEY) ?? "");
-  const [clonedProbe, setClonedProbe] = useState<DirectoryProbe | null>();
+  const [selectedName, setSelectedName] = useState("");
   const [folderProbes, setFolderProbes] = useState<Record<string, DirectoryProbe | null>>({});
   const codexChoice = CODEX_CHOICES.find((option) => option.id === codexId) ?? CODEX_CHOICES[0];
   const harnessChoice = (agent: Agent) =>
@@ -330,7 +302,7 @@ export function NewSessionDialog({
       })
       .catch((reason) => {
         if (!disposed) {
-          setGitHub({ status: "ready", repositories: [] });
+          setGitHub({ signedIn: true, repositories: [] });
           setError(String(reason));
         }
       });
@@ -396,7 +368,7 @@ export function NewSessionDialog({
   // GitHub is searched once typing pauses, for repositories the user's own list does not hold.
   const search = query.trim();
   useEffect(() => {
-    if (!isOpen || source !== "github" || github?.status !== "ready" || search.length < 2) return;
+    if (!isOpen || source !== "github" || !github?.signedIn || search.length < 2) return;
     let disposed = false;
     const timer = window.setTimeout(() => {
       void invoke<GitHubRepositories>("github_repositories", { query: search })
@@ -411,7 +383,7 @@ export function NewSessionDialog({
       disposed = true;
       window.clearTimeout(timer);
     };
-  }, [github?.status, isOpen, search, source]);
+  }, [github?.signedIn, isOpen, search, source]);
 
   // Folders the user already ran sessions in, newest first, each asked once per opening which kind it is.
   const recentFolders = useMemo(() => {
@@ -441,8 +413,22 @@ export function NewSessionDialog({
   const separator = repositoriesRoot.includes("\\") ? "\\" : "/";
   const clonePath = (repository: { owner: string; name: string }) =>
     [repositoriesRoot, repository.owner, repository.name].join(separator);
-  const recent = recentRepositories();
   const listed = github?.repositories ?? [];
+  // The repositories Lite's own sessions ran in, newest first: clones under the repositories folder.
+  const recent: GitHubRepository[] = [];
+  for (const session of [...sessions].sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))) {
+    const [owner, name, rest] = (session.repo ?? "").slice(repositoriesRoot.length + 1).split(separator);
+    if (
+      repositoriesRoot &&
+      !session.host &&
+      session.repo?.startsWith(repositoriesRoot + separator) &&
+      owner &&
+      name &&
+      rest === undefined &&
+      !recent.some((entry) => fullName(entry) === `${owner}/${name}`)
+    )
+      recent.push({ owner, name, private: false, pushedAt: null, language: null, color: null, cloned: true });
+  }
   const known = new Map<string, GitHubRepository>();
   for (const repository of [...listed, ...recent, ...(found?.repositories ?? [])])
     if (!known.has(fullName(repository).toLowerCase())) known.set(fullName(repository).toLowerCase(), repository);
@@ -477,26 +463,6 @@ export function NewSessionDialog({
     visible[0];
   const running = (repository: GitHubRepository) =>
     sessions.filter((session) => !session.host && session.repo === clonePath(repository)).length;
-
-  // A repository Lite already cloned is asked where its next worktree goes, so the dialog names it exactly.
-  const selectedClone = source === "github" && selected?.cloned && repositoriesRoot ? clonePath(selected) : "";
-  useEffect(() => {
-    if (!isOpen || !selectedClone) {
-      setClonedProbe(undefined);
-      return;
-    }
-    let disposed = false;
-    void invoke<DirectoryProbe>("directory_probe", { path: selectedClone })
-      .then((probe) => {
-        if (!disposed) setClonedProbe(probe);
-      })
-      .catch(() => {
-        if (!disposed) setClonedProbe(null);
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [isOpen, selectedClone]);
 
   async function chooseFolder() {
     setError("");
@@ -582,7 +548,6 @@ export function NewSessionDialog({
         fallbackName = repository.name;
         // The Local tab's folder was granted for a session that is not this one.
         if (directory) void invoke("revoke_directory", { rootId: directory.id });
-        rememberRepository({ ...repository, cloned: true });
         setSelectedName(fullName(repository));
       } else {
         setCreating("Starting…");
@@ -681,7 +646,7 @@ export function NewSessionDialog({
   // and path. Only then does an agent row start anything.
   const placeReady =
     source === "github"
-      ? Boolean(selected && github?.status === "ready")
+      ? Boolean(selected && github?.signedIn)
       : remote
         ? Boolean(host.trim() && path.trim())
         : Boolean(path.trim() && folder !== "other" && repo !== undefined);
@@ -722,13 +687,8 @@ export function NewSessionDialog({
   }
 
   const worktreeHere = source === "github" || (source === "local" && Boolean(repo) && worktreeOn);
-  const githubTarget =
-    source === "github" && selected
-      ? selected.cloned
-        ? { branch: clonedProbe?.repository?.branch ?? "", worktree: clonedProbe?.repository?.worktree ?? "" }
-        : { branch: "lite/worktree-1", worktree: `${clonePath(selected)}-worktree-1` }
-      : undefined;
-  const defaultBranch = githubTarget?.branch ?? suggestedBranch;
+  // A GitHub worktree's branch is numbered once the clone is in hand; Rust picks it then.
+  const defaultBranch = source === "github" ? "lite/worktree-N" : suggestedBranch;
   const defaultName =
     source === "github"
       ? (selected?.name ?? "")
@@ -739,8 +699,8 @@ export function NewSessionDialog({
           : "";
   const whereLine =
     source === "github"
-      ? githubTarget?.worktree
-        ? `From origin's default branch in ${githubTarget.worktree}`
+      ? selected
+        ? `New worktree beside ${clonePath(selected)}`
         : ""
       : remote
         ? host.trim() && path.trim()
@@ -982,37 +942,26 @@ export function NewSessionDialog({
                 </TabsList>
               </Tabs>
               {source === "github" ? (
-                github?.status === "signedOut" || github?.status === "missing" ? (
+                github && !github.signedIn ? (
                   <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
                     <span className="flex size-12 items-center justify-center rounded-xl border bg-card">
                       <GitHubLogomark className="size-6" />
                     </span>
                     <p className="text-sm font-medium">Connect GitHub</p>
                     <p className="max-w-72 text-xs text-muted-foreground">
-                      {github.status === "missing"
-                        ? "Lite lists and clones repositories through the GitHub CLI. Install it, then reopen this dialog."
-                        : "Lite lists and clones your repositories through the GitHub CLI’s own sign-in. Lite never sees your token."}
+                      Lite lists and clones your repositories through the GitHub CLI’s own sign-in. Lite never sees your
+                      token.
                     </p>
-                    {github.status === "missing" ? (
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => void invoke("open_url", { url: "https://cli.github.com" })}
-                      >
-                        Get the GitHub CLI
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => {
-                          changeOpen(false);
-                          onGitHubSignIn();
-                        }}
-                      >
-                        Sign in with GitHub CLI
-                      </Button>
-                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        changeOpen(false);
+                        onGitHubSignIn();
+                      }}
+                    >
+                      Sign in with GitHub CLI
+                    </Button>
                     <Button type="button" variant="ghost" size="sm" onClick={() => changeSource("local")}>
                       Use a local folder instead
                     </Button>
@@ -1209,7 +1158,14 @@ export function NewSessionDialog({
                             className={`flex w-full items-center gap-3 rounded-lg border px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 ${active ? "border-foreground/15 bg-accent" : "border-transparent hover:bg-accent/60"}`}
                           >
                             <Tile>
-                              <FolderMark probe={probe} />
+                              {/* A GitHub clone, any other repository, or a plain folder. */}
+                              {probe?.repository?.remote?.startsWith("https://github.com/") ? (
+                                <GitHubLogomark className="size-4.5" />
+                              ) : probe?.repository ? (
+                                <GitLogomark className="size-4.5" />
+                              ) : (
+                                <FolderOpen className="size-4.5 text-muted-foreground" />
+                              )}
                             </Tile>
                             <span className="flex min-w-0 flex-1 flex-col">
                               <span className="truncate text-sm font-medium">{folderName(place) || place}</span>
@@ -1227,7 +1183,7 @@ export function NewSessionDialog({
                   ) : null}
                 </div>
               )}
-              {github?.status === "ready" || source !== "github" ? (
+              {github?.signedIn || source !== "github" ? (
                 <div className="m-3 mt-1 space-y-2 rounded-xl border bg-card/60 p-3">
                   <div className="flex items-center gap-3">
                     <Label htmlFor="session-title" className="w-12 shrink-0 text-xs text-muted-foreground">
@@ -1296,7 +1252,7 @@ export function NewSessionDialog({
                     </span>
                   ) : placeReady ? (
                     `in ${placeLabel}`
-                  ) : source === "github" && github?.status !== "ready" ? (
+                  ) : source === "github" && !github?.signedIn ? (
                     "Connect GitHub first"
                   ) : (
                     "Choose where it runs"

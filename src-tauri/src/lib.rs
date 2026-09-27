@@ -2349,14 +2349,6 @@ fn github_name(name: &str) -> Result<&str, String> {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-enum GitHubStatus {
-    Ready,
-    SignedOut,
-    Missing,
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct GitHubRepository {
     owner: String,
     name: String,
@@ -2371,7 +2363,8 @@ struct GitHubRepository {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GitHubRepositories {
-    status: GitHubStatus,
+    // False when gh is missing or nobody is signed in to it: the one failure the dialog can fix.
+    signed_in: bool,
     repositories: Vec<GitHubRepository>,
 }
 
@@ -2381,7 +2374,7 @@ struct GitHubRepositories {
 fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositories, String> {
     let Some(gh) = resolve_executable("gh") else {
         return Ok(GitHubRepositories {
-            status: GitHubStatus::Missing,
+            signed_in: false,
             repositories: Vec::new(),
         });
     };
@@ -2414,7 +2407,7 @@ fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositori
             .is_ok_and(|status| status.status.success());
         if !signed_in {
             return Ok(GitHubRepositories {
-                status: GitHubStatus::SignedOut,
+                signed_in: false,
                 repositories: Vec::new(),
             });
         }
@@ -2448,7 +2441,7 @@ fn list_github_repositories(root: &Path, query: &str) -> Result<GitHubRepositori
         })
         .collect();
     Ok(GitHubRepositories {
-        status: GitHubStatus::Ready,
+        signed_in: true,
         repositories,
     })
 }
