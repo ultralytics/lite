@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
+  CircleCheck,
   Download,
   FolderOpen,
   GitBranch,
@@ -184,12 +185,20 @@ function ProviderLine({ choice, tone, children }: { choice: Choice; tone?: strin
   );
 }
 
-// A repository or folder the user can pick, marked while it is the one picked.
-const pickRow = (active: boolean) =>
+// A repository or folder the user can pick. The picked one turns green once Lite has confirmed a session
+// can start there, the same green the folder field shows when its folder exists.
+const pickRow = (active: boolean, ready: boolean) =>
   cn(
-    "flex w-full items-center gap-3 rounded-lg border px-2 py-1.5 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
-    active ? "border-foreground/15 bg-accent" : "border-transparent hover:bg-accent/60",
+    "flex w-full items-center gap-3 rounded-lg border px-2 py-1.5 text-left transition-colors duration-300 outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+    active && ready
+      ? "border-success/40 bg-success/10"
+      : active
+        ? "border-foreground/15 bg-accent"
+        : "border-transparent hover:bg-accent/60",
   );
+
+// The mark a picked row carries once it is confirmed.
+const readyMark = <CircleCheck aria-label="Ready" className="size-4 shrink-0 text-success" />;
 
 export function NewSessionDialog({
   open: isOpen,
@@ -686,6 +695,9 @@ export function NewSessionDialog({
       : remote
         ? Boolean(host.trim() && path.trim())
         : Boolean(path.trim() && folder !== "other" && repo !== undefined);
+  // Green is kept for a place Lite has confirmed: a repository it can clone or fetch, or a folder that
+  // exists. A folder about to be created stays amber and an SSH host is only checked once a session starts.
+  const confirmed = placeReady && (source === "github" || folder === "directory");
   const busy = Boolean(installing || creating);
   // The session the user asked for starts once the provider answers that its new key makes it ready.
   async function keySaved(choice?: Choice) {
@@ -1072,7 +1084,7 @@ export function NewSessionDialog({
                                   aria-pressed={active}
                                   disabled={busy}
                                   onClick={() => setSelectedName(fullName(repository))}
-                                  className={pickRow(active)}
+                                  className={pickRow(active, confirmed)}
                                 >
                                   <span className="relative">
                                     <Tile>
@@ -1113,6 +1125,7 @@ export function NewSessionDialog({
                                       {count}
                                     </span>
                                   ) : null}
+                                  {active && confirmed ? readyMark : null}
                                 </button>
                               );
                             })}
@@ -1237,7 +1250,7 @@ export function NewSessionDialog({
                               setFolder("checking");
                               setRepo(undefined);
                             }}
-                            className={pickRow(active)}
+                            className={pickRow(active, confirmed)}
                           >
                             <Tile>
                               {/* A GitHub clone, any other repository, or a plain folder. */}
@@ -1258,6 +1271,7 @@ export function NewSessionDialog({
                                 {remoteName ?? (probe?.repository ? "Git" : "Folder")}
                               </span>
                             )}
+                            {active && confirmed ? readyMark : null}
                           </button>
                         );
                       })}
@@ -1266,7 +1280,12 @@ export function NewSessionDialog({
                 </div>
               )}
               {github?.signedIn || source !== "github" ? (
-                <div className="m-3 mt-1 space-y-2 rounded-xl border bg-card/60 p-3">
+                <div
+                  className={cn(
+                    "m-3 mt-1 space-y-2 rounded-xl border bg-card/60 p-3 transition-colors duration-300",
+                    confirmed && "border-success/40",
+                  )}
+                >
                   <div className="flex items-center gap-3">
                     <Label htmlFor="session-title" className="w-12 shrink-0 text-xs text-muted-foreground">
                       Name
@@ -1296,8 +1315,15 @@ export function NewSessionDialog({
                       />
                     </div>
                   ) : null}
-                  <div className="flex min-h-5 items-center gap-2 text-xs text-muted-foreground">
-                    {worktreeHere ? (
+                  <div
+                    className={cn(
+                      "flex min-h-5 items-center gap-2 text-xs transition-colors duration-300",
+                      confirmed && whereLine ? "text-foreground/80" : "text-muted-foreground",
+                    )}
+                  >
+                    {confirmed && whereLine ? (
+                      <CircleCheck aria-label="Ready" className="size-3.5 shrink-0 text-success" />
+                    ) : worktreeHere ? (
                       <GitBranch aria-hidden="true" className="size-3.5 shrink-0" />
                     ) : (
                       <FolderOpen aria-hidden="true" className="size-3.5 shrink-0" />
@@ -1333,7 +1359,15 @@ export function NewSessionDialog({
                       <Spinner /> {creating}
                     </span>
                   ) : placeReady ? (
-                    `in ${placeLabel}`
+                    <span className="flex items-center gap-1.5">
+                      <span
+                        className={cn(
+                          "size-1.5 shrink-0 rounded-full",
+                          confirmed ? "bg-success" : "bg-muted-foreground",
+                        )}
+                      />
+                      in {placeLabel}
+                    </span>
                   ) : source === "github" && !github?.signedIn ? (
                     "Connect GitHub first"
                   ) : (
