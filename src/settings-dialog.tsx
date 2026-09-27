@@ -5,7 +5,6 @@ import {
   Bell,
   Coffee,
   ExternalLink,
-  Eye,
   EyeOff,
   FolderCog,
   Info,
@@ -32,7 +31,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import {
   Item,
   ItemActions,
@@ -47,7 +45,14 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { including, without } from "@/lib/utils";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, ProviderRow, providerName } from "@/provider-auth";
+import {
+  ApiKeyInput,
+  AUTH_PROVIDERS,
+  type ProviderAuth,
+  ProviderAuthDescription,
+  ProviderRow,
+  providerName,
+} from "@/provider-auth";
 import {
   eventCombo,
   FIXED_SHORTCUTS,
@@ -144,6 +149,7 @@ function ShortcutRow({
 
 export function SettingsDialog({
   open: isOpen,
+  tab = "general",
   onOpenChange,
   onSignIn,
   notifications,
@@ -162,6 +168,8 @@ export function SettingsDialog({
   onFileBrowserChange,
 }: {
   open: boolean;
+  // The tab the dialog opens on.
+  tab?: string;
   onOpenChange: (open: boolean) => void;
   onSignIn: (agent: Agent) => void;
   notifications: boolean;
@@ -184,7 +192,6 @@ export function SettingsDialog({
   const [repositories, setRepositories] = useState("");
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<Set<string>>(new Set());
-  const [revealed, setRevealed] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notificationsSupported, setNotificationsSupported] = useState<boolean>();
@@ -199,7 +206,6 @@ export function SettingsDialog({
     setError("");
     setDrafts({});
     setEditing(new Set());
-    setRevealed(new Set());
     void Promise.all([
       read(),
       invoke<boolean>("notifications_supported").then(setNotificationsSupported),
@@ -211,15 +217,6 @@ export function SettingsDialog({
   function edit(id: string, open: boolean) {
     setEditing((current) => (open ? including(current, id) : without(current, id)));
     if (!open) setDrafts((current) => ({ ...current, [id]: "" }));
-  }
-
-  function reveal(id: string) {
-    setRevealed((current) => {
-      const next = new Set(current);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   }
 
   async function save(id: string) {
@@ -294,7 +291,7 @@ export function SettingsDialog({
           <DialogDescription>Personalize Lite and manage how agent sessions sign in.</DialogDescription>
         </DialogHeader>
         <DialogBody className="flex">
-          <Tabs defaultValue="general" orientation="vertical" className="min-h-full w-full gap-6">
+          <Tabs defaultValue={tab} orientation="vertical" className="min-h-full w-full gap-6">
             <TabsList variant="line" className="w-36 shrink-0 items-stretch justify-start border-r pr-4">
               <TabsTrigger value="general">
                 <SlidersHorizontal />
@@ -392,7 +389,6 @@ export function SettingsDialog({
                   const status = auth?.find((entry) => entry.name === option.id);
                   const open = editing.has(option.id);
                   const draft = drafts[option.id] ?? "";
-                  const shown = revealed.has(option.id);
                   return (
                     <Item key={option.id} variant="outline">
                       <ProviderRow option={option}>
@@ -426,32 +422,13 @@ export function SettingsDialog({
                       )}
                       {open && "variable" in option ? (
                         <ItemFooter>
-                          <InputGroup>
-                            <InputGroupInput
-                              autoFocus
-                              type={shown ? "text" : "password"}
-                              value={draft}
-                              className="font-mono"
-                              placeholder="Paste a key"
-                              aria-label={`${providerName(option)} API key`}
-                              onChange={(event) =>
-                                setDrafts((current) => ({ ...current, [option.id]: event.target.value }))
-                              }
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter" && draft.trim()) void save(option.id);
-                                if (event.key === "Escape") edit(option.id, false);
-                              }}
-                            />
-                            <InputGroupAddon align="inline-end">
-                              <InputGroupButton
-                                size="icon-xs"
-                                aria-label={shown ? "Hide the key" : "Show the key"}
-                                onClick={() => reveal(option.id)}
-                              >
-                                {shown ? <EyeOff /> : <Eye />}
-                              </InputGroupButton>
-                            </InputGroupAddon>
-                          </InputGroup>
+                          <ApiKeyInput
+                            label={`${providerName(option)} API key`}
+                            value={draft}
+                            onChange={(value) => setDrafts((current) => ({ ...current, [option.id]: value }))}
+                            onSubmit={() => void save(option.id)}
+                            onCancel={() => edit(option.id, false)}
+                          />
                           <Button
                             variant="outline"
                             size="sm"

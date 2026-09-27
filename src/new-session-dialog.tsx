@@ -6,6 +6,7 @@ import {
   ChevronDown,
   CircleAlert,
   Download,
+  ExternalLink,
   FolderOpen,
   GitBranch,
   Lock,
@@ -17,7 +18,14 @@ import { type FormEvent, type KeyboardEvent, type ReactNode, useEffect, useMemo,
 
 import { GitHubLogomark, GitLogomark, ProviderIcon } from "@/brand-icons";
 import { ActionIconButton, Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,7 +45,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
 import { relativeAge, SearchInput } from "@/inspector";
 import { cn } from "@/lib/utils";
-import { AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, providerName } from "@/provider-auth";
+import { ApiKeyInput, AUTH_PROVIDERS, type ProviderAuth, ProviderAuthDescription, providerName } from "@/provider-auth";
 import { IS_MAC } from "@/shortcuts";
 import { type Agent, agentLabel, defaultSessionName, folderName, type Session, sessionLabel } from "@/types";
 
@@ -192,6 +200,7 @@ export function NewSessionDialog({
   onOpenChange,
   onCreate,
   onGitHubSignIn,
+  onApiKeys,
 }: {
   open: boolean;
   // A choice made outside the dialog — a welcome tile — which the dialog opens on.
@@ -202,6 +211,8 @@ export function NewSessionDialog({
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
   onGitHubSignIn: () => void;
+  // Settings, opened where API keys are kept.
+  onApiKeys: () => void;
 }) {
   const [choiceId, setChoiceId] = useState(() => {
     const stored = localStorage.getItem(CHOICE_KEY);
@@ -250,6 +261,9 @@ export function NewSessionDialog({
   // GitHub's own matches for the query, beyond the repositories already listed.
   const [found, setFound] = useState<{ query: string; repositories: GitHubRepository[] }>();
   const [selectedName, setSelectedName] = useState("");
+  // The provider whose missing API key the user is supplying, and the key typed so far.
+  const [keyFor, setKeyFor] = useState<Choice>();
+  const [key, setKey] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
   const [folderProbes, setFolderProbes] = useState<Record<string, DirectoryProbe | null>>({});
   const codexChoice = CODEX_CHOICES.find((option) => option.id === codexId) ?? CODEX_CHOICES[0];
@@ -674,6 +688,26 @@ export function NewSessionDialog({
         ? Boolean(host.trim() && path.trim())
         : Boolean(path.trim() && folder !== "other" && repo !== undefined);
   const busy = Boolean(installing || creating);
+  // The key goes where Settings keeps it, and the session the user asked for starts once the provider
+  // answers that it is ready.
+  async function saveKey(choice: Choice) {
+    setError("");
+    try {
+      await invoke("save_api_key", { name: choice.id, key: key.trim() });
+      const status = await invoke<Availability>("agent_availability", {
+        agent: choice.agent,
+        provider: choice.provider,
+      });
+      setAvailability((current) => ({ ...current, [choice.id]: status }));
+      setKeyFor(undefined);
+      setKey("");
+      if (status.available) await create(choice);
+      else setError(status.detail);
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   function launch(agent: Agent) {
     const choice = harnessChoice(agent);
     const status = availability[choice.id];
@@ -681,7 +715,10 @@ export function NewSessionDialog({
     if (busy || !placeReady || remoteUnsupported(remote, choice) || (!remote && !status)) return;
     if (!remote && status && !status.available) {
       if (status.installable) void install(choice);
-      else
+      else if ("variable" in choice && !choice.signIn) {
+        setKey("");
+        setKeyFor(choice);
+      } else
         void invoke("open_setup_docs", { agent: choice.agent, provider: choice.provider }).catch((reason) =>
           setError(String(reason)),
         );
@@ -759,7 +796,11 @@ export function NewSessionDialog({
     ) : state === null ? (
       "Check failed"
     ) : state && !state.available ? (
-      "Setup required"
+      "variable" in choice && !choice.signIn ? (
+        "Add an API key"
+      ) : (
+        "Setup required"
+      )
     ) : panel ? (
       `${panel.models.find(([slug]) => slug === codexChoices[modelKey(panel.id)])?.[1] ?? ""} · ${codexChoices[levelKey(panel.id)] ?? ""} thinking`
     ) : authProvider ? (
@@ -848,7 +889,7 @@ export function NewSessionDialog({
                       <ProviderIcon agent={option.agent} provider={option.provider} className="size-4" />
                       <span className="flex-1">{providerName(option)}</span>
                       {availability[option.id] && !availability[option.id]?.available ? (
-                        <span className="text-xs text-amber-600 dark:text-amber-400">Set up</span>
+                        <span className="text-xs text-amber-600 dark:text-amber-400">Add key</span>
                       ) : null}
                     </DropdownMenuRadioItem>
                   ))}
@@ -906,10 +947,23 @@ export function NewSessionDialog({
           <span className="text-sm font-medium text-muted-foreground">{agentLabel(agent)}</span>
           <ProviderLine choice={choice}>{installable ? "Not installed" : "Setup required"}</ProviderLine>
         </span>
-        <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => launch(agent)}>
-          {installing === choice.id ? <Spinner /> : installable ? <Download /> : null}
-          {installing === choice.id ? "Installing…" : installable ? "Install" : "Set up"}
-        </Button>
+        {installable ? (
+          <ActionIconButton
+            type="button"
+            variant="outline"
+            size="icon-sm"
+            tooltip={installing === choice.id ? `Installing ${agentLabel(agent)}…` : `Install ${agentLabel(agent)}`}
+            aria-label={`Install ${agentLabel(agent)}`}
+            disabled={busy}
+            onClick={() => void install(choice)}
+          >
+            {installing === choice.id ? <Spinner /> : <Download />}
+          </ActionIconButton>
+        ) : (
+          <Button type="button" variant="outline" size="sm" disabled={busy} onClick={() => launch(agent)}>
+            Set up
+          </Button>
+        )}
       </div>
     );
   }
@@ -1314,6 +1368,62 @@ export function NewSessionDialog({
             </div>
           </div>
         </form>
+        <Dialog open={Boolean(keyFor)} onOpenChange={(open) => !open && setKeyFor(undefined)}>
+          {keyFor ? (
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <ProviderIcon agent={keyFor.agent} provider={keyFor.provider} className="size-5" />
+                  Add your {providerName(keyFor)} API key
+                </DialogTitle>
+                <DialogDescription>
+                  {"note" in keyFor ? `${keyFor.note} ` : ""}Lite keeps the key on this computer and hands it only to
+                  this provider’s sessions.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full justify-start"
+                  onClick={() =>
+                    void invoke("open_setup_docs", { agent: keyFor.agent, provider: keyFor.provider }).catch((reason) =>
+                      setError(String(reason)),
+                    )
+                  }
+                >
+                  <ExternalLink />
+                  How to get a {providerName(keyFor)} key
+                </Button>
+                <ApiKeyInput
+                  label={`${providerName(keyFor)} API key`}
+                  value={key}
+                  onChange={setKey}
+                  onSubmit={() => void saveKey(keyFor)}
+                  onCancel={() => setKeyFor(undefined)}
+                />
+                {error ? <p className="text-xs text-destructive">{error}</p> : null}
+              </div>
+              <DialogFooter className="items-center sm:justify-between">
+                <Button
+                  type="button"
+                  variant="link"
+                  className="px-0"
+                  onClick={() => {
+                    setKeyFor(undefined);
+                    changeOpen(false);
+                    onApiKeys();
+                  }}
+                >
+                  Manage keys in Settings
+                </Button>
+                <Button type="button" disabled={!key.trim() || busy} onClick={() => void saveKey(keyFor)}>
+                  Save and start
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          ) : null}
+        </Dialog>
       </DialogContent>
     </Dialog>
   );

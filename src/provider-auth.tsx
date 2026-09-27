@@ -1,9 +1,10 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
-import { Check } from "lucide-react";
-import type { ReactNode } from "react";
+import { Check, Eye, EyeOff } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { ItemContent, ItemDescription, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { type Agent, agentLabel, type ModelProvider, providerLabel, sessionLabel } from "@/types";
 
@@ -145,5 +146,51 @@ export function ProviderAuthDescription({
       <Check className="size-3.5 shrink-0" />
       {hint || status.cliAuthMethod === "apiKey" ? "Using API key" : `Signed in through ${agentLabel(provider.agent)}`}
     </span>
+  );
+}
+
+// The one field a provider's key is pasted into: hidden until asked, Enter saves, Escape gives up.
+export function ApiKeyInput({
+  label,
+  value,
+  onChange,
+  onSubmit,
+  onCancel,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const [shown, setShown] = useState(false);
+  return (
+    <InputGroup>
+      <InputGroupInput
+        autoFocus
+        type={shown ? "text" : "password"}
+        value={value}
+        className="font-mono"
+        placeholder="Paste a key"
+        aria-label={label}
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && value.trim()) {
+            event.preventDefault();
+            onSubmit();
+          }
+          if (event.key === "Escape") onCancel();
+        }}
+      />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton
+          size="icon-xs"
+          aria-label={shown ? "Hide the key" : "Show the key"}
+          onClick={() => setShown((current) => !current)}
+        >
+          {shown ? <EyeOff /> : <Eye />}
+        </InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   );
 }
