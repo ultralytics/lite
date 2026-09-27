@@ -1143,10 +1143,16 @@ export function NewSessionDialog({
                         ) : null}
                       </div>
                       {remote ? null : (
-                        <Button type="button" variant="outline" onClick={() => void chooseFolder()}>
+                        <ActionIconButton
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          tooltip="Browse"
+                          aria-label="Browse for a folder"
+                          onClick={() => void chooseFolder()}
+                        >
                           <FolderOpen />
-                          Browse…
-                        </Button>
+                        </ActionIconButton>
                       )}
                     </div>
                     {remote ? (
