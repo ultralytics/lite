@@ -6198,37 +6198,43 @@ struct DirectoryProbe {
 #[tauri::command]
 async fn directory_probe(app: AppHandle, path: String) -> Result<DirectoryProbe, String> {
     let path = typed_path(&app, &path)?;
-    if !path.is_dir() {
-        return Ok(DirectoryProbe {
-            exists: path.exists(),
-            is_directory: false,
-            repository: None,
-        });
-    }
-    // Canonicalized like the grant's path would be, so the root can be compared with session cwds.
-    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
-    let git = resolve_executable("git").unwrap_or_else(|| "git".into());
-    let Ok(root) = main_checkout(&git, &path) else {
-        return Ok(DirectoryProbe {
+    // Several folders are probed at once when the Local tab opens, each through a few git calls, so they
+    // wait off the runtime other commands share.
+    tauri::async_runtime::spawn_blocking(move || {
+        if !path.is_dir() {
+            return Ok(DirectoryProbe {
+                exists: path.exists(),
+                is_directory: false,
+                repository: None,
+            });
+        }
+        // Canonicalized like the grant's path would be, so the root can be compared with session cwds.
+        let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+        let git = resolve_executable("git").unwrap_or_else(|| "git".into());
+        let Ok(root) = main_checkout(&git, &path) else {
+            return Ok(DirectoryProbe {
+                exists: true,
+                is_directory: true,
+                repository: None,
+            });
+        };
+        let checkout = command_output(&git, &path, &["rev-parse", "--show-toplevel"])
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| root.clone());
+        let candidate = next_worktree(&git, &root, &checkout)?;
+        Ok(DirectoryProbe {
             exists: true,
             is_directory: true,
-            repository: None,
-        });
-    };
-    let checkout = command_output(&git, &path, &["rev-parse", "--show-toplevel"])
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| root.clone());
-    let candidate = next_worktree(&git, &root, &checkout)?;
-    Ok(DirectoryProbe {
-        exists: true,
-        is_directory: true,
-        repository: Some(Repository {
-            worktree: path_text(&candidate.path),
-            branch: candidate.branch,
-            root: path_text(&root),
-            remote: origin_url(&git, &path),
-        }),
+            repository: Some(Repository {
+                worktree: path_text(&candidate.path),
+                branch: candidate.branch,
+                root: path_text(&root),
+                remote: origin_url(&git, &path),
+            }),
+        })
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 // A session that shares its project with another gets the next numbered sibling folder. A missing

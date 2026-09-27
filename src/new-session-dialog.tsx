@@ -340,8 +340,10 @@ export function NewSessionDialog({
       .catch((reason) => {
         if (!disposed) setError(String(reason));
       });
-    // A local folder is no default for an SSH host, so the SSH tab opens with its field empty.
-    if (!opensOnSsh.current)
+    // A local folder is no default for an SSH host, so the SSH tab opens with its field empty, even if a
+    // folder was left from an opening that fell back to the Local tab.
+    if (opensOnSsh.current) setPath("");
+    else
       void invoke<DirectoryGrant | null>("default_directory", { path: initialPath ?? null })
         .then((selected) => {
           if (disposed && selected) void invoke("revoke_directory", { rootId: selected.id });
