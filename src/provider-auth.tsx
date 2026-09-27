@@ -26,6 +26,7 @@ export const AUTH_PROVIDERS = {
     provider: "openai",
     variable: "OPENAI_API_KEY",
     keys: "https://platform.openai.com/api-keys",
+    placeholder: "e.g., sk-proj-…",
     signIn: true,
   },
   claude: {
@@ -35,6 +36,7 @@ export const AUTH_PROVIDERS = {
     label: "Anthropic",
     variable: "ANTHROPIC_API_KEY",
     keys: "https://platform.claude.com/settings/keys",
+    placeholder: "e.g., sk-ant-api…",
     signIn: true,
   },
   deepseek: {
@@ -43,6 +45,7 @@ export const AUTH_PROVIDERS = {
     provider: "deepseek",
     variable: "DEEPSEEK_API_KEY",
     keys: "https://platform.deepseek.com/api_keys",
+    placeholder: "e.g., sk-…",
     signIn: false,
     note: "Runs Codex against DeepSeek. Usage bills DeepSeek, not OpenAI.",
   },
@@ -52,6 +55,7 @@ export const AUTH_PROVIDERS = {
     provider: "zai",
     variable: "ZAI_API_KEY",
     keys: "https://z.ai/manage-apikey/apikey-list",
+    placeholder: "e.g., 1a2b3c….AbCd…",
     signIn: false,
     note: "Runs Codex against Z.ai. Usage bills Z.ai, not OpenAI.",
   },
@@ -61,6 +65,7 @@ export const AUTH_PROVIDERS = {
     provider: "mimo",
     variable: "MIMO_API_KEY",
     keys: "https://platform.xiaomimimo.com/#/console/api-keys",
+    placeholder: "e.g., sk-…",
     signIn: false,
     note: "Runs Codex against Xiaomi MiMo. Usage bills Xiaomi, not OpenAI.",
   },
@@ -70,6 +75,7 @@ export const AUTH_PROVIDERS = {
     provider: "openrouter",
     variable: "OPENROUTER_API_KEY",
     keys: "https://openrouter.ai/settings/keys",
+    placeholder: "e.g., sk-or-v1-…",
     signIn: false,
     note: "Runs Codex against OpenRouter. Usage bills OpenRouter, not OpenAI.",
   },
@@ -80,6 +86,7 @@ export const AUTH_PROVIDERS = {
     label: "Google Gemini",
     variable: "GEMINI_API_KEY",
     keys: "https://aistudio.google.com/apikey",
+    placeholder: "e.g., AQ.…",
     signIn: true,
   },
   kimi: {
@@ -89,6 +96,7 @@ export const AUTH_PROVIDERS = {
     label: "Moonshot AI",
     variable: "MOONSHOT_API_KEY",
     keys: "https://platform.kimi.ai/console/api-keys",
+    placeholder: "e.g., sk-…",
     signIn: true,
   },
   qwen: {
@@ -106,8 +114,9 @@ export const AUTH_PROVIDERS = {
     provider?: ModelProvider;
     label?: string;
     variable?: string;
-    // Where the vendor hands out API keys.
+    // Where the vendor hands out API keys, and what one of its keys starts like.
     keys?: string;
+    placeholder?: string;
     signIn: boolean;
     note?: string;
   }
@@ -258,7 +267,7 @@ export function ApiKeyDialog({
                 type={shown ? "text" : "password"}
                 value={key}
                 className="font-mono"
-                placeholder="Paste your key"
+                placeholder={provider.placeholder}
                 aria-label={`${providerName(provider)} API key`}
                 autoComplete="off"
                 disabled={saving}

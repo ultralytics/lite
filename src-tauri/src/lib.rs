@@ -3458,10 +3458,12 @@ enum CliAuthMethod {
     ApiKey,
 }
 
+// A key's first characters, as Platform shows them: enough to recognize it, never its last four and never
+// more than eleven.
 fn key_hint(key: &str) -> String {
     let key = key.trim();
     key.chars()
-        .skip(key.chars().count().saturating_sub(4))
+        .take(key.chars().count().saturating_sub(4).min(11))
         .collect()
 }
 
@@ -3531,7 +3533,7 @@ async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
                 let cli_auth = cli_auth(&app, name);
                 ProviderAuth {
                     name: name.to_owned(),
-                    // Only the last characters travel to the interface, enough to tell two keys apart.
+                    // Only the first characters travel to the interface, enough to tell two keys apart.
                     key_hint: keys.get(name).map(|key| key_hint(key)),
                     cli_auth_method: cli_auth,
                 }

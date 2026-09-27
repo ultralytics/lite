@@ -394,7 +394,7 @@ export function SettingsDialog({
                   {saved.map(({ option, status }) => (
                     <Item key={option.id} variant="outline">
                       <ProviderRow option={option} title={providerName(option)}>
-                        <span className="font-mono">…{status.keyHint}</span> · Used by {agentLabel(option.agent)}
+                        <span className="font-mono">{status.keyHint}…</span> · Used by {agentLabel(option.agent)}
                       </ProviderRow>
                       <ItemActions>
                         <ActionIconButton
