@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
+  Brain,
   ChartNoAxesColumn,
   ChevronLeft,
   ChevronRight,
@@ -1789,9 +1790,26 @@ function UsagePanel({
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-3" style={contentZoomStyle(fontSize)}>
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-            <ProviderIcon agent={session.agent} provider={session.provider} className="size-5" />
-            {session.agent === "codex" && session.provider ? providerLabel(session.provider) : sessionLabel(session)}
+          <div className="mb-3 flex items-center gap-2.5">
+            <ProviderIcon agent={session.agent} provider={session.provider} className="size-5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              {usage?.model ? (
+                <span className="block truncate text-sm font-medium" title={usage.model}>
+                  {usage.model}
+                </span>
+              ) : null}
+              <span className={usage?.model ? "block truncate text-xs text-muted-foreground" : "text-sm font-medium"}>
+                {session.agent === "codex" && session.provider
+                  ? providerLabel(session.provider)
+                  : sessionLabel(session)}
+              </span>
+            </span>
+            {usage?.reasoning ? (
+              <Badge variant="secondary" title="Reasoning">
+                <Brain />
+                {usage.reasoning}
+              </Badge>
+            ) : null}
           </div>
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
@@ -1805,15 +1823,6 @@ function UsagePanel({
             </Empty>
           ) : (
             <ItemGroup>
-              {usage.model != null ? (
-                <Item variant="outline">
-                  <ItemContent>
-                    <ItemDescription>Model</ItemDescription>
-                    <ItemTitle className="text-lg">{usage.model}</ItemTitle>
-                    {usage.reasoning != null ? <ItemDescription>Reasoning: {usage.reasoning}</ItemDescription> : null}
-                  </ItemContent>
-                </Item>
-              ) : null}
               {usage.contextUsedPercent != null || usage.contextTokens != null ? (
                 <Item variant="outline" className="flex-col items-stretch">
                   {usage.contextUsedPercent != null ? (
