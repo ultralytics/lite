@@ -3855,17 +3855,15 @@ fn kimi_context(app: &AppHandle, session_id: &str) -> Option<UsageSnapshot> {
         })
         .find(|path| path.is_file())?;
     let tail = file_tail(&path)?;
-    let records = |kind: &'static str| {
+    let records = || {
         tail.lines()
             .rev()
-            .filter(move |line| line.contains(kind))
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-            .filter(move |record| {
-                record.get("type").and_then(serde_json::Value::as_str) == Some(kind)
-            })
     };
     // Every request names the model and thinking effort it ran with, so the newest names the current pair.
-    let request = records("llm.request").next();
+    let request = records().find(|record| {
+        record.get("type").and_then(serde_json::Value::as_str) == Some("llm.request")
+    });
     let text = |key| {
         request
             .as_ref()?
@@ -3873,28 +3871,33 @@ fn kimi_context(app: &AppHandle, session_id: &str) -> Option<UsageSnapshot> {
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned)
     };
-    let context_tokens = records("usage.record").find_map(|record| {
-        if record.get("usageScope").and_then(serde_json::Value::as_str) != Some("turn") {
-            return None;
-        }
-        let usage = record.get("usage")?;
-        let tokens: u64 = [
-            "inputOther",
-            "inputCacheRead",
-            "inputCacheCreation",
-            "output",
-        ]
-        .iter()
-        .filter_map(|key| usage.get(key).and_then(serde_json::Value::as_u64))
-        .sum();
-        (tokens > 0).then_some(tokens)
-    });
-    (request.is_some() || context_tokens.is_some()).then(|| UsageSnapshot {
-        model: text("model"),
-        reasoning: text("thinkingEffort"),
-        context_tokens,
-        ..UsageSnapshot::default()
-    })
+    records()
+        .find_map(|record| {
+            if record.get("type").and_then(serde_json::Value::as_str) != Some("usage.record")
+                || record.get("usageScope").and_then(serde_json::Value::as_str) != Some("turn")
+            {
+                return None;
+            }
+            let usage = record.get("usage")?;
+            let tokens = [
+                "inputOther",
+                "inputCacheRead",
+                "inputCacheCreation",
+                "output",
+            ]
+            .iter()
+            .filter_map(|key| usage.get(key).and_then(serde_json::Value::as_u64))
+            .sum();
+            (tokens > 0).then(|| UsageSnapshot {
+                context_tokens: Some(tokens),
+                ..UsageSnapshot::default()
+            })
+        })
+        .map(|usage| UsageSnapshot {
+            model: text("model"),
+            reasoning: text("thinkingEffort"),
+            ..usage
+        })
 }
 
 // Kimi groups sessions under an opaque per-directory key that its workspace index maps back to a path.
