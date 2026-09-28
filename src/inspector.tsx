@@ -1876,9 +1876,9 @@ function UsagePanel({
                         <p className="flex items-baseline gap-2 text-sm">
                           <span className="truncate">{window.label}</span>
                           <span className="text-muted-foreground tabular-nums">{Math.round(window.usedPercent)}%</span>
-                          {window.resetsAt != null ? (
+                          {wait ? (
                             <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
-                              {wait ? `${wait} left` : "Resetting"}
+                              {wait} left
                             </span>
                           ) : null}
                         </p>
