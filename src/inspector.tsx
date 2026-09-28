@@ -1731,40 +1731,59 @@ function missingUsage(session: Session): string {
 function UsagePanel({
   session,
   fontSize,
+  active,
   onLoad,
 }: {
   session: Session;
   fontSize: number;
+  active: boolean;
   onLoad: (tab: InspectorTab) => void;
 }) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
 
+  // Usage is read while it is visible. Claude can switch models mid-turn, and its status line rewrites the
+  // local snapshot 300 ms later, so the panel reads it again in place once the terminal has been quiet
+  // for a second.
   useEffect(() => {
+    if (!active) return;
     let disposed = false;
-    setError("");
-    void invoke<UsageSnapshot | null>("read_usage", {
-      agent: session.agent,
-      provider: session.provider,
-      sessionId: session.id,
-      host: session.host,
-    })
-      .then((next) => {
-        if (!disposed) {
-          usageCache.set(session.id, next);
-          setUsage(next);
-        }
+    let settle = 0;
+    const read = () => {
+      setError("");
+      void invoke<UsageSnapshot | null>("read_usage", {
+        agent: session.agent,
+        provider: session.provider,
+        sessionId: session.id,
+        host: session.host,
       })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
-      })
-      .finally(() => {
-        if (!disposed) onLoad("usage");
-      });
+        .then((next) => {
+          if (!disposed) {
+            usageCache.set(session.id, next);
+            setUsage(next);
+          }
+        })
+        .catch((reason) => {
+          if (!disposed) setError(String(reason));
+        })
+        .finally(() => {
+          if (!disposed) onLoad("usage");
+        });
+    };
+    read();
+    const unsubscribe =
+      session.agent === "claude"
+        ? subscribeTerminalOutput(session.id, () => {
+            window.clearTimeout(settle);
+            settle = window.setTimeout(read, 1000);
+          })
+        : undefined;
     return () => {
       disposed = true;
+      window.clearTimeout(settle);
+      unsubscribe?.();
     };
-  }, [onLoad, session.agent, session.provider, session.id, session.host]);
+  }, [active, onLoad, session.agent, session.provider, session.id, session.host]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -1904,21 +1923,6 @@ export const Inspector = memo(function Inspector({
     if (next !== "git") refreshTab(next);
   }
 
-  // While Usage is visible, Claude can switch models mid-turn, and its status line rewrites the local
-  // snapshot 300 ms later, so the panel reads it again once the terminal has been quiet for a second.
-  useEffect(() => {
-    if (tab !== "usage" || collapsed || session.agent !== "claude") return;
-    let settle = 0;
-    const unsubscribe = subscribeTerminalOutput(session.id, () => {
-      window.clearTimeout(settle);
-      settle = window.setTimeout(() => setReload((counts) => ({ ...counts, usage: counts.usage + 1 })), 1000);
-    });
-    return () => {
-      window.clearTimeout(settle);
-      unsubscribe();
-    };
-  }, [tab, collapsed, session.agent, session.id]);
-
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
   // on. Returning to a tab reads its current state without polling while it is hidden.
   const rail = (
@@ -2044,7 +2048,13 @@ export const Inspector = memo(function Inspector({
           ) : null}
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
-              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} onLoad={finishRefresh} />
+              <UsagePanel
+                key={reload.usage}
+                session={session}
+                fontSize={fontSize}
+                active={tab === "usage" && !collapsed}
+                onLoad={finishRefresh}
+              />
             </TabsContent>
           ) : null}
         </Tabs>
