@@ -1866,6 +1866,7 @@ export const Inspector = memo(function Inspector({
   remote,
   fontSize,
   fileBrowserVersion,
+  usageVersion,
   collapsed,
   onExpand,
   onCollapse,
@@ -1874,6 +1875,7 @@ export const Inspector = memo(function Inspector({
   remote: string;
   fontSize: number;
   fileBrowserVersion: number;
+  usageVersion: number;
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
@@ -2029,7 +2031,12 @@ export const Inspector = memo(function Inspector({
           ) : null}
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
-              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} onLoad={finishRefresh} />
+              <UsagePanel
+                key={`${reload.usage}:${usageVersion}`}
+                session={session}
+                fontSize={fontSize}
+                onLoad={finishRefresh}
+              />
             </TabsContent>
           ) : null}
         </Tabs>

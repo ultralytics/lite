@@ -1589,6 +1589,7 @@ function App() {
   // A tab asked for from elsewhere, such as the new-session dialog's key setup; otherwise Settings opens on its first.
   const [settingsTab, setSettingsTab] = useState<string>();
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
+  const [usageVersion, setUsageVersion] = useState(0);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
   const [remoteSsh, setRemoteSsh] = useState(() => localStorage.getItem(REMOTE_SSH_KEY) === "true");
@@ -2045,6 +2046,10 @@ function App() {
       window.setTimeout(() => {
         timers.delete(sessionId);
         setWorking((current) => without(current, sessionId));
+        // Claude can switch models mid-turn, and its usage is a local snapshot its status line keeps
+        // current, so the session on screen reads it again once the turn settles.
+        const selected = selectedRef.current;
+        if (selected?.id === sessionId && selected.agent === "claude") setUsageVersion((version) => version + 1);
       }, QUIET_MS),
     );
   }, []);
@@ -3534,6 +3539,7 @@ function App() {
                         remote={remote}
                         fontSize={inspectorFontSize}
                         fileBrowserVersion={fileBrowserVersion}
+                        usageVersion={usageVersion}
                         collapsed={shut.inspector}
                         onExpand={expandInspector}
                         onCollapse={collapseInspector}
