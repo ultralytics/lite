@@ -361,6 +361,8 @@ interface UsageWindow {
 }
 
 interface UsageSnapshot {
+  model: string | null;
+  reasoning: string | null;
   contextUsedPercent: number | null;
   contextWindow: number | null;
   contextTokens: number | null;
@@ -1784,6 +1786,15 @@ function UsagePanel({
             </Empty>
           ) : (
             <ItemGroup>
+              {usage.model != null ? (
+                <Item variant="outline">
+                  <ItemContent>
+                    <ItemDescription>Model</ItemDescription>
+                    <ItemTitle className="text-lg">{usage.model}</ItemTitle>
+                    {usage.reasoning != null ? <ItemDescription>Reasoning: {usage.reasoning}</ItemDescription> : null}
+                  </ItemContent>
+                </Item>
+              ) : null}
               {usage.contextUsedPercent != null || usage.contextTokens != null ? (
                 <Item variant="outline" className="flex-col items-stretch">
                   {usage.contextUsedPercent != null ? (

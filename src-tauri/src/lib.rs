@@ -903,6 +903,8 @@ pub struct UsageWindow {
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageSnapshot {
+    model: Option<String>,
+    reasoning: Option<String>,
     context_used_percent: Option<f64>,
     context_window: Option<u64>,
     context_tokens: Option<u64>,
@@ -1956,7 +1958,23 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
             });
         }
     }
+    // Claude reports an effort level only for models that take one, and thinking for every model.
+    let thinking = input
+        .pointer("/thinking/enabled")
+        .and_then(serde_json::Value::as_bool);
     let snapshot = UsageSnapshot {
+        model: input
+            .pointer("/model/display_name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        reasoning: match thinking {
+            Some(false) => Some("off".into()),
+            _ => input
+                .pointer("/effort/level")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| thinking.map(|_| "on".into())),
+        },
         context_used_percent: context
             .get("used_percentage")
             .and_then(serde_json::Value::as_f64),
@@ -1967,10 +1985,8 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
         cost_usd: input
             .pointer("/cost/total_cost_usd")
             .and_then(serde_json::Value::as_f64),
-        lifetime_tokens: None,
-        banked_resets: None,
-        banked_reset_expiries: Vec::new(),
         windows,
+        ..UsageSnapshot::default()
     };
     let usage = serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?;
     if !fs::read(path).is_ok_and(|current| current == usage) {
@@ -2851,37 +2867,61 @@ fn file_tail(path: &Path) -> Option<String> {
 }
 
 // Codex defines context as raw total tokens, including reasoning, less its discounted baseline.
+// Each turn records the model and reasoning effort it ran with, so the newest turn names the current pair.
 fn codex_context(path: &Path) -> Option<UsageSnapshot> {
     const BASELINE_TOKENS: u64 = 12_000;
-    let (tokens, window) = file_tail(path)?
-        .lines()
-        .rev()
-        .filter(|line| line.contains("token_count"))
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find_map(|event| {
-            let info = event.pointer("/payload/info")?;
-            Some((
-                info.pointer("/last_token_usage/total_tokens")
-                    .and_then(serde_json::Value::as_u64)?,
-                info.get("model_context_window")
-                    .and_then(serde_json::Value::as_u64)?,
-            ))
-        })?;
-    let effective = window
-        .checked_sub(BASELINE_TOKENS)
-        .filter(|effective| *effective > 0)?;
-    Some(UsageSnapshot {
-        context_used_percent: Some(
+    let tail = file_tail(path)?;
+    let events = |marker: &'static str| {
+        tail.lines()
+            .rev()
+            .filter(move |line| line.contains(marker))
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    };
+    let turn = events("turn_context").find(|event| {
+        event.get("type").and_then(serde_json::Value::as_str) == Some("turn_context")
+    });
+    let text = |key| {
+        turn.as_ref()?
+            .pointer(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    let context = events("token_count").find_map(|event| {
+        let info = event.pointer("/payload/info")?;
+        Some((
+            info.pointer("/last_token_usage/total_tokens")
+                .and_then(serde_json::Value::as_u64)?,
+            info.get("model_context_window")
+                .and_then(serde_json::Value::as_u64)?,
+        ))
+    });
+    let mut usage = UsageSnapshot {
+        model: text("/payload/model"),
+        reasoning: text("/payload/effort"),
+        ..UsageSnapshot::default()
+    };
+    if let Some((tokens, window)) = context
+        && let Some(effective) = window
+            .checked_sub(BASELINE_TOKENS)
+            .filter(|effective| *effective > 0)
+    {
+        usage.context_used_percent = Some(
             (tokens.saturating_sub(BASELINE_TOKENS) as f64 / effective as f64 * 100.0)
                 .clamp(0.0, 100.0),
-        ),
-        context_window: Some(window),
-        context_tokens: Some(tokens),
-        ..UsageSnapshot::default()
-    })
+        );
+        usage.context_window = Some(window);
+        usage.context_tokens = Some(tokens);
+    }
+    (turn.is_some() || usage.context_tokens.is_some()).then_some(usage)
 }
 
 fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
+    let model = |record: &serde_json::Value| {
+        record
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
     file_tail(path)?
         .lines()
         .rev()
@@ -2892,6 +2932,7 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
             {
                 let tokens = record.pointer("/tokens/input")?.as_u64()?;
                 (tokens > 0).then(|| UsageSnapshot {
+                    model: model(&record),
                     context_tokens: Some(tokens),
                     ..UsageSnapshot::default()
                 })
@@ -2904,6 +2945,7 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
                     .as_u64()?;
                 let window = record.get("contextWindowSize")?.as_u64()?;
                 (tokens > 0 && window > 0).then(|| UsageSnapshot {
+                    model: model(&record),
                     context_used_percent: Some(
                         (tokens as f64 / window as f64 * 100.0).clamp(0.0, 100.0),
                     ),
@@ -3819,31 +3861,47 @@ fn kimi_context(app: &AppHandle, session_id: &str) -> Option<UsageSnapshot> {
                 .join("agents/main/wire.jsonl")
         })
         .find(|path| path.is_file())?;
-    file_tail(&path)?
-        .lines()
-        .rev()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find_map(|record| {
-            if record.get("type").and_then(serde_json::Value::as_str) != Some("usage.record")
-                || record.get("usageScope").and_then(serde_json::Value::as_str) != Some("turn")
-            {
-                return None;
-            }
-            let usage = record.get("usage")?;
-            let tokens = [
-                "inputOther",
-                "inputCacheRead",
-                "inputCacheCreation",
-                "output",
-            ]
-            .iter()
-            .filter_map(|key| usage.get(key).and_then(serde_json::Value::as_u64))
-            .sum();
-            (tokens > 0).then(|| UsageSnapshot {
-                context_tokens: Some(tokens),
-                ..UsageSnapshot::default()
+    let tail = file_tail(&path)?;
+    let records = |kind: &'static str| {
+        tail.lines()
+            .rev()
+            .filter(move |line| line.contains(kind))
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(move |record| {
+                record.get("type").and_then(serde_json::Value::as_str) == Some(kind)
             })
-        })
+    };
+    // Every request names the model and thinking effort it ran with, so the newest names the current pair.
+    let request = records("llm.request").next();
+    let text = |key| {
+        request
+            .as_ref()?
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    let context_tokens = records("usage.record").find_map(|record| {
+        if record.get("usageScope").and_then(serde_json::Value::as_str) != Some("turn") {
+            return None;
+        }
+        let usage = record.get("usage")?;
+        let tokens: u64 = [
+            "inputOther",
+            "inputCacheRead",
+            "inputCacheCreation",
+            "output",
+        ]
+        .iter()
+        .filter_map(|key| usage.get(key).and_then(serde_json::Value::as_u64))
+        .sum();
+        (tokens > 0).then_some(tokens)
+    });
+    (request.is_some() || context_tokens.is_some()).then(|| UsageSnapshot {
+        model: text("model"),
+        reasoning: text("thinkingEffort"),
+        context_tokens,
+        ..UsageSnapshot::default()
+    })
 }
 
 // Kimi groups sessions under an opaque per-directory key that its workspace index maps back to a path.
@@ -6901,7 +6959,8 @@ async fn read_usage(
                 usage
                     .windows
                     .retain(|window| window.resets_at.is_none_or(|reset| reset > now));
-                Ok((usage.context_used_percent.is_some()
+                Ok((usage.model.is_some()
+                    || usage.context_used_percent.is_some()
                     || usage.context_tokens.is_some_and(|tokens| tokens > 0)
                     || usage.cost_usd.is_some_and(|cost| cost > 0.0)
                     || !usage.windows.is_empty())
