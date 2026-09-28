@@ -1866,7 +1866,6 @@ export const Inspector = memo(function Inspector({
   remote,
   fontSize,
   fileBrowserVersion,
-  usageVersion,
   collapsed,
   onExpand,
   onCollapse,
@@ -1875,7 +1874,6 @@ export const Inspector = memo(function Inspector({
   remote: string;
   fontSize: number;
   fileBrowserVersion: number;
-  usageVersion: number;
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
@@ -1905,6 +1903,21 @@ export const Inspector = memo(function Inspector({
     setVisited((current) => including(current, next));
     if (next !== "git") refreshTab(next);
   }
+
+  // While Usage is visible, Claude can switch models mid-turn, and its status line rewrites the local
+  // snapshot 300 ms later, so the panel reads it again once the terminal has been quiet for a second.
+  useEffect(() => {
+    if (tab !== "usage" || collapsed || session.agent !== "claude") return;
+    let settle = 0;
+    const unsubscribe = subscribeTerminalOutput(session.id, () => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => setReload((counts) => ({ ...counts, usage: counts.usage + 1 })), 1000);
+    });
+    return () => {
+      window.clearTimeout(settle);
+      unsubscribe();
+    };
+  }, [tab, collapsed, session.agent, session.id]);
 
   // Collapsed, the panel is the strip of tabs it collapsed from: the one you pick is the one it reopens
   // on. Returning to a tab reads its current state without polling while it is hidden.
@@ -2031,12 +2044,7 @@ export const Inspector = memo(function Inspector({
           ) : null}
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
-              <UsagePanel
-                key={`${reload.usage}:${usageVersion}`}
-                session={session}
-                fontSize={fontSize}
-                onLoad={finishRefresh}
-              />
+              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} onLoad={finishRefresh} />
             </TabsContent>
           ) : null}
         </Tabs>

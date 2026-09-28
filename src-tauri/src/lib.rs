@@ -2867,52 +2867,34 @@ fn file_tail(path: &Path) -> Option<String> {
 }
 
 // Codex defines context as raw total tokens, including reasoning, less its discounted baseline.
-// Each turn records the model and reasoning effort it ran with, so the newest turn names the current pair.
 fn codex_context(path: &Path) -> Option<UsageSnapshot> {
     const BASELINE_TOKENS: u64 = 12_000;
-    let tail = file_tail(path)?;
-    let events = |marker: &'static str| {
-        tail.lines()
-            .rev()
-            .filter(move |line| line.contains(marker))
-            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-    };
-    let turn = events("turn_context").find(|event| {
-        event.get("type").and_then(serde_json::Value::as_str) == Some("turn_context")
-    });
-    let text = |key| {
-        turn.as_ref()?
-            .pointer(key)
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned)
-    };
-    let context = events("token_count").find_map(|event| {
-        let info = event.pointer("/payload/info")?;
-        Some((
-            info.pointer("/last_token_usage/total_tokens")
-                .and_then(serde_json::Value::as_u64)?,
-            info.get("model_context_window")
-                .and_then(serde_json::Value::as_u64)?,
-        ))
-    });
-    let mut usage = UsageSnapshot {
-        model: text("/payload/model"),
-        reasoning: text("/payload/effort"),
-        ..UsageSnapshot::default()
-    };
-    if let Some((tokens, window)) = context
-        && let Some(effective) = window
-            .checked_sub(BASELINE_TOKENS)
-            .filter(|effective| *effective > 0)
-    {
-        usage.context_used_percent = Some(
+    let (tokens, window) = file_tail(path)?
+        .lines()
+        .rev()
+        .filter(|line| line.contains("token_count"))
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find_map(|event| {
+            let info = event.pointer("/payload/info")?;
+            Some((
+                info.pointer("/last_token_usage/total_tokens")
+                    .and_then(serde_json::Value::as_u64)?,
+                info.get("model_context_window")
+                    .and_then(serde_json::Value::as_u64)?,
+            ))
+        })?;
+    let effective = window
+        .checked_sub(BASELINE_TOKENS)
+        .filter(|effective| *effective > 0)?;
+    Some(UsageSnapshot {
+        context_used_percent: Some(
             (tokens.saturating_sub(BASELINE_TOKENS) as f64 / effective as f64 * 100.0)
                 .clamp(0.0, 100.0),
-        );
-        usage.context_window = Some(window);
-        usage.context_tokens = Some(tokens);
-    }
-    (turn.is_some() || usage.context_tokens.is_some()).then_some(usage)
+        ),
+        context_window: Some(window),
+        context_tokens: Some(tokens),
+        ..UsageSnapshot::default()
+    })
 }
 
 fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
@@ -3059,9 +3041,17 @@ fn codex_usage(
                 .and_then(serde_json::Value::as_u64),
         });
     }
-    let context = responses
+    let thread = responses
         .get(&3)
-        .and_then(|response| response.pointer("/thread/path"))
+        .and_then(|response| response.get("thread"));
+    let text = |key| {
+        thread?
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    let context = thread
+        .and_then(|thread| thread.get("path"))
         .and_then(serde_json::Value::as_str)
         .and_then(|path| codex_context(Path::new(path)));
     let mut banked_reset_expiries: Vec<_> = rates
@@ -3076,6 +3066,9 @@ fn codex_usage(
         .collect();
     banked_reset_expiries.sort_by_key(|expiry| expiry.unwrap_or(u64::MAX));
     Ok(UsageSnapshot {
+        // Codex reports the model and effort the thread is configured with now, not those of a past turn.
+        model: text("model"),
+        reasoning: text("reasoningEffort"),
         lifetime_tokens: summary
             .and_then(|value| value.pointer("/summary/lifetimeTokens"))
             .and_then(serde_json::Value::as_u64),
