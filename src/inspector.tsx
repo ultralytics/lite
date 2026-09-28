@@ -398,16 +398,21 @@ function waitUntil(seconds: number) {
         : `${Math.round(hours / 24)} days`;
 }
 
-// A moment ahead as someone planning around it asks about it: how long until then, and which day and time
-// that is — "in 3 hr 20 min · today 8:40 PM", "in 4 days · Tuesday 5:20 PM". The counterpart of relativeAge.
-function timeUntil(seconds: number) {
+// Which day and time a moment ahead falls on — "today 8:40 PM", "Tuesday 5:20 PM".
+function dayAndTime(seconds: number) {
   const at = new Date(seconds * 1000);
-  const wait = waitUntil(seconds);
   const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const days = Math.round((midnight(at) - midnight(new Date())) / 86_400_000);
   const day =
     days === 0 ? "today" : days === 1 ? "tomorrow" : days < 7 ? formatWeekday.format(at) : formatDay.format(at);
-  return `${wait ? `in ${wait}` : "now"} · ${day} ${formatClock.format(at)}`;
+  return `${day} ${formatClock.format(at)}`;
+}
+
+// A moment ahead as someone planning around it asks about it: how long until then, and which day and time
+// that is — "in 3 hr 20 min · today 8:40 PM", "in 4 days · Tuesday 5:20 PM". The counterpart of relativeAge.
+function timeUntil(seconds: number) {
+  const wait = waitUntil(seconds);
+  return `${wait ? `in ${wait}` : "now"} · ${dayAndTime(seconds)}`;
 }
 
 function Loading({ label }: { label: string }) {
@@ -1862,7 +1867,7 @@ function UsagePanel({
                 </p>
               )}
               {usage.windows.length || usage.bankedResets != null || usage.lifetimeTokens != null ? (
-                <section className="flex flex-col gap-3">
+                <section className="flex flex-col gap-4">
                   <h3 className="text-xs font-medium text-muted-foreground">Plan limits</h3>
                   {usage.windows.map((window) => {
                     const wait = window.resetsAt == null ? undefined : waitUntil(window.resetsAt);
@@ -1872,15 +1877,15 @@ function UsagePanel({
                           <span className="truncate">{window.label}</span>
                           <span className="text-muted-foreground tabular-nums">{Math.round(window.usedPercent)}%</span>
                           {window.resetsAt != null ? (
-                            <span
-                              className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums"
-                              title={`Resets ${timeUntil(window.resetsAt)}`}
-                            >
+                            <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
                               {wait ? `${wait} left` : "Resetting"}
                             </span>
                           ) : null}
                         </p>
                         <Meter label={window.label} value={window.usedPercent} />
+                        {window.resetsAt != null ? (
+                          <p className="text-xs text-muted-foreground">Resets {dayAndTime(window.resetsAt)}</p>
+                        ) : null}
                       </div>
                     );
                   })}
