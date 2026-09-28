@@ -53,7 +53,7 @@ import {
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
-import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
+import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -61,7 +61,7 @@ import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
-import { including, without } from "@/lib/utils";
+import { cn, including, without } from "@/lib/utils";
 import { readTerminalInput, readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
 import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import { contentZoomStyle } from "@/theme";
@@ -383,28 +383,31 @@ const formatClock = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute
 const formatWeekday = new Intl.DateTimeFormat(undefined, { weekday: "long" });
 const formatDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 
+// How long until a moment ahead — "3 hr 20 min", "4 days" — or nothing once it has passed.
+function waitUntil(seconds: number) {
+  const left = seconds * 1000 - Date.now();
+  const minutes = Math.round(left / 60000);
+  const hours = Math.floor(minutes / 60);
+  if (left <= 0) return undefined;
+  return minutes < 1
+    ? "under a minute"
+    : minutes < 60
+      ? `${minutes} min`
+      : hours < 48
+        ? `${hours} hr${hours < 10 && minutes % 60 ? ` ${minutes % 60} min` : ""}`
+        : `${Math.round(hours / 24)} days`;
+}
+
 // A moment ahead as someone planning around it asks about it: how long until then, and which day and time
 // that is — "in 3 hr 20 min · today 8:40 PM", "in 4 days · Tuesday 5:20 PM". The counterpart of relativeAge.
 function timeUntil(seconds: number) {
   const at = new Date(seconds * 1000);
-  const left = at.getTime() - Date.now();
-  const minutes = Math.round(left / 60000);
-  const hours = Math.floor(minutes / 60);
-  const wait =
-    left <= 0
-      ? "now"
-      : minutes < 1
-        ? "in under a minute"
-        : minutes < 60
-          ? `in ${minutes} min`
-          : hours < 48
-            ? `in ${hours} hr${hours < 10 && minutes % 60 ? ` ${minutes % 60} min` : ""}`
-            : `in ${Math.round(hours / 24)} days`;
+  const wait = waitUntil(seconds);
   const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const days = Math.round((midnight(at) - midnight(new Date())) / 86_400_000);
   const day =
     days === 0 ? "today" : days === 1 ? "tomorrow" : days < 7 ? formatWeekday.format(at) : formatDay.format(at);
-  return `${wait} · ${day} ${formatClock.format(at)}`;
+  return `${wait ? `in ${wait}` : "now"} · ${day} ${formatClock.format(at)}`;
 }
 
 function Loading({ label }: { label: string }) {
@@ -456,15 +459,10 @@ export function SearchInput({
 }
 
 // Capacity gets more urgent as it is spent; all consumers share these tones with status badges.
-function Meter({ label, value }: { label: string; value: number }) {
+function Meter({ label, value, className }: { label: string; value: number; className?: string }) {
   const bounded = Math.max(0, Math.min(100, value));
   const tone: SemanticTone = bounded >= 90 ? "error" : bounded >= 75 ? "warning" : "success";
-  return (
-    <Progress value={bounded} className={SEMANTIC_PROGRESS_CLASSES[tone]}>
-      <ProgressLabel className="truncate">{label}</ProgressLabel>
-      <ProgressValue />
-    </Progress>
-  );
+  return <Progress value={bounded} aria-label={label} className={cn(SEMANTIC_PROGRESS_CLASSES[tone], className)} />;
 }
 
 function FileTree({
@@ -1822,66 +1820,99 @@ function UsagePanel({
               </EmptyHeader>
             </Empty>
           ) : (
-            <ItemGroup>
+            <div className="flex flex-col gap-5">
+              {/* This conversation's context is the number a session acts on, so it leads. */}
               {usage.contextUsedPercent != null || usage.contextTokens != null ? (
-                <Item variant="outline" className="flex-col items-stretch">
+                <section className="rounded-lg bg-muted/60 p-3">
+                  <p className="text-xs text-muted-foreground">Context used</p>
+                  <p className="mt-1 flex items-baseline gap-1.5">
+                    {usage.contextTokens != null ? (
+                      <span className="text-3xl font-semibold tracking-tight tabular-nums">
+                        {formatNumber.format(usage.contextTokens)}
+                      </span>
+                    ) : null}
+                    {usage.contextWindow ? (
+                      <span className="text-sm text-muted-foreground">
+                        of {formatNumber.format(usage.contextWindow)}
+                      </span>
+                    ) : null}
+                    {usage.contextUsedPercent != null ? (
+                      <span className="ml-auto text-sm font-medium tabular-nums">
+                        {Math.round(usage.contextUsedPercent)}%
+                      </span>
+                    ) : null}
+                  </p>
                   {usage.contextUsedPercent != null ? (
-                    <Meter label="Session context" value={usage.contextUsedPercent} />
-                  ) : (
-                    <ItemDescription>Session context</ItemDescription>
-                  )}
-                  {usage.contextTokens != null ? (
-                    <ItemDescription className="tabular-nums">
-                      {formatNumber.format(usage.contextTokens)}
-                      {usage.contextWindow ? ` of ${formatNumber.format(usage.contextWindow)}` : ""} tokens
-                    </ItemDescription>
+                    <Meter
+                      label="Context used"
+                      value={usage.contextUsedPercent}
+                      className="mt-3 [&_[data-slot=progress-track]]:h-2"
+                    />
                   ) : null}
-                  {usage.costUsd != null ? (
-                    <ItemDescription className="tabular-nums">${usage.costUsd.toFixed(2)} session cost</ItemDescription>
-                  ) : null}
-                </Item>
+                  <p className="mt-2 flex text-xs text-muted-foreground tabular-nums">
+                    {usage.contextWindow && usage.contextTokens != null ? (
+                      <span>{formatNumber.format(Math.max(0, usage.contextWindow - usage.contextTokens))} left</span>
+                    ) : null}
+                    {usage.costUsd != null ? <span className="ml-auto">${usage.costUsd.toFixed(2)} so far</span> : null}
+                  </p>
+                </section>
               ) : (
-                <ItemDescription>
+                <p className="text-sm text-muted-foreground">
                   Session context appears after this harness reports its first response.
-                </ItemDescription>
+                </p>
               )}
-              {usage.windows.map((window) => (
-                <Item
-                  key={`${window.label}-${window.windowMinutes ?? ""}`}
-                  variant="outline"
-                  className="flex-col items-stretch"
-                >
-                  <Meter label={window.label} value={window.usedPercent} />
-                  {window.resetsAt != null ? (
-                    <ItemDescription>Resets {timeUntil(window.resetsAt)}</ItemDescription>
+              {usage.windows.length || usage.bankedResets != null || usage.lifetimeTokens != null ? (
+                <section className="flex flex-col gap-3">
+                  <h3 className="text-xs font-medium text-muted-foreground">Plan limits</h3>
+                  {usage.windows.map((window) => {
+                    const wait = window.resetsAt == null ? undefined : waitUntil(window.resetsAt);
+                    return (
+                      <div key={`${window.label}-${window.windowMinutes ?? ""}`} className="flex flex-col gap-1.5">
+                        <p className="flex items-baseline gap-2 text-sm">
+                          <span className="truncate">{window.label}</span>
+                          <span className="text-muted-foreground tabular-nums">{Math.round(window.usedPercent)}%</span>
+                          {window.resetsAt != null ? (
+                            <span
+                              className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums"
+                              title={`Resets ${timeUntil(window.resetsAt)}`}
+                            >
+                              {wait ? `${wait} left` : "Resetting"}
+                            </span>
+                          ) : null}
+                        </p>
+                        <Meter label={window.label} value={window.usedPercent} />
+                      </div>
+                    );
+                  })}
+                  {usage.bankedResets != null ? (
+                    <div className="flex flex-col gap-1">
+                      <p className="flex items-baseline gap-2 text-sm">
+                        Banked resets
+                        <span className="ml-auto text-muted-foreground tabular-nums">
+                          {usage.bankedResets} available
+                        </span>
+                      </p>
+                      {usage.bankedResetExpiries.map((expiresAt, index) => (
+                        <p key={index} className="text-xs text-muted-foreground">
+                          Reset {index + 1}: {expiresAt == null ? "No expiry" : `Expires ${timeUntil(expiresAt)}`}
+                        </p>
+                      ))}
+                      {usage.bankedResets > usage.bankedResetExpiries.length ? (
+                        <p className="text-xs text-muted-foreground">Expiry dates unavailable for remaining resets.</p>
+                      ) : null}
+                    </div>
                   ) : null}
-                </Item>
-              ))}
-              {usage.bankedResets != null ? (
-                <Item variant="outline" className="flex-col items-stretch">
-                  <ItemDescription>Banked resets</ItemDescription>
-                  <ItemTitle className="text-lg tabular-nums">{usage.bankedResets} available</ItemTitle>
-                  {usage.bankedResetExpiries.map((expiresAt, index) => (
-                    <ItemDescription key={index}>
-                      Reset {index + 1}: {expiresAt == null ? "No expiry" : `Expires ${timeUntil(expiresAt)}`}
-                    </ItemDescription>
-                  ))}
-                  {usage.bankedResets > usage.bankedResetExpiries.length ? (
-                    <ItemDescription>Expiry dates unavailable for remaining resets.</ItemDescription>
+                  {usage.lifetimeTokens != null ? (
+                    <p className="flex items-baseline gap-2 text-sm">
+                      Provider total
+                      <span className="ml-auto text-muted-foreground tabular-nums">
+                        {formatNumber.format(usage.lifetimeTokens)} tokens
+                      </span>
+                    </p>
                   ) : null}
-                </Item>
+                </section>
               ) : null}
-              {usage.lifetimeTokens != null ? (
-                <Item variant="outline">
-                  <ItemContent>
-                    <ItemDescription>Provider total</ItemDescription>
-                    <ItemTitle className="text-lg tabular-nums">
-                      {formatNumber.format(usage.lifetimeTokens)} tokens
-                    </ItemTitle>
-                  </ItemContent>
-                </Item>
-              ) : null}
-            </ItemGroup>
+            </div>
           )}
         </div>
       </ScrollArea>
