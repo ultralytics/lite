@@ -1884,7 +1884,9 @@ function UsagePanel({
                         </p>
                         <Meter label={window.label} value={window.usedPercent} />
                         {window.resetsAt != null ? (
-                          <p className="text-xs text-muted-foreground">Resets {dayAndTime(window.resetsAt)}</p>
+                          <p className="text-right text-xs text-muted-foreground first-letter:uppercase">
+                            {dayAndTime(window.resetsAt)}
+                          </p>
                         ) : null}
                       </div>
                     );
