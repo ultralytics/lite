@@ -64,8 +64,6 @@ jobs:
     if: needs.check.outputs.increment == 'true'
     strategy:
       fail-fast: false
-      # Each build merges and replaces the shared latest.json release asset.
-      max-parallel: 1
       matrix:
         include:
           - platform: macos-latest
@@ -118,9 +116,17 @@ jobs:
           retryAttempts: 2
           tagName: ${{ needs.check.outputs.tag }}
           tauriScript: bun run tauri
-          updaterJsonPreferNsis: true
-          uploadUpdaterJson: true
+          # The builds run in parallel, so none of them writes the shared latest.json; the publish job
+          # writes it once from the signatures each build hands over below.
+          uploadUpdaterJson: false
           uploadUpdaterSignatures: false
+      - name: Hand over updater signature
+        uses: actions/upload-artifact@v7
+        with:
+          name: signature-${{ matrix.target }}
+          path: src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+          if-no-files-found: error
+          retention-days: 1
 
   sbom:
     needs: check
@@ -171,19 +177,41 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Add release notes to updater manifest
+      - name: Download updater signatures
+        uses: actions/download-artifact@v8
+        with:
+          pattern: signature-*
+          path: ${{ runner.temp }}/signatures
+      - name: Write updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.check.outputs.release_id }}
+          TAG: ${{ needs.check.outputs.tag }}
         run: |
           RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID")
+          ASSETS=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets")
+          VERSION=${TAG#v}
           NOTES=$(jq -r '.body | capture("<!-- lite-release-notes:start -->\\n(?<notes>[\\s\\S]*?)\\n<!-- lite-release-notes:end -->").notes' <<< "$RELEASE")
-          ASSET_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq 'map(select(.name == "latest.json")) | first.id // empty')
-          test -n "$ASSET_ID"
-          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" > "$RUNNER_TEMP/latest.json"
-          jq --arg notes "$NOTES" '.notes = $notes' "$RUNNER_TEMP/latest.json" > "$RUNNER_TEMP/latest-with-notes.json"
-          gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
-          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" -H "Content-Type: application/json" --input "$RUNNER_TEMP/latest-with-notes.json" >/dev/null
+          MANIFEST=$(jq -n --arg version "$VERSION" --arg notes "$NOTES" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{version: $version, notes: $notes, pub_date: $date, platforms: {}}')
+          # Each target's updater bundle, and the two names the updater may look it up by.
+          while read -r TARGET ASSET PLATFORMS; do
+            URL=$(jq -r --arg name "$ASSET" 'map(select(.name == $name)) | first.url // empty' <<< "$ASSETS")
+            test -n "$URL"
+            SIGNATURE=$(find "$RUNNER_TEMP/signatures/signature-$TARGET" -name '*.sig' -exec cat {} +)
+            test -n "$SIGNATURE"
+            for PLATFORM in ${PLATFORMS//,/ }; do
+              MANIFEST=$(jq --arg platform "$PLATFORM" --arg url "$URL" --arg signature "$SIGNATURE" '.platforms[$platform] = {signature: $signature, url: $url}' <<< "$MANIFEST")
+            done
+          done <<EOF
+          aarch64-apple-darwin Lite_${VERSION}_darwin_aarch64.app.tar.gz darwin-aarch64,darwin-aarch64-app
+          x86_64-unknown-linux-gnu Lite_${VERSION}_linux_amd64.AppImage linux-x86_64,linux-x86_64-appimage
+          x86_64-pc-windows-msvc Lite_${VERSION}_windows_x64-setup.exe windows-x86_64,windows-x86_64-nsis
+          EOF
+          ASSET_ID=$(jq -r 'map(select(.name == "latest.json")) | first.id // empty' <<< "$ASSETS")
+          if [ -n "$ASSET_ID" ]; then
+            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
+          fi
+          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" -H "Content-Type: application/json" --input - <<< "$MANIFEST" >/dev/null
       - name: Verify updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
