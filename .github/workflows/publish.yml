@@ -211,7 +211,8 @@ jobs:
           if [ -n "$ASSET_ID" ]; then
             gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
           fi
-          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" -H "Content-Type: application/json" --input - <<< "$MANIFEST" >/dev/null
+          printf '%s\n' "$MANIFEST" > "$RUNNER_TEMP/latest.json"
+          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" -H "Content-Type: application/json" --input "$RUNNER_TEMP/latest.json" >/dev/null
       - name: Verify updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
