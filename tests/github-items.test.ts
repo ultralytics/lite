@@ -217,36 +217,28 @@ The agent also discussed ultralytics/portal PR #3612.`,
     });
   });
 
-  test("resolves references a redraw removed against the repositories named since", () => {
-    const { mentions } = githubItemReferences(
-      "#26430 is merged; Lite #192 and gh pr view 7\nFixes [#101](https://github.com/ultralytics/ultralytics/issues/101), [issue #102](https://github.com/ultralytics/ultralytics/issues/102) and PR #103 (https://github.com/ultralytics/ultralytics/pull/103)\nultralytics/ultralytics PR #104 and ultralytics/ultralytics issue 105",
-      "",
-      "",
-      "",
-    );
-    expect(mentions).toEqual(["pull 7 ", "pull 26430 ", "pull 192 lite"]);
-    // A label remembered before its link finished drawing is the linked item once the link appears.
-    expect(
-      githubItemReferences("Fixes [#101](https://github.com/ultralytics/ultralytics/issues/101)", "", "", "", [
-        "pull 101 ",
-        ...mentions,
-      ]).mentions,
-    ).toEqual(mentions);
-    // A remembered reference to a repository this text does not name is not another repository's item.
-    expect(
-      githubItemReferences("Lite #192 or https://github.com/ultralytics/portal/pull/192", "", "", "", ["pull 7 "])
-        .mentions,
-    ).toEqual(["pull 7 ", "pull 192 lite"]);
-    expect(
-      githubItemReferences("https://github.com/ultralytics/portal/pull/192", "", "", "", mentions).mentions,
-    ).toEqual(mentions);
-    expect(
-      githubItemReferences("gh pr view 3 -R ultralytics/sdk", "https://github.com/ultralytics/lite", "", "", mentions)
-        .inferred,
-    ).toEqual([
-      ["https://github.com/ultralytics/lite/pull/7", "https://github.com/ultralytics/sdk/pull/7"],
-      ["https://github.com/ultralytics/lite/pull/26430", "https://github.com/ultralytics/sdk/pull/26430"],
-      ["https://github.com/ultralytics/lite/pull/192"],
+  test("resolves references a redraw removed as they resolved when seen", () => {
+    const output = `#26430 is merged and gh pr view 7
+[PR #102: fix crash](https://github.com/ultralytics/ultralytics/pull/102)
+https://github.com/ultralytics/portal/pull/999
+Portal #192 needs review`;
+    const seen = githubItemReferences(output, "", "", "");
+    expect(seen.remembered).toEqual({
+      mentions: ["pull 7 ", "pull 26430 ", "pull 102 pr", "pull 192 portal"],
+      repositories: ["ultralytics/ultralytics", "ultralytics/portal"],
+    });
+    // The same output remembers nothing new.
+    expect(githubItemReferences(output, "", "", "", seen.remembered).remembered).toEqual(seen.remembered);
+
+    // A label's group still holds its linked item, which the panel already lists, and a short name still
+    // narrows to its repository.
+    const group = (number: number) =>
+      ["lite", "ultralytics", "portal"].map((name) => `https://github.com/ultralytics/${name}/pull/${number}`);
+    expect(githubItemReferences("", "https://github.com/ultralytics/lite", "", "", seen.remembered).inferred).toEqual([
+      group(7),
+      group(26430),
+      group(102),
+      ["https://github.com/ultralytics/portal/pull/192"],
     ]);
   });
 

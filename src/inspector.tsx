@@ -65,6 +65,7 @@ import {
   itemKey,
   likelyGitHubItems,
   mergeGitHubItems,
+  type RememberedReferences,
 } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { cn, including, without } from "@/lib/utils";
@@ -108,7 +109,7 @@ function namedInSession(sessionId: string, remote: string) {
     remote,
     readTerminalStream(sessionId),
     readTerminalInput(sessionId),
-    rememberedMentions(sessionId),
+    rememberedReferences(sessionId),
   );
 }
 
@@ -162,13 +163,18 @@ function pendingGitHubItem(url: string): GitHubItem {
 
 const GITHUB_ITEMS_KEY = "lite.github-items";
 const REMOVED_GITHUB_ITEMS_KEY = "lite.github-items.removed";
-const GITHUB_MENTIONS_KEY = "lite.github-items.mentions";
-// The latest ambiguous references a session keeps; each panel visit asks GitHub about all of them.
+const REMEMBERED_REFERENCES_KEY = "lite.github-items.remembered";
+// A session keeps its latest ambiguous references and its first repositories; each panel visit asks GitHub
+// about every candidate they make.
 const MAX_MENTIONS = 500;
+const MAX_REPOSITORIES = 50;
 
-function rememberedMentions(sessionId: string) {
-  const sessions = JSON.parse(localStorage.getItem(GITHUB_MENTIONS_KEY) ?? "{}") as Record<string, string[]>;
-  return sessions[sessionId] ?? [];
+function rememberedReferences(sessionId: string): RememberedReferences {
+  const sessions = JSON.parse(localStorage.getItem(REMEMBERED_REFERENCES_KEY) ?? "{}") as Record<
+    string,
+    RememberedReferences
+  >;
+  return sessions[sessionId] ?? { mentions: [], repositories: [] };
 }
 
 function removedGitHubItems(sessionId: string) {
@@ -207,14 +213,21 @@ function retainGitHubItems(sessionId: string, updates: GitHubItem[], disowned = 
 // opened. Remember references when xterm renders them; the panel resolves ambiguous ones against the
 // session's repositories and fills in current GitHub metadata when it is visited.
 export function rememberGitHubReferences(sessionId: string, output: string, terminalStream: string) {
-  const sessions = JSON.parse(localStorage.getItem(GITHUB_MENTIONS_KEY) ?? "{}") as Record<string, string[]>;
-  const remembered = sessions[sessionId] ?? [];
-  // What the terminal still shows comes last, so the same output always keeps the same, newest mentions.
-  const { explicit, mentions } = githubItemReferences(output, "", terminalStream, "", remembered);
-  const next = mentions.slice(-MAX_MENTIONS);
-  if (next.join("\n") !== remembered.join("\n")) {
+  const current = rememberedReferences(sessionId);
+  const { explicit, remembered } = githubItemReferences(output, "", terminalStream, "", current);
+  // What the terminal still shows comes last, so the same output always keeps the same, newest mentions;
+  // repositories stop being added once the session holds its limit.
+  const next = {
+    mentions: remembered.mentions.slice(-MAX_MENTIONS),
+    repositories: remembered.repositories.length > MAX_REPOSITORIES ? current.repositories : remembered.repositories,
+  };
+  if (JSON.stringify(next) !== JSON.stringify(current)) {
+    const sessions = JSON.parse(localStorage.getItem(REMEMBERED_REFERENCES_KEY) ?? "{}") as Record<
+      string,
+      RememberedReferences
+    >;
     sessions[sessionId] = next;
-    localStorage.setItem(GITHUB_MENTIONS_KEY, JSON.stringify(sessions));
+    localStorage.setItem(REMEMBERED_REFERENCES_KEY, JSON.stringify(sessions));
   }
   rememberGitHubItems(sessionId, explicit);
 }
@@ -1658,9 +1671,12 @@ export function clearInspectorCache(sessionId: string) {
   const removed = JSON.parse(localStorage.getItem(REMOVED_GITHUB_ITEMS_KEY) ?? "{}") as Record<string, string[]>;
   delete removed[sessionId];
   localStorage.setItem(REMOVED_GITHUB_ITEMS_KEY, JSON.stringify(removed));
-  const mentions = JSON.parse(localStorage.getItem(GITHUB_MENTIONS_KEY) ?? "{}") as Record<string, string[]>;
-  delete mentions[sessionId];
-  localStorage.setItem(GITHUB_MENTIONS_KEY, JSON.stringify(mentions));
+  const remembered = JSON.parse(localStorage.getItem(REMEMBERED_REFERENCES_KEY) ?? "{}") as Record<
+    string,
+    RememberedReferences
+  >;
+  delete remembered[sessionId];
+  localStorage.setItem(REMEMBERED_REFERENCES_KEY, JSON.stringify(remembered));
 }
 
 function GitPanel({
@@ -1714,7 +1730,7 @@ function GitPanel({
         const groups = (references: string[][]) => references.map((group) => group.join(" ")).join("\n");
         return explicit.length === current.explicit.length && groups(inferred) === groups(current.inferred)
           ? current
-          : { explicit, inferred, mentions: next.mentions };
+          : { explicit, inferred, remembered: next.remembered };
       });
     };
     const unsubscribe = subscribeTerminalOutput(sessionId, () => {

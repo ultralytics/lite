@@ -6,14 +6,20 @@ interface Candidate {
   url: string;
 }
 
+// What a session keeps so a reference redrawn away still resolves as it did when it was seen: its ambiguous
+// references, as "kind number word" where the word before a reference may name its repository, and every
+// repository it named.
+export interface RememberedReferences {
+  mentions: string[];
+  repositories: string[];
+}
+
 export interface GitHubReferences {
   explicit: string[];
   // One entry per ambiguous reference: the item it would name in each repository the session has named.
   inferred: string[][];
-  // The ambiguous references to keep, as "kind number word", where the word before a reference may name its
-  // repository: the remembered ones this text no longer shows, then this text's own. A session keeps them so
-  // a reference redrawn away still resolves.
-  mentions: string[];
+  // The remembered references with this text's added: mentions it no longer shows, then its own.
+  remembered: RememberedReferences;
 }
 
 // Repository-qualified references are certain. A bare number from prose or an unqualified GitHub CLI command
@@ -33,8 +39,6 @@ const ITEM_MENTION =
 const ITEM_REFERENCE =
   /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const LOGGED_COMMIT = /^([^\w\n]*[\da-f]{7,40} .*)\(#\d+\)[ \t]*$/gim;
-// A mention whose own link follows it, as a Markdown label or a parenthesized URL.
-const LINKED = /^\]?[ \t]*\(?[ \t]*https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/([1-9]\d{0,8})(?!\w)/i;
 const CODECOV_FOOTER = /Thoughts\s+on\s+this\s+report\?\s+\[Let\s+us\s+know!\]\([^\s)]*\)/gi;
 const GH_COMMAND = /\bgh\s+([\w-]+)\s+([\w-]+)((?:(?!\bgh\s)[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
@@ -49,7 +53,7 @@ export function githubItemReferences(
   remote: string,
   terminalStream: string,
   prose: string,
-  remembered: string[] = [],
+  remembered: RememberedReferences = { mentions: [], repositories: [] },
 ): GitHubReferences {
   const text = output.replace(COLOR, "").replace(CODECOV_FOOTER, "");
   const userText = prose.replace(COLOR, "");
@@ -66,6 +70,7 @@ export function githubItemReferences(
   };
   const base = remote.match(/^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?\/?$/i);
   if (base) nameRepository(base[1], base[2]);
+  for (const repository of remembered.repositories) nameRepository(...(repository.split("/") as [string, string]));
   for (const match of text.matchAll(GITHUB_REPOSITORY)) nameRepository(match[1], match[2]);
 
   for (const match of text.matchAll(GITHUB_ITEM))
@@ -96,17 +101,9 @@ export function githubItemReferences(
   }
   for (const match of text.matchAll(GH_API))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase() === "pulls" ? "pull" : "issues", match[4], 3);
-  // A mention a repository-qualified form already reads, or its own link follows, is that item, and is not
-  // kept to be resolved again later.
-  const owned = new Set<string>();
   for (const source of new Set([text, userText])) {
-    const scanned = source.replace(LOGGED_COMMIT, "$1").replace(ITEM_MENTION, " ");
-    for (const match of scanned.matchAll(ITEM_REFERENCE)) {
-      const mention = `${itemKind(match[2])} ${match[3]} ${match[1]?.toLowerCase() ?? ""}`;
-      const end = (match.index ?? 0) + match[0].length;
-      if (scanned.slice(end, end + 120).match(LINKED)?.[1] === match[3]) owned.add(mention);
-      mentions.push(mention);
-    }
+    for (const match of source.replace(LOGGED_COMMIT, "$1").matchAll(ITEM_REFERENCE))
+      mentions.push(`${itemKind(match[2])} ${match[3]} ${match[1]?.toLowerCase() ?? ""}`);
   }
 
   candidates.sort((left, right) => left.index - right.index);
@@ -119,7 +116,7 @@ export function githubItemReferences(
   const explicit = [...items.values()].map((candidate) => candidate.url);
   const inferred = new Map<string, string[]>();
   const names = new Set([...repositories.keys()].map((repository) => repository.split("/")[1]));
-  for (const mention of new Set([...mentions, ...remembered])) {
+  for (const mention of new Set([...mentions, ...remembered.mentions])) {
     const [kind, number, word] = mention.split(" ");
     const group = [...repositories.values()]
       .filter((repository) => !names.has(word) || repository.split("/")[1].toLowerCase() === word)
@@ -130,9 +127,10 @@ export function githubItemReferences(
   return {
     explicit,
     inferred: [...inferred.values()],
-    mentions: [...remembered.filter((mention) => !shown.has(mention)), ...shown].filter(
-      (mention) => !owned.has(mention),
-    ),
+    remembered: {
+      mentions: [...remembered.mentions.filter((mention) => !shown.has(mention)), ...shown],
+      repositories: [...repositories.values()],
+    },
   };
 }
 
