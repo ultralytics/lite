@@ -59,7 +59,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
+import {
+  type GitHubReferences,
+  githubItemReferences,
+  itemKey,
+  likelyGitHubItems,
+  mergeGitHubItems,
+} from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { cn, including, without } from "@/lib/utils";
 import {
@@ -204,10 +210,12 @@ export function rememberGitHubReferences(sessionId: string, output: string, term
   const { explicit, mentions } = githubItemReferences(output, "", terminalStream, "");
   const sessions = JSON.parse(localStorage.getItem(GITHUB_MENTIONS_KEY) ?? "{}") as Record<string, string[]>;
   const remembered = sessions[sessionId] ?? [];
-  const known = new Set(remembered);
-  const additions = mentions.filter((mention) => !known.has(mention));
-  if (additions.length) {
-    sessions[sessionId] = [...remembered, ...additions].slice(-MAX_MENTIONS);
+  // What the terminal still shows keeps its order after what only the session remembers, so the same
+  // output always keeps the same, newest mentions.
+  const visible = new Set(mentions);
+  const next = [...remembered.filter((mention) => !visible.has(mention)), ...mentions].slice(-MAX_MENTIONS);
+  if (next.join("\n") !== remembered.join("\n")) {
+    sessions[sessionId] = next;
     localStorage.setItem(GITHUB_MENTIONS_KEY, JSON.stringify(sessions));
   }
   rememberGitHubItems(sessionId, explicit);
@@ -1722,10 +1730,13 @@ function GitPanel({
     };
   }, [active, remote, sessionId]);
 
-  // GitHub's answers since the panel was last opened or refreshed, by item: what it said, or null for an
-  // item it says does not exist. A changed reference set asks only about what is neither answered nor
-  // being asked, so a busy session never repeats or overlaps a check; opening the panel asks afresh.
-  const [answers, setAnswers] = useState(() => new Map<string, GitHubItem | null>());
+  // GitHub's answers since the panel was last opened or refreshed, by item, with the reference set each
+  // answered: what GitHub said, or null for an item it says does not exist. A listed item is asked again
+  // whenever the references change; a candidate for an ambiguous reference only once. Nothing being asked
+  // is asked again, so a busy session never overlaps its checks, and opening the panel asks afresh.
+  const [answers, setAnswers] = useState(
+    () => new Map<string, { item: GitHubItem | null; references: GitHubReferences }>(),
+  );
   const asking = useRef(new Set<string>());
   useEffect(() => {
     if (active) setAnswers(new Map());
@@ -1746,7 +1757,11 @@ function GitPanel({
     const inferred = references.inferred.filter((group) => !group.some((url) => listed.has(itemKey(url))));
     const urls = [...shown, ...inferred.flat()];
     const keys = [...new Set(urls.map(itemKey))];
-    const missing = urls.filter((url) => !answers.has(itemKey(url)) && !asking.current.has(itemKey(url)));
+    const stale = (key: string) => {
+      const answer = answers.get(key);
+      return !answer || (listed.has(key) && answer.references !== references);
+    };
+    const missing = urls.filter((url) => stale(itemKey(url)) && !asking.current.has(itemKey(url)));
     if (missing.length) {
       for (const url of missing) asking.current.add(itemKey(url));
       // A check that never answered is not evidence against a link, which then shows as printed.
@@ -1757,7 +1772,7 @@ function GitPanel({
           for (const url of missing) asking.current.delete(itemKey(url));
           setAnswers((current) => {
             const next = new Map(current);
-            for (const url of missing) next.set(itemKey(url), found.get(itemKey(url)) ?? null);
+            for (const url of missing) next.set(itemKey(url), { item: found.get(itemKey(url)) ?? null, references });
             return next;
           });
         });
@@ -1768,12 +1783,12 @@ function GitPanel({
       setLoadingUrls(shown.filter((url) => pending.has(itemKey(url))));
       return;
     }
-    const checked = keys.map((key) => answers.get(key)).filter((item): item is GitHubItem => !!item);
+    const checked = keys.map((key) => answers.get(key)?.item).filter((item): item is GitHubItem => !!item);
     const likely = new Set(likelyGitHubItems(checked, inferred));
     const updates = checked.filter((item) => (known.has(itemKey(item.url)) ? item.title !== null : likely.has(item)));
     // An item GitHub says does not exist, such as a link a redraw clipped, is forgotten rather than kept
     // as printed.
-    const disowned = new Set(keys.filter((key) => answers.get(key) === null));
+    const disowned = new Set(keys.filter((key) => answers.get(key)?.item === null));
     setItems(retainGitHubItems(sessionId, updates, disowned));
     setLoadingUrls([]);
   }, [answers, references, sessionId]);

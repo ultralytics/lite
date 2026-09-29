@@ -107,15 +107,22 @@ export function githubItemReferences(
   }
   const explicit = [...items.values()].map((candidate) => candidate.url);
   const inferred = new Map<string, string[]>();
+  // A mention a certain reference here already names, such as a Markdown link's label, is that item.
+  const owned = new Set<string>();
   const names = new Set([...repositories.keys()].map((repository) => repository.split("/")[1]));
   for (const mention of new Set([...mentions, ...remembered])) {
     const [kind, number, word] = mention.split(" ");
     const group = [...repositories.values()]
       .filter((repository) => !names.has(word) || repository.split("/")[1].toLowerCase() === word)
       .map((repository) => `https://github.com/${repository}/${kind}/${number}`);
-    if (group.length && !group.some((url) => items.has(itemKey(url)))) inferred.set(group.join(" "), group);
+    if (group.some((url) => items.has(itemKey(url)))) owned.add(mention);
+    else if (group.length) inferred.set(group.join(" "), group);
   }
-  return { explicit, inferred: [...inferred.values()], mentions: [...new Set(mentions)] };
+  return {
+    explicit,
+    inferred: [...inferred.values()],
+    mentions: [...new Set(mentions)].filter((mention) => !owned.has(mention)),
+  };
 }
 
 const RECENT_ACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
