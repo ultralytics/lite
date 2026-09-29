@@ -232,6 +232,14 @@ The agent also discussed ultralytics/portal PR #3612.`,
         ...mentions,
       ]).mentions,
     ).toEqual(mentions);
+    // A remembered reference to a repository this text does not name is not another repository's item.
+    expect(
+      githubItemReferences("Lite #192 or https://github.com/ultralytics/portal/pull/192", "", "", "", ["pull 7 "])
+        .mentions,
+    ).toEqual(["pull 7 ", "pull 192 lite"]);
+    expect(
+      githubItemReferences("https://github.com/ultralytics/portal/pull/192", "", "", "", mentions).mentions,
+    ).toEqual(mentions);
     expect(
       githubItemReferences("gh pr view 3 -R ultralytics/sdk", "https://github.com/ultralytics/lite", "", "", mentions)
         .inferred,
