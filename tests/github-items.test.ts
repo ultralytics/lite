@@ -219,7 +219,7 @@ The agent also discussed ultralytics/portal PR #3612.`,
 
   test("resolves references a redraw removed against the repositories named since", () => {
     const { mentions } = githubItemReferences(
-      "#26430 is merged; Lite #192 and gh pr view 7\nFixes [#101](https://github.com/ultralytics/ultralytics/issues/101), [issue #102](https://github.com/ultralytics/ultralytics/issues/102) and PR #103 (https://github.com/ultralytics/ultralytics/pull/103)",
+      "#26430 is merged; Lite #192 and gh pr view 7\nFixes [#101](https://github.com/ultralytics/ultralytics/issues/101), [issue #102](https://github.com/ultralytics/ultralytics/issues/102) and PR #103 (https://github.com/ultralytics/ultralytics/pull/103)\nultralytics/ultralytics PR #104 and ultralytics/ultralytics issue 105",
       "",
       "",
       "",

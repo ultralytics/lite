@@ -96,10 +96,11 @@ export function githubItemReferences(
   }
   for (const match of text.matchAll(GH_API))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase() === "pulls" ? "pull" : "issues", match[4], 3);
-  // A mention its own link follows is that linked item, and is not kept to be resolved again later.
+  // A mention a repository-qualified form already reads, or its own link follows, is that item, and is not
+  // kept to be resolved again later.
   const owned = new Set<string>();
   for (const source of new Set([text, userText])) {
-    const scanned = source.replace(LOGGED_COMMIT, "$1");
+    const scanned = source.replace(LOGGED_COMMIT, "$1").replace(ITEM_MENTION, " ");
     for (const match of scanned.matchAll(ITEM_REFERENCE)) {
       const mention = `${itemKind(match[2])} ${match[3]} ${match[1]?.toLowerCase() ?? ""}`;
       const end = (match.index ?? 0) + match[0].length;
