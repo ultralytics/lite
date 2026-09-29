@@ -10,8 +10,9 @@ export interface GitHubReferences {
   explicit: string[];
   // One entry per ambiguous reference: the item it would name in each repository the session has named.
   inferred: string[][];
-  // The ambiguous references this text holds, as "kind number word", where the word before a reference may
-  // name its repository. A session keeps them so a reference redrawn away still resolves.
+  // The ambiguous references to keep, as "kind number word", where the word before a reference may name its
+  // repository: the remembered ones this text no longer shows, then this text's own. A session keeps them so
+  // a reference redrawn away still resolves.
   mentions: string[];
 }
 
@@ -118,10 +119,13 @@ export function githubItemReferences(
     if (group.some((url) => items.has(itemKey(url)))) owned.add(mention);
     else if (group.length) inferred.set(group.join(" "), group);
   }
+  const shown = new Set(mentions);
   return {
     explicit,
     inferred: [...inferred.values()],
-    mentions: [...new Set(mentions)].filter((mention) => !owned.has(mention)),
+    mentions: [...remembered.filter((mention) => !shown.has(mention)), ...shown].filter(
+      (mention) => !owned.has(mention),
+    ),
   };
 }
 

@@ -225,6 +225,13 @@ The agent also discussed ultralytics/portal PR #3612.`,
       "",
     );
     expect(mentions).toEqual(["pull 7 ", "pull 26430 ", "pull 192 lite"]);
+    // A label remembered before its link finished drawing is the linked item once the link appears.
+    expect(
+      githubItemReferences("Fixes [#101](https://github.com/ultralytics/ultralytics/issues/101)", "", "", "", [
+        "pull 101 ",
+        ...mentions,
+      ]).mentions,
+    ).toEqual(mentions);
     expect(
       githubItemReferences("gh pr view 3 -R ultralytics/sdk", "https://github.com/ultralytics/lite", "", "", mentions)
         .inferred,

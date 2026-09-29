@@ -207,13 +207,11 @@ function retainGitHubItems(sessionId: string, updates: GitHubItem[], disowned = 
 // opened. Remember references when xterm renders them; the panel resolves ambiguous ones against the
 // session's repositories and fills in current GitHub metadata when it is visited.
 export function rememberGitHubReferences(sessionId: string, output: string, terminalStream: string) {
-  const { explicit, mentions } = githubItemReferences(output, "", terminalStream, "");
   const sessions = JSON.parse(localStorage.getItem(GITHUB_MENTIONS_KEY) ?? "{}") as Record<string, string[]>;
   const remembered = sessions[sessionId] ?? [];
-  // What the terminal still shows keeps its order after what only the session remembers, so the same
-  // output always keeps the same, newest mentions.
-  const visible = new Set(mentions);
-  const next = [...remembered.filter((mention) => !visible.has(mention)), ...mentions].slice(-MAX_MENTIONS);
+  // What the terminal still shows comes last, so the same output always keeps the same, newest mentions.
+  const { explicit, mentions } = githubItemReferences(output, "", terminalStream, "", remembered);
+  const next = mentions.slice(-MAX_MENTIONS);
   if (next.join("\n") !== remembered.join("\n")) {
     sessions[sessionId] = next;
     localStorage.setItem(GITHUB_MENTIONS_KEY, JSON.stringify(sessions));
