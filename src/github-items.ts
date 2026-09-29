@@ -15,8 +15,7 @@ export interface GitHubReferences {
 // Repository-qualified references are certain. A bare number from prose or an unqualified GitHub CLI command
 // may belong to any repository the session has named, and a short name narrows it to that one: GitHub
 // activity must confirm one before the panel shows it. A logged commit's trailing (#N) is history, not work,
-// and a raw Markdown link target is source a command printed, such as a bot comment's footer: an agent's own
-// links arrive rendered, as terminal hyperlinks.
+// and so is the feedback link at the foot of every Codecov comment a command prints.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC hyperlinks are terminal framing.
@@ -30,7 +29,7 @@ const ITEM_MENTION =
 const ITEM_REFERENCE =
   /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const LOGGED_COMMIT = /^([^\w\n]*[\da-f]{7,40} .*)\(#\d+\)[ \t]*$/gim;
-const MARKDOWN_TARGET = /\]\(https:\/\/github\.com\/[^\s)]*\)/gi;
+const CODECOV_FOOTER = /Thoughts\s+on\s+this\s+report\?\s+\[Let\s+us\s+know!\]\([^\s)]*\)/gi;
 const GH_COMMAND = /\bgh\s+([\w-]+)\s+([\w-]+)((?:(?!\bgh\s)[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
   /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;
@@ -45,7 +44,7 @@ export function githubItemReferences(
   terminalStream: string,
   prose: string,
 ): GitHubReferences {
-  const text = output.replace(COLOR, "").replace(MARKDOWN_TARGET, "]");
+  const text = output.replace(COLOR, "").replace(CODECOV_FOOTER, "");
   const userText = prose.replace(COLOR, "");
   const candidates: Candidate[] = [];
   const repositories = new Map<string, string>();

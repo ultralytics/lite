@@ -145,15 +145,14 @@ gh issue view 102 --repo ULTRALYTICS/LITE
     ]);
   });
 
-  test("leaves a printed Markdown link target to the command that printed it", () => {
-    const comment = `Merged https://github.com/ultralytics/lite/pull/12 and [PR 13](https://github.com/ultralytics/lite/pull/13)
-📢 Thoughts on this report? [Let us know!](https://github.com/codecov/feedback/issues/255)
+  test("reads Markdown links but not the Codecov comment footer", () => {
+    const comment = `Review [this PR](https://github.com/ultralytics/lite/pull/12)
+:loudspeaker: Thoughts on this report? [Let us know!](https://github.com/codecov/feedback/issues/255)
 #14 is next`;
-    const stream = "\u001b]8;;https://github.com/ultralytics/lite/pull/15\u0007#15\u001b]8;;\u0007";
 
-    expect(references(comment, "https://github.com/ultralytics/lite", stream, "")).toEqual({
-      explicit: ["https://github.com/ultralytics/lite/pull/15", "https://github.com/ultralytics/lite/pull/12"],
-      inferred: [["https://github.com/ultralytics/lite/pull/13"], ["https://github.com/ultralytics/lite/pull/14"]],
+    expect(references(comment, "https://github.com/ultralytics/lite", "", "")).toEqual({
+      explicit: ["https://github.com/ultralytics/lite/pull/12"],
+      inferred: [["https://github.com/ultralytics/lite/pull/14"]],
     });
   });
 
