@@ -854,6 +854,55 @@ struct GitStatus {
     changes: Vec<GitChange>,
     line_diffs: BTreeMap<String, LineDiff>,
     changes_truncated: bool,
+    #[serde(flatten)]
+    head: BranchHead,
+}
+
+// Where the branch stands: against its upstream, absent on a detached HEAD and without an upstream until
+// the branch is first pushed, and its newest commit, absent before the first one.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchHead {
+    sync: Option<BranchSync>,
+    last_commit: Option<LastCommit>,
+}
+
+#[derive(Serialize)]
+struct BranchSync {
+    upstream: Option<String>,
+    ahead: u64,
+    behind: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LastCommit {
+    subject: String,
+    committed_at: String,
+}
+
+// Reads what `rev-parse --abbrev-ref @{upstream}`, `rev-list --left-right --count @{upstream}...HEAD`
+// and `log -1 --format=%cI%n%s` printed, each empty when Git had nothing to say, so the local and SSH
+// paths share one reading.
+fn branch_head(branch: &str, upstream: &str, counts: &str, log: &str) -> BranchHead {
+    let mut counts = counts
+        .split_whitespace()
+        .map(|count| count.parse().unwrap_or(0));
+    let behind = counts.next().unwrap_or(0);
+    let ahead = counts.next().unwrap_or(0);
+    BranchHead {
+        sync: (!branch.is_empty()).then(|| BranchSync {
+            upstream: (!upstream.is_empty()).then(|| upstream.to_owned()),
+            ahead,
+            behind,
+        }),
+        last_commit: log
+            .split_once('\n')
+            .map(|(committed_at, subject)| LastCommit {
+                subject: subject.to_owned(),
+                committed_at: committed_at.to_owned(),
+            }),
+    }
 }
 
 fn git_status_result(
@@ -863,6 +912,7 @@ fn git_status_result(
     mut line_diffs: BTreeMap<String, LineDiff>,
     changes_truncated: bool,
     scope: &Path,
+    head: BranchHead,
 ) -> GitStatus {
     changes.retain(|change| Path::new(&change.path).starts_with(scope));
     line_diffs.retain(|path, _| Path::new(path).starts_with(scope));
@@ -876,6 +926,7 @@ fn git_status_result(
         changes,
         line_diffs,
         changes_truncated,
+        head,
     }
 }
 
@@ -903,6 +954,8 @@ pub struct UsageWindow {
 #[derive(Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageSnapshot {
+    model: Option<String>,
+    reasoning: Option<String>,
     context_used_percent: Option<f64>,
     context_window: Option<u64>,
     context_tokens: Option<u64>,
@@ -1956,7 +2009,23 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
             });
         }
     }
+    // Claude reports an effort level only for models that take one, and thinking for every model.
+    let thinking = input
+        .pointer("/thinking/enabled")
+        .and_then(serde_json::Value::as_bool);
     let snapshot = UsageSnapshot {
+        model: input
+            .pointer("/model/display_name")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        reasoning: match thinking {
+            Some(false) => Some("off".into()),
+            _ => input
+                .pointer("/effort/level")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| thinking.map(|_| "on".into())),
+        },
         context_used_percent: context
             .get("used_percentage")
             .and_then(serde_json::Value::as_f64),
@@ -1967,10 +2036,8 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
         cost_usd: input
             .pointer("/cost/total_cost_usd")
             .and_then(serde_json::Value::as_f64),
-        lifetime_tokens: None,
-        banked_resets: None,
-        banked_reset_expiries: Vec::new(),
         windows,
+        ..UsageSnapshot::default()
     };
     let usage = serde_json::to_vec(&snapshot).map_err(|error| error.to_string())?;
     if !fs::read(path).is_ok_and(|current| current == usage) {
@@ -2114,6 +2181,7 @@ struct GitHubItem {
     updated_at: Option<String>,
     additions: Option<u64>,
     deletions: Option<u64>,
+    head_branch: Option<String>,
 }
 
 // The repository and number a GitHub work-item link names, or nothing if the link is not one. Owner
@@ -2194,7 +2262,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             ));
         }
         query.push_str(
-            "}\nfragment f on IssueOrPullRequest {\n__typename\n... on Issue { title state createdAt updatedAt closedAt }\n... on PullRequest { title state isDraft createdAt updatedAt closedAt mergedAt additions deletions }\n}",
+            "}\nfragment f on IssueOrPullRequest {\n__typename\n... on Issue { title state createdAt updatedAt closedAt }\n... on PullRequest { title state isDraft createdAt updatedAt closedAt mergedAt additions deletions headRefName isCrossRepository }\n}",
         );
         let output = Command::new(gh)
             .args(["api", "graphql", "-f", &format!("query={query}")])
@@ -2259,6 +2327,11 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                     updated_at: item["updatedAt"].as_str().map(str::to_owned),
                     additions: item["additions"].as_u64(),
                     deletions: item["deletions"].as_u64(),
+                    // A fork's branch can share any name with a local one, so only a branch in this
+                    // repository can be the one a worktree has checked out.
+                    head_branch: (item["isCrossRepository"].as_bool() == Some(false))
+                        .then(|| item["headRefName"].as_str().map(str::to_owned))
+                        .flatten(),
                 });
             }
             // GitHub has no such repository, or the number names nothing in it.
@@ -2271,6 +2344,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                 updated_at: None,
                 additions: None,
                 deletions: None,
+                head_branch: None,
             }),
         }
     }
@@ -2294,6 +2368,7 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             updated_at: None,
             additions: None,
             deletions: None,
+            head_branch: None,
         })
         .collect();
     tauri::async_runtime::spawn_blocking(move || {
@@ -2882,6 +2957,12 @@ fn codex_context(path: &Path) -> Option<UsageSnapshot> {
 }
 
 fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
+    let model = |record: &serde_json::Value| {
+        record
+            .get("model")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
     file_tail(path)?
         .lines()
         .rev()
@@ -2892,6 +2973,7 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
             {
                 let tokens = record.pointer("/tokens/input")?.as_u64()?;
                 (tokens > 0).then(|| UsageSnapshot {
+                    model: model(&record),
                     context_tokens: Some(tokens),
                     ..UsageSnapshot::default()
                 })
@@ -2904,6 +2986,7 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
                     .as_u64()?;
                 let window = record.get("contextWindowSize")?.as_u64()?;
                 (tokens > 0 && window > 0).then(|| UsageSnapshot {
+                    model: model(&record),
                     context_used_percent: Some(
                         (tokens as f64 / window as f64 * 100.0).clamp(0.0, 100.0),
                     ),
@@ -3017,9 +3100,17 @@ fn codex_usage(
                 .and_then(serde_json::Value::as_u64),
         });
     }
-    let context = responses
+    let thread = responses
         .get(&3)
-        .and_then(|response| response.pointer("/thread/path"))
+        .and_then(|response| response.get("thread"));
+    let text = |key| {
+        thread?
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    let context = thread
+        .and_then(|thread| thread.get("path"))
         .and_then(serde_json::Value::as_str)
         .and_then(|path| codex_context(Path::new(path)));
     let mut banked_reset_expiries: Vec<_> = rates
@@ -3034,6 +3125,9 @@ fn codex_usage(
         .collect();
     banked_reset_expiries.sort_by_key(|expiry| expiry.unwrap_or(u64::MAX));
     Ok(UsageSnapshot {
+        // Codex reports the model and effort the thread is configured with now, not those of a past turn.
+        model: text("model"),
+        reasoning: text("reasoningEffort"),
         lifetime_tokens: summary
             .and_then(|value| value.pointer("/summary/lifetimeTokens"))
             .and_then(serde_json::Value::as_u64),
@@ -3695,6 +3789,96 @@ fn session_arguments(
     }
 }
 
+// Flags the user typed for a session, split as a shell would. A flag that takes control of which
+// conversation starts or resumes, or replaces the settings and title Lite reads usage and resume from,
+// is refused. Only Claude Code and Codex have those flags protected, so other agents take none; a shell
+// ignores the field.
+fn session_flags(agent: &str, flags: Option<&str>) -> Result<Vec<String>, String> {
+    let Some(flags) = flags.filter(|_| agent != "shell") else {
+        return Ok(Vec::new());
+    };
+    let flags =
+        shell_words::split(flags).map_err(|error| format!("Could not read the flags: {error}"))?;
+    let conflict = |flag: &String| {
+        format!(
+            "{flag} conflicts with how Lite starts and tracks this session. Remove it from the flags."
+        )
+    };
+    let refused = match agent {
+        "claude" => flags.iter().find_map(|flag| {
+            if matches!(
+                flag.split('=').next().unwrap_or_default(),
+                "--resume"
+                    | "-r"
+                    | "--continue"
+                    | "-c"
+                    | "--session-id"
+                    | "--settings"
+                    | "--fork-session"
+                    | "--from-pr"
+                    | "--teleport"
+                    | "--cloud"
+                    | "--bg"
+                    | "--background"
+                    | "--worktree"
+                    | "--bare"
+                    | "--no-session-persistence"
+                    | "--environment"
+            ) {
+                Some(conflict(flag))
+            } else if flag
+                .strip_prefix('-')
+                .is_some_and(|short| !short.starts_with('-') && short.contains(['c', 'r', 'w']))
+            {
+                // Short options combine and take attached values; session and worktree selectors
+                // must not replace the conversation or workspace Lite owns.
+                Some(format!(
+                    "{flag} can change the conversation or workspace through a short option. Write attached values separately, for example -n mycar."
+                ))
+            } else {
+                None
+            }
+        }),
+        "codex" => {
+            // A config override is the word after `-c` or `--config`, or the text attached to
+            // either. Only its key is checked: a `tui` table replaces the whole table, so it drops
+            // Lite's title as surely as naming `terminal_title`.
+            let mut after_config = false;
+            flags
+                .iter()
+                .find(|flag| {
+                    let setting = if after_config {
+                        Some(flag.as_str())
+                    } else {
+                        flag.strip_prefix("--config=")
+                            .or_else(|| {
+                                flag.strip_prefix("-c")
+                                    .map(|rest| rest.strip_prefix('=').unwrap_or(rest))
+                            })
+                            .filter(|setting| !setting.is_empty())
+                    };
+                    after_config = matches!(flag.as_str(), "-c" | "--config");
+                    let key = setting.and_then(|setting| setting.split('=').next()).map(str::trim);
+                    matches!(flag.as_str(), "resume" | "fork")
+                        || matches!(flag.split('=').next(), Some("--remote" | "--cd" | "--worktree"))
+                        || flag.starts_with("-C")
+                        || key.is_some_and(|key| key == "tui" || key.contains("terminal_title"))
+                })
+                .map(conflict)
+        }
+        _ if flags.is_empty() => None,
+        _ => return Err("Flags are available for Claude Code and Codex only.".into()),
+    };
+    refused.map_or(Ok(flags), Err)
+}
+
+// The dialog asks before it clones or creates anything, so a refused flag is corrected there rather
+// than left in a session that cannot start.
+#[tauri::command]
+fn check_session_flags(agent: String, flags: String) -> Result<(), String> {
+    session_flags(&agent, Some(&flags)).map(drop)
+}
+
 fn codex_resume_arguments(provider_session_id: Option<&str>) -> Vec<String> {
     provider_session_id
         .map(|id| vec!["resume".into(), id.into()])
@@ -3819,10 +4003,24 @@ fn kimi_context(app: &AppHandle, session_id: &str) -> Option<UsageSnapshot> {
                 .join("agents/main/wire.jsonl")
         })
         .find(|path| path.is_file())?;
-    file_tail(&path)?
-        .lines()
-        .rev()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    let tail = file_tail(&path)?;
+    let records = || {
+        tail.lines()
+            .rev()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+    };
+    // Every request names the model and thinking effort it ran with, so the newest names the current pair.
+    let request = records().find(|record| {
+        record.get("type").and_then(serde_json::Value::as_str) == Some("llm.request")
+    });
+    let text = |key| {
+        request
+            .as_ref()?
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+    };
+    records()
         .find_map(|record| {
             if record.get("type").and_then(serde_json::Value::as_str) != Some("usage.record")
                 || record.get("usageScope").and_then(serde_json::Value::as_str) != Some("turn")
@@ -3843,6 +4041,11 @@ fn kimi_context(app: &AppHandle, session_id: &str) -> Option<UsageSnapshot> {
                 context_tokens: Some(tokens),
                 ..UsageSnapshot::default()
             })
+        })
+        .map(|usage| UsageSnapshot {
+            model: text("model"),
+            reasoning: text("thinkingEffort"),
+            ..usage
         })
 }
 
@@ -3915,6 +4118,7 @@ struct SessionCommand<'a> {
     provider: Option<&'a str>,
     model: Option<&'a str>,
     reasoning_effort: Option<&'a str>,
+    flags: &'a [String],
     resume: bool,
     session_id: &'a str,
     provider_session_id: Option<&'a str>,
@@ -4512,6 +4716,7 @@ fn ssh_session_command(
                 }
             }
         }
+        args.extend_from_slice(launch.flags);
         let command = args
             .iter()
             .map(|argument| posix_quote(argument))
@@ -4550,6 +4755,7 @@ struct SessionLaunch {
     provider: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<String>,
+    flags: Option<String>,
     mode: Option<String>,
     initial_prompt: Option<String>,
     theme: Option<String>,
@@ -4579,6 +4785,7 @@ async fn spawn_session(
         provider,
         model,
         reasoning_effort,
+        flags,
         mode,
         initial_prompt,
         theme,
@@ -4586,6 +4793,7 @@ async fn spawn_session(
         cols,
         rows,
     } = launch;
+    let flags = session_flags(&agent, flags.as_deref())?;
     let root = roots
         .0
         .lock()
@@ -4791,6 +4999,7 @@ async fn spawn_session(
         provider: provider.as_deref(),
         model: model.as_deref(),
         reasoning_effort: reasoning_effort.as_deref(),
+        flags: &flags,
         resume,
         session_id: &session_id,
         provider_session_id: provider_session_id.as_deref(),
@@ -4827,6 +5036,11 @@ async fn spawn_session(
         if let Some(prompt) = initial_prompt {
             command.arg(prompt);
         }
+    }
+    // The user's flags come last, so a `--` or a flag taking several values cannot swallow the resume
+    // id, settings, or prompt that Lite passes before them.
+    if ssh.is_none() {
+        command.args(&flags);
     }
     configure_session_command(
         &mut command,
@@ -5900,7 +6114,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             let output = ssh_output(
                 &root,
                 &format!(
-                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; {SSH_GIT_BASE} code=$(mktemp) || exit; trap 'rm -f -- \"$code\"' EXIT; printf '%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\"; {{ git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -z -n {} | head -c {status_limit}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; printf '\\0%s\\0' {}; {{ git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -c {MAX_GIT_DIFF_BYTES}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; rm -f -- \"$code\"; trap - EXIT",
+                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; upstream=; counts=; test -n \"$branch\" && upstream=$(git -C \"$root\" rev-parse --abbrev-ref --symbolic-full-name '@{{upstream}}' 2>/dev/null) && counts=$(git -C \"$root\" rev-list --left-right --count '@{{upstream}}...HEAD' 2>/dev/null); last=$(git -C \"$root\" log -1 --format=%cI%n%s 2>/dev/null); {SSH_GIT_BASE} code=$(mktemp) || exit; trap 'rm -f -- \"$code\"' EXIT; printf '%s\\0%s\\0%s\\0%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\" \"$upstream\" \"$counts\" \"$last\"; {{ git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -z -n {} | head -c {status_limit}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; printf '\\0%s\\0' {}; {{ git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -c {MAX_GIT_DIFF_BYTES}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; rm -f -- \"$code\"; trap - EXIT",
                     posix_quote(&root.path),
                     posix_quote(&marker),
                     MAX_GIT_CHANGES + 1,
@@ -5908,7 +6122,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     posix_quote(&marker),
                 ),
             )?;
-            let mut header = output.splitn(4, |byte| *byte == 0);
+            let mut header = output.splitn(7, |byte| *byte == 0);
             if header.next() != Some(marker.as_bytes()) {
                 return Err("Could not read remote Git status".into());
             }
@@ -5919,6 +6133,9 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             }
             let branch = String::from_utf8(header.next().unwrap_or_default().to_vec())
                 .map_err(|_| "Git returned a non-UTF-8 branch")?;
+            let [upstream, counts, log] = [(); 3]
+                .map(|()| String::from_utf8_lossy(header.next().unwrap_or_default()).into_owned());
+            let head = branch_head(&branch, &upstream, &counts, log.trim_end());
             let body = header.next().ok_or("Could not read remote Git status")?;
             let separator = separator.as_bytes();
             let split = body
@@ -5946,6 +6163,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                 git_line_diffs(&diffs),
                 changes_truncated,
                 Path::new(scope),
+                head,
             )))
         })
         .await
@@ -6027,6 +6245,34 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             })
             .map(|output| git_line_diffs(&output))
             .unwrap_or_default();
+        let upstream = if branch.is_empty() {
+            String::new()
+        } else {
+            command_output(
+                &git,
+                &path,
+                &[
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "@{upstream}",
+                ],
+            )
+            .unwrap_or_default()
+        };
+        let counts = if upstream.is_empty() {
+            String::new()
+        } else {
+            command_output(
+                &git,
+                &path,
+                &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+            )
+            .unwrap_or_default()
+        };
+        let log =
+            command_output(&git, &path, &["log", "-1", "--format=%cI%n%s"]).unwrap_or_default();
+        let head = branch_head(&branch, &upstream, &counts, &log);
         Ok(Some(git_status_result(
             root,
             branch,
@@ -6034,6 +6280,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             line_diffs,
             changes_truncated,
             scope,
+            head,
         )))
     })
     .await
@@ -6901,7 +7148,8 @@ async fn read_usage(
                 usage
                     .windows
                     .retain(|window| window.resets_at.is_none_or(|reset| reset > now));
-                Ok((usage.context_used_percent.is_some()
+                Ok((usage.model.is_some()
+                    || usage.context_used_percent.is_some()
                     || usage.context_tokens.is_some_and(|tokens| tokens > 0)
                     || usage.cost_usd.is_some_and(|cost| cost > 0.0)
                     || !usage.windows.is_empty())
@@ -7153,6 +7401,7 @@ pub fn run() {
             write_clipboard,
             set_attention_badge,
             quote_dropped_paths,
+            check_session_flags,
             choose_directory,
             follow_directory,
             github_items,
@@ -7229,6 +7478,70 @@ mod tests {
     use super::*;
     use std::ffi::OsStr;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn claude_flags_preserve_lites_session_and_workspace() {
+        let accepted = [
+            "--bg",
+            "--background",
+            "--worktree",
+            "-wother",
+            "--bare",
+            "--no-session-persistence",
+            "--environment cloud",
+        ]
+        .into_iter()
+        .filter(|flags| check_session_flags("claude".into(), (*flags).into()).is_ok())
+        .collect::<Vec<_>>();
+        assert!(
+            accepted.is_empty(),
+            "accepted {accepted:?}; Claude bypasses Lite's session or workspace"
+        );
+    }
+
+    #[test]
+    fn codex_refuses_a_tui_table_that_drops_the_title() {
+        let accepted = [
+            "-c 'tui={notification_condition=\"always\"}'",
+            "--config='tui={notification_condition=\"always\"}'",
+            "-c'tui={notification_condition=\"always\"}'",
+            "-c='tui={notification_condition=\"always\"}'",
+        ]
+        .into_iter()
+        .filter(|flags| check_session_flags("codex".into(), (*flags).into()).is_ok())
+        .collect::<Vec<_>>();
+        assert!(accepted.is_empty(), "accepted {accepted:?}");
+        // Only a config key can move the title; other values may name `tui` or `terminal_title`.
+        let refused = [
+            "--add-dir tui=workspace",
+            "--add-dir /tmp/terminal_title",
+            "-c 'model=\"terminal_title\"'",
+        ]
+        .into_iter()
+        .filter(|flags| check_session_flags("codex".into(), (*flags).into()).is_err())
+        .collect::<Vec<_>>();
+        assert!(refused.is_empty(), "refused {refused:?}");
+    }
+
+    #[test]
+    fn codex_flags_preserve_lites_server_and_workspace() {
+        let accepted = [
+            "--remote ws://127.0.0.1:4500",
+            "--remote=ws://127.0.0.1:4500",
+            "--cd /tmp",
+            "--cd=/tmp",
+            "-C/tmp",
+            "-C /tmp",
+            "--worktree",
+        ]
+        .into_iter()
+        .filter(|flags| check_session_flags("codex".into(), (*flags).into()).is_ok())
+        .collect::<Vec<_>>();
+        assert!(accepted.is_empty(), "accepted {accepted:?}");
+        assert!(
+            check_session_flags("codex".into(), "--remote-auth-token-env TOKEN".into()).is_ok()
+        );
+    }
 
     #[test]
     fn github_names_stay_one_folder_deep() {

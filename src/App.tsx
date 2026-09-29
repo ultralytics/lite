@@ -2271,6 +2271,7 @@ function App() {
           provider: session.provider,
           model: session.model,
           reasoningEffort: session.reasoningEffort,
+          flags: session.flags,
           mode: session.mode,
           initialPrompt: initialPrompt ?? null,
           theme: themeRef.current,

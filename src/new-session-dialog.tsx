@@ -63,6 +63,7 @@ const CHOICE_KEY = "lite.newSession.choice.v1";
 const CODEX_KEY = "lite.newSession.codexProvider.v1";
 const SOURCE_KEY = "lite.newSession.source.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
+const FLAGS_KEY = "lite.newSession.flags.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
 // A Codex provider serving several models offers the choice here, remembered per provider so each keeps
 // its own model and thinking level. Rust owns which models and levels exist, because the catalog it hands
@@ -282,6 +283,8 @@ export function NewSessionDialog({
   const [suggestedBranch, setSuggestedBranch] = useState("");
   const [branch, setBranch] = useState("");
   const [title, setTitle] = useState("");
+  const [flags, setFlags] = useState("");
+  const [flagsOn, setFlagsOn] = useState(() => localStorage.getItem(FLAGS_KEY) === "true");
   const [repositoriesRoot, setRepositoriesRoot] = useState("");
   const [github, setGitHub] = useState<GitHubRepositories>();
   const [query, setQuery] = useState("");
@@ -501,11 +504,11 @@ export function NewSessionDialog({
       ]
     : [
         {
-          label: "Recent in Lite",
+          label: "Recent",
           repositories: recent,
         },
         {
-          label: "Your repositories",
+          label: "All",
           repositories: listed.filter((repository) => !recentNames.has(fullName(repository).toLowerCase())),
         },
       ];
@@ -602,12 +605,22 @@ export function NewSessionDialog({
     if (!open) {
       setTitle("");
       setBranch("");
+      setFlags("");
     }
     onOpenChange(open);
   }
 
   async function create(choice: Choice) {
     setError("");
+    const sessionFlags = (flagsOn && flags.trim()) || undefined;
+    // Checked once the dialog is busy but before anything is cloned or created, so a refused flag fails its
+    // own step and is fixed after Back rather than left in a session that cannot start.
+    const checking = sessionFlags ? [["Checking flags", "Checked flags"] as [string, string]] : [];
+    const checkFlags = async () => {
+      if (!sessionFlags) return;
+      await invoke("check_session_flags", { agent: choice.agent, flags: sessionFlags });
+      advance();
+    };
     try {
       let place: DirectoryGrant;
       let worktree = false;
@@ -621,6 +634,7 @@ export function NewSessionDialog({
           place: fullName(repository),
           // A clone that exists is used as it is; only a repository with none is cloned first.
           steps: [
+            ...checking,
             ...(repository.local
               ? []
               : [[`Cloning ${fullName(repository)}`, `Cloned ${fullName(repository)}`] as [string, string]]),
@@ -629,6 +643,7 @@ export function NewSessionDialog({
           ],
           done: 0,
         });
+        await checkFlags();
         const main = await invoke<DirectoryGrant>("prepare_repository", {
           owner: repository.owner,
           name: repository.name,
@@ -663,11 +678,13 @@ export function NewSessionDialog({
           choice,
           place: placeLabel,
           steps: [
+            ...checking,
             ...(making ? [["Creating worktree", "Created worktree"] as [string, string]] : []),
             [`Starting ${agentLabel(choice.agent)}`, `Started ${agentLabel(choice.agent)}`],
           ],
           done: 0,
         });
+        await checkFlags();
         place = await grant();
         // The probe's answer can lag the folder field, so the granted folder is asked directly:
         // the worktree and the recorded repository always describe where the session will run.
@@ -694,6 +711,7 @@ export function NewSessionDialog({
         provider: choice.provider,
         model: panel && codexChoices[modelKey(panel.id)],
         reasoningEffort: panel && codexChoices[levelKey(panel.id)],
+        flags: sessionFlags,
         cwd: place.path,
         host: place.host ?? undefined,
         rootId: place.id,
@@ -708,6 +726,7 @@ export function NewSessionDialog({
       setDirectory(undefined);
       setTitle("");
       setBranch("");
+      setFlags("");
       onOpenChange(false);
       setLaunching(undefined);
     } catch (reason) {
@@ -1087,6 +1106,7 @@ export function NewSessionDialog({
           onKeyDown={numberKey}
           className={cn("flex min-h-0 min-w-0 flex-1 flex-col", launching && "hidden")}
         >
+          <button type="submit" className="sr-only" tabIndex={-1} aria-hidden="true" />
           <DialogHeader className="px-5 pt-4 pb-3">
             <DialogTitle>New session</DialogTitle>
             <DialogDescription className="sr-only">
@@ -1391,7 +1411,36 @@ export function NewSessionDialog({
                       autoComplete="off"
                       onChange={(event) => setTitle(event.target.value)}
                     />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Label htmlFor="session-flags-on" className="text-xs text-muted-foreground">
+                        Flags
+                      </Label>
+                      <Switch
+                        id="session-flags-on"
+                        checked={flagsOn}
+                        onCheckedChange={(checked) => {
+                          localStorage.setItem(FLAGS_KEY, String(checked));
+                          setFlagsOn(checked);
+                        }}
+                      />
+                    </div>
                   </div>
+                  {flagsOn ? (
+                    <div className="flex items-center gap-3">
+                      <Label htmlFor="session-flags" className="w-12 shrink-0 text-xs text-muted-foreground">
+                        Flags
+                      </Label>
+                      <Input
+                        id="session-flags"
+                        value={flags}
+                        className="h-8 font-mono text-xs"
+                        placeholder="Extra CLI flags"
+                        autoComplete="off"
+                        spellCheck={false}
+                        onChange={(event) => setFlags(event.target.value)}
+                      />
+                    </div>
+                  ) : null}
                   {worktreeHere ? (
                     <div className="flex items-center gap-3">
                       <Label htmlFor="worktree-branch" className="w-12 shrink-0 text-xs text-muted-foreground">

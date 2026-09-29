@@ -2,7 +2,7 @@
 
 [package]
 name = "lite"
-version = "0.0.62"
+version = "0.0.64"
 description = "A fast, local workspace for AI coding agents."
 authors = ["Ultralytics"]
 edition = "2024"
@@ -30,6 +30,7 @@ serde_json = "1"
 toml_edit = "0.25"
 atomicwrites = "0.4.4"
 portable-pty = "0.9.0"
+shell-words = "1.1.1"
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "rustls-no-provider"] }
 rustls = { version = "0.23.43", default-features = false, features = ["ring", "std"] }
 sysinfo = { version = "0.38.4", default-features = false, features = ["system"] }

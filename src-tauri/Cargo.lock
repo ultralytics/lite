@@ -1968,7 +1968,7 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "lite"
-version = "0.0.62"
+version = "0.0.64"
 dependencies = [
  "atomicwrites",
  "block2",
@@ -1984,6 +1984,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "shell-words",
  "sysinfo",
  "tauri",
  "tauri-build",
@@ -4143,9 +4144,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.26.5"
+version = "0.26.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0c85f2c3ef0b1cd58b36682f4b17aaa995f0e5db534d85692b4903abce21f67"
+checksum = "c9cc2678c2cdd569ef8215e2afd7954ada2ae20b4fdd2c5fe6139a3b02d105db"
 dependencies = [
  "rustls",
  "tokio",

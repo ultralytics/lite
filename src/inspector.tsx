@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   ArrowLeft,
+  Brain,
   ChartNoAxesColumn,
   ChevronLeft,
   ChevronRight,
@@ -52,7 +53,7 @@ import {
 import { Empty, EmptyDescription, EmptyHeader } from "@/components/ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Item, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
-import { Progress, ProgressLabel, ProgressValue } from "@/components/ui/progress";
+import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -60,8 +61,14 @@ import { toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
-import { including, without } from "@/lib/utils";
-import { readTerminalInput, readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
+import { cn, including, without } from "@/lib/utils";
+import {
+  readTerminalInput,
+  readTerminalOutput,
+  readTerminalStream,
+  subscribeNotifications,
+  subscribeTerminalOutput,
+} from "@/output-store";
 import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import { contentZoomStyle } from "@/theme";
 import {
@@ -74,6 +81,7 @@ import {
   repoName,
   type Session,
   sessionLabel,
+  tilde,
 } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
@@ -124,11 +132,12 @@ function githubRepositoryKey(url: string) {
 interface GitHubItem {
   url: string;
   title: string | null;
-  state: keyof typeof GITHUB_STATE | null;
+  state: keyof typeof GITHUB_STATE_ICON | null;
   occurredAt: string | null;
   updatedAt: string | null;
   additions: number | null;
   deletions: number | null;
+  headBranch: string | null;
 }
 
 function pendingGitHubItem(url: string): GitHubItem {
@@ -140,6 +149,7 @@ function pendingGitHubItem(url: string): GitHubItem {
     updatedAt: null,
     additions: null,
     deletions: null,
+    headBranch: null,
   };
 }
 
@@ -190,13 +200,6 @@ export function rememberGitHubReferences(sessionId: string, output: string, term
 }
 
 // The colors GitHub itself answers in, so a glance here reads the same as a glance there.
-const GITHUB_STATE = {
-  open: "success",
-  draft: "secondary",
-  merged: "purple",
-  closed: "error",
-} as const;
-
 const GITHUB_STATE_ICON = {
   open: "text-success",
   draft: "text-muted-foreground",
@@ -204,11 +207,20 @@ const GITHUB_STATE_ICON = {
   closed: "text-red-700 dark:text-red-400",
 } as const;
 
+const GITHUB_STATE_BAR = {
+  open: "bg-success",
+  draft: "bg-muted-foreground/40",
+  merged: "bg-violet-500",
+  closed: "bg-destructive",
+} as const satisfies Record<keyof typeof GITHUB_STATE_ICON, string>;
+
 interface RepositoryGroup {
   branch: string | null;
   changes: GitStatus["changes"];
   changesTruncated: boolean;
   lineDiffs: GitStatus["lineDiffs"];
+  sync: GitStatus["sync"];
+  lastCommit: GitStatus["lastCommit"];
   items: (GitHubItem & GitHubReference)[];
   name: string;
   path: string | null;
@@ -248,6 +260,8 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
       changes: status.changes,
       changesTruncated: status.changesTruncated,
       lineDiffs: status.lineDiffs,
+      sync: status.sync,
+      lastCommit: status.lastCommit,
       items: [],
       name: remote ? repoName(remote) : folderName(status.worktree) || status.worktree,
       path: status.worktree,
@@ -262,6 +276,8 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
       changes: [],
       changesTruncated: false,
       lineDiffs: {},
+      sync: null,
+      lastCommit: null,
       items: [],
       name: reference.repository,
       path: null,
@@ -274,71 +290,49 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
   return [...groups.values()];
 }
 
-function GitHubItemList({
-  label,
-  items,
-  loading,
-}: {
-  label: string;
-  items: RepositoryGroup["items"];
-  loading: boolean;
-}) {
-  if (!items.length)
-    return loading ? (
-      <div className="border-t">
-        <Loading label={`Loading ${label.toLowerCase()}…`} />
-      </div>
-    ) : null;
+// A quiet two-line row: the icon's color carries the state, so the line beneath can say when it happened.
+function GitHubItemList({ items }: { items: RepositoryGroup["items"] }) {
   return (
-    <div className="border-t">
-      <p className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
-        {label}
-        {loading ? <Spinner className="size-3" aria-label={`Loading ${label.toLowerCase()}`} /> : null}
-      </p>
-      <ItemGroup className="has-data-[size=xs]:gap-0">
-        {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
-          <Item
-            key={url}
-            size="xs"
-            className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
-            render={
-              <button
-                type="button"
-                title={url}
-                data-context-url={url}
-                onClick={() => void invoke("open_url", { url })}
-              />
-            }
-          >
-            <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
-              <GitHubItemIcon kind={kind} state={state} />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
-              {title ? (
-                <div className="flex min-w-0 items-center gap-2">
-                  <ItemDescription className="min-w-0 truncate font-mono">
-                    #{number}
-                    {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
-                  </ItemDescription>
-                  {additions ? (
-                    <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">+{additions}</span>
-                  ) : null}
-                  {deletions ? (
-                    <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
-                  ) : null}
-                  {state ? (
-                    <Badge className="ml-auto" variant={GITHUB_STATE[state]}>
-                      {state}
-                    </Badge>
-                  ) : null}
-                </div>
-              ) : null}
-            </ItemContent>
-          </Item>
-        ))}
-      </ItemGroup>
-    </div>
+    <ItemGroup className="-mx-1.5 w-auto has-data-[size=xs]:gap-0">
+      {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
+        <Item
+          key={url}
+          size="xs"
+          className="flex-nowrap items-start px-1.5 py-1.5 text-left hover:bg-foreground/5"
+          render={
+            <button type="button" title={url} data-context-url={url} onClick={() => void invoke("open_url", { url })} />
+          }
+        >
+          <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
+            <GitHubItemIcon kind={kind} state={state} />
+          </ItemMedia>
+          <ItemContent className="min-w-0">
+            <ItemTitle className="block w-full truncate font-normal">{title ?? `#${number}`}</ItemTitle>
+            {title ? (
+              <div className="flex min-w-0 items-center gap-2">
+                <ItemDescription className="min-w-0 truncate">
+                  #{number}
+                  {state ? ` · ${state === "open" ? "opened" : state === "draft" ? "drafted" : state}` : ""}
+                  {occurredAt ? ` ${relativeAge(occurredAt)}` : ""}
+                </ItemDescription>
+                {additions ? (
+                  <span className="ml-auto shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
+                    +{additions}
+                  </span>
+                ) : null}
+                {deletions ? (
+                  <span
+                    className={cn("shrink-0 font-mono text-xs text-red-600 dark:text-red-400", !additions && "ml-auto")}
+                  >
+                    -{deletions}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </ItemContent>
+        </Item>
+      ))}
+    </ItemGroup>
   );
 }
 
@@ -361,6 +355,8 @@ interface UsageWindow {
 }
 
 interface UsageSnapshot {
+  model: string | null;
+  reasoning: string | null;
   contextUsedPercent: number | null;
   contextWindow: number | null;
   contextTokens: number | null;
@@ -380,28 +376,36 @@ const formatClock = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute
 const formatWeekday = new Intl.DateTimeFormat(undefined, { weekday: "long" });
 const formatDay = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" });
 
-// A moment ahead as someone planning around it asks about it: how long until then, and which day and time
-// that is — "in 3 hr 20 min · today 8:40 PM", "in 4 days · Tuesday 5:20 PM". The counterpart of relativeAge.
-function timeUntil(seconds: number) {
-  const at = new Date(seconds * 1000);
-  const left = at.getTime() - Date.now();
+// How long until a moment ahead — "3 hr 20 min", "4 days" — or nothing once it has passed.
+function waitUntil(seconds: number) {
+  const left = seconds * 1000 - Date.now();
   const minutes = Math.round(left / 60000);
   const hours = Math.floor(minutes / 60);
-  const wait =
-    left <= 0
-      ? "now"
-      : minutes < 1
-        ? "in under a minute"
-        : minutes < 60
-          ? `in ${minutes} min`
-          : hours < 48
-            ? `in ${hours} hr${hours < 10 && minutes % 60 ? ` ${minutes % 60} min` : ""}`
-            : `in ${Math.round(hours / 24)} days`;
+  if (left <= 0) return undefined;
+  return minutes < 1
+    ? "under a minute"
+    : minutes < 60
+      ? `${minutes} min`
+      : hours < 48
+        ? `${hours} hr${hours < 10 && minutes % 60 ? ` ${minutes % 60} min` : ""}`
+        : `${Math.round(hours / 24)} days`;
+}
+
+// Which day and time a moment ahead falls on — "today 8:40 PM", "Tuesday 5:20 PM".
+function dayAndTime(seconds: number) {
+  const at = new Date(seconds * 1000);
   const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const days = Math.round((midnight(at) - midnight(new Date())) / 86_400_000);
   const day =
     days === 0 ? "today" : days === 1 ? "tomorrow" : days < 7 ? formatWeekday.format(at) : formatDay.format(at);
-  return `${wait} · ${day} ${formatClock.format(at)}`;
+  return `${day} ${formatClock.format(at)}`;
+}
+
+// A moment ahead as someone planning around it asks about it: how long until then, and which day and time
+// that is — "in 3 hr 20 min · today 8:40 PM", "in 4 days · Tuesday 5:20 PM". The counterpart of relativeAge.
+function timeUntil(seconds: number) {
+  const wait = waitUntil(seconds);
+  return `${wait ? `in ${wait}` : "now"} · ${dayAndTime(seconds)}`;
 }
 
 function Loading({ label }: { label: string }) {
@@ -453,15 +457,10 @@ export function SearchInput({
 }
 
 // Capacity gets more urgent as it is spent; all consumers share these tones with status badges.
-function Meter({ label, value }: { label: string; value: number }) {
+function Meter({ label, value, className }: { label: string; value: number; className?: string }) {
   const bounded = Math.max(0, Math.min(100, value));
   const tone: SemanticTone = bounded >= 90 ? "error" : bounded >= 75 ? "warning" : "success";
-  return (
-    <Progress value={bounded} className={SEMANTIC_PROGRESS_CLASSES[tone]}>
-      <ProgressLabel className="truncate">{label}</ProgressLabel>
-      <ProgressValue />
-    </Progress>
-  );
+  return <Progress value={bounded} aria-label={label} className={cn(SEMANTIC_PROGRESS_CLASSES[tone], className)} />;
 }
 
 function FileTree({
@@ -1331,72 +1330,159 @@ function DiffViewer({
   );
 }
 
-function RepositoryCard({
+// What a porcelain status means to someone deciding what to commit, in the letters and colors editors use.
+const CHANGE_KIND = {
+  conflicted: { letter: "!", className: "text-red-700 dark:text-red-400" },
+  modified: { letter: "M", className: "text-amber-700 dark:text-amber-400" },
+  added: { letter: "A", className: "text-success" },
+  deleted: { letter: "D", className: "text-red-700 dark:text-red-400" },
+  untracked: { letter: "U", className: "text-success" },
+} as const;
+
+function changeKind(status: string): keyof typeof CHANGE_KIND {
+  if (status === "??") return "untracked";
+  if (status.includes("U") || status === "AA" || status === "DD") return "conflicted";
+  if (status.includes("D")) return "deleted";
+  if (status.includes("A")) return "added";
+  return "modified";
+}
+
+// Each list opens with its first few entries, so the tab reads as a summary first, as Usage does.
+const LIST_PREVIEW = { changes: 3, "pull requests": 5, issues: 5 } as const;
+type ListName = keyof typeof LIST_PREVIEW;
+
+// Pull requests and issues each sit in a card that opens with where they stand, as each of Usage's limits
+// opens with its meter: the count in each state, and one bar split the same way across the whole list.
+function GitHubItemsCard({
+  label,
+  items,
+  loading,
+  children,
+}: {
+  label: string;
+  items: RepositoryGroup["items"];
+  loading: boolean;
+  children: ReactNode;
+}) {
+  const counts = (Object.keys(GITHUB_STATE_BAR) as (keyof typeof GITHUB_STATE_BAR)[])
+    .map((state) => [state, items.filter((item) => item.state === state).length] as const)
+    .filter(([, count]) => count);
+  const summary = counts.map(([state, count]) => `${count} ${state}`).join(" · ");
+  return (
+    <section className="rounded-lg bg-muted/60 p-3">
+      <h3 className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        {label}
+        {loading ? <Spinner className="size-3" aria-label={`Loading ${label.toLowerCase()}`} /> : null}
+        <span className="ml-auto truncate font-normal tabular-nums">{summary}</span>
+      </h3>
+      {/* One item's bar would only repeat its icon's color; two or more show the split, even a single state. */}
+      {items.length > 1 && counts.length ? (
+        <div role="img" aria-label={summary} className="mt-2 flex h-1.5 gap-0.5 overflow-hidden rounded-full">
+          {counts.map(([state, count]) => (
+            <span key={state} className={GITHUB_STATE_BAR[state]} style={{ flexGrow: count }} />
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-2">{children}</div>
+    </section>
+  );
+}
+
+function RepositorySection({
   repository,
   loadingUrls,
+  searching,
   onOpenDiff,
   onRemove,
 }: {
   repository: RepositoryGroup;
   loadingUrls: string[];
+  searching: boolean;
   onOpenDiff: (path: string) => void;
   onRemove?: () => void;
 }) {
-  const pullRequests = repository.items.filter((item) => item.kind === "pull request");
+  const [expanded, setExpanded] = useState(() => new Set<string>());
+  const allPullRequests = repository.items.filter((item) => item.kind === "pull request");
   const issues = repository.items.filter((item) => item.kind === "issue");
+  // The newest pull request opened from the checked-out branch is the one this work is up for review in.
+  const branchPullRequest =
+    repository.path && repository.branch && !searching
+      ? allPullRequests.find((item) => item.headBranch === repository.branch)
+      : undefined;
+  const pullRequests = allPullRequests.filter((item) => item !== branchPullRequest);
   const loadingKinds = new Set(
     loadingUrls
       .filter((url) => repository.url && githubRepositoryKey(url) === githubRepositoryKey(repository.url))
       .map((url) => githubReference(url).kind),
   );
-  const header = (
+  let additions = 0;
+  let deletions = 0;
+  for (const change of repository.changes) {
+    additions += repository.lineDiffs[change.path]?.additions ?? 0;
+    deletions += repository.lineDiffs[change.path]?.deletions ?? 0;
+  }
+  // Git counts lines only in files it tracks, so the totals say what they leave out.
+  const untracked = repository.changes.filter((change) => change.status === "??").length;
+  const lineScope = `Lines changed in tracked files${untracked ? `; ${untracked} untracked ${untracked === 1 ? "file is" : "files are"} not counted` : ""}`;
+  const { sync, lastCommit } = repository;
+  const shown = <T,>(name: ListName, list: T[]) =>
+    searching || expanded.has(name) ? list : list.slice(0, LIST_PREVIEW[name]);
+  const more = (name: ListName, count: number) =>
+    !searching && count > LIST_PREVIEW[name] ? (
+      <button
+        type="button"
+        className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        aria-expanded={expanded.has(name)}
+        onClick={() =>
+          setExpanded((current) => (current.has(name) ? without(current, name) : including(current, name)))
+        }
+      >
+        <ChevronRight className={cn("size-3", expanded.has(name) && "-rotate-90")} />
+        {expanded.has(name) ? "Show fewer" : `${count - LIST_PREVIEW[name]} more`}
+      </button>
+    ) : null;
+  const identity = (
     <>
-      <span className="flex min-w-0 w-full items-center gap-2.5">
-        <GitHubLogomark className="size-5 shrink-0" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{repository.name}</span>
-          {repository.path ? (
-            <span className="block truncate font-mono text-xs text-muted-foreground" title={repository.path}>
-              {repository.path}
-            </span>
-          ) : null}
-        </span>
+      <GitHubLogomark className="size-5 shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{repository.name}</span>
+        {repository.path ? (
+          <span className="block truncate text-xs text-muted-foreground" title={repository.path}>
+            {tilde(repository.path)}
+          </span>
+        ) : null}
       </span>
-      {repository.branch ? (
-        <span className="flex min-w-0 w-full items-center gap-1.5 pl-8">
-          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate font-mono text-xs">{repository.branch}</span>
-          {repository.changes.length ? (
-            <Badge variant="secondary">
-              {repository.changes.length}
-              {repository.changesTruncated ? "+" : ""} changed
-            </Badge>
-          ) : null}
-        </span>
-      ) : null}
     </>
   );
 
   return (
-    <section className="overflow-hidden rounded-lg border">
-      <div className="group/repository flex items-start hover:bg-muted focus-within:bg-muted">
+    <div className="flex flex-col gap-5 not-first:border-t not-first:pt-5">
+      <div className="group/repository flex items-center gap-2">
         {repository.url ? (
           <button
             type="button"
-            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left"
+            className="-m-1.5 flex min-w-0 flex-1 items-center gap-2.5 rounded-md p-1.5 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             title={`Open ${repository.url}`}
             data-context-url={repository.url}
             onClick={() => void invoke("open_url", { url: repository.url })}
           >
-            {header}
+            {identity}
           </button>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">{header}</div>
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">{identity}</div>
         )}
+        {repository.branch ? (
+          <Badge variant="secondary" className="max-w-1/2" title={repository.branch}>
+            <GitBranch />
+            <span className="truncate">{repository.branch}</span>
+          </Badge>
+        ) : null}
+        {/* Keeps its place while unseen, and gives back the height a one-line header lacks, so revealing it
+            on hover moves nothing. */}
         {onRemove ? (
           <ActionIconButton
             size="icon-sm"
-            className="mt-1.5 mr-1.5 hidden text-muted-foreground hover:text-destructive group-hover/repository:inline-flex group-focus-within/repository:inline-flex"
+            className="invisible -my-1 text-muted-foreground group-focus-within/repository:visible group-hover/repository:visible hover:text-destructive"
             tooltip="Remove repository"
             aria-label={`Remove ${repository.name}`}
             onClick={onRemove}
@@ -1405,43 +1491,130 @@ function RepositoryCard({
           </ActionIconButton>
         ) : null}
       </div>
-      {repository.changes.length ? (
-        <div className="border-t px-2.5 py-2">
-          <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
-          {repository.changes.map((change) => {
-            const diff = repository.lineDiffs[change.path];
-            return (
-              <button
-                key={`${change.status}:${change.path}`}
-                type="button"
-                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                aria-label={`View diff for ${change.path}`}
-                onClick={() => onOpenDiff(change.path)}
-              >
-                <span
-                  className={`${change.status === "??" ? "w-16" : "w-5"} shrink-0 font-mono text-xs text-muted-foreground`}
-                >
-                  {change.status === "??" ? "Untracked" : change.status.trim()}
+      {/* The working tree is what the session is changing right now, so it leads, as context leads Usage:
+          what is uncommitted, whether it is pushed, and the pull request it is up for review in. */}
+      {repository.path && !searching ? (
+        <section className="rounded-lg bg-muted/60 p-3">
+          <p className="text-xs text-muted-foreground">Uncommitted changes</p>
+          {repository.changes.length ? (
+            <>
+              <p className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-3xl font-semibold tracking-tight tabular-nums">
+                  {formatNumber.format(repository.changes.length)}
+                  {repository.changesTruncated ? "+" : ""}
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={change.path}>
-                  {change.path}
+                <span className="text-sm text-muted-foreground">
+                  {repository.changes.length === 1 ? "file" : "files"}
                 </span>
-                {diff?.additions ? (
-                  <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
-                    +{diff.additions}
-                  </span>
-                ) : null}
-                {diff?.deletions ? (
-                  <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{diff.deletions}</span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
+                <span className="ml-auto flex gap-1.5 font-mono text-sm font-medium" title={lineScope}>
+                  <span className="text-green-600 dark:text-green-400">+{formatNumber.format(additions)}</span>
+                  <span className="text-red-600 dark:text-red-400">-{formatNumber.format(deletions)}</span>
+                </span>
+              </p>
+              {additions + deletions ? (
+                <Progress
+                  value={(additions / (additions + deletions)) * 100}
+                  aria-label={`${additions} lines added, ${deletions} removed`}
+                  className="mt-3 [&_[data-slot=progress-indicator]]:bg-success [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-destructive"
+                />
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-1 flex items-center gap-2 text-xl font-semibold tracking-tight">
+              <CircleCheck className="size-5 text-success" />
+              Clean
+            </p>
+          )}
+          {sync || lastCommit ? (
+            <p className="mt-2 flex gap-3 text-xs text-muted-foreground tabular-nums">
+              {sync ? (
+                <span className="truncate" title={sync.upstream ?? undefined}>
+                  {sync.upstream
+                    ? [sync.ahead && `${sync.ahead} to push`, sync.behind && `${sync.behind} to pull`]
+                        .filter(Boolean)
+                        .join(" · ") || "Up to date"
+                    : "Not pushed"}
+                </span>
+              ) : null}
+              {lastCommit ? (
+                <span className="ml-auto shrink-0" title={lastCommit.subject}>
+                  committed {relativeAge(lastCommit.committedAt)}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+          {branchPullRequest ? (
+            <div className="mt-3 border-t pt-2">
+              <p className="text-xs text-muted-foreground">This branch's pull request</p>
+              <GitHubItemList items={[branchPullRequest]} />
+            </div>
+          ) : null}
+        </section>
       ) : null}
-      <GitHubItemList label="Pull requests" items={pullRequests} loading={loadingKinds.has("pull request")} />
-      <GitHubItemList label="Issues" items={issues} loading={loadingKinds.has("issue")} />
-    </section>
+      {repository.changes.length ? (
+        <section>
+          <h3 className="mb-1 text-xs font-medium text-muted-foreground">Changes</h3>
+          <div className="-mx-1.5">
+            {shown("changes", repository.changes).map((change) => {
+              const diff = repository.lineDiffs[change.path];
+              const kind = changeKind(change.status);
+              const slash = change.path.lastIndexOf("/");
+              return (
+                <button
+                  key={`${change.status}:${change.path}`}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  aria-label={`View diff for ${change.path}`}
+                  title={change.path}
+                  onClick={() => onOpenDiff(change.path)}
+                >
+                  <span
+                    className={cn(
+                      "w-3 shrink-0 text-center font-mono text-xs font-semibold",
+                      CHANGE_KIND[kind].className,
+                    )}
+                    title={kind}
+                  >
+                    {CHANGE_KIND[kind].letter}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs">
+                    {change.path.slice(slash + 1)}
+                    {slash > 0 ? (
+                      <span className="ml-1.5 text-muted-foreground">{change.path.slice(0, slash)}</span>
+                    ) : null}
+                  </span>
+                  {diff?.additions ? (
+                    <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
+                      +{diff.additions}
+                    </span>
+                  ) : null}
+                  {diff?.deletions ? (
+                    <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{diff.deletions}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+          {more("changes", repository.changes.length)}
+        </section>
+      ) : null}
+      {pullRequests.length || loadingKinds.has("pull request") ? (
+        <GitHubItemsCard
+          label={branchPullRequest ? "Other pull requests" : "Pull requests"}
+          items={pullRequests}
+          loading={loadingKinds.has("pull request")}
+        >
+          <GitHubItemList items={shown("pull requests", pullRequests)} />
+          {more("pull requests", pullRequests.length)}
+        </GitHubItemsCard>
+      ) : null}
+      {issues.length || loadingKinds.has("issue") ? (
+        <GitHubItemsCard label="Issues" items={issues} loading={loadingKinds.has("issue")}>
+          <GitHubItemList items={shown("issues", issues)} />
+          {more("issues", issues.length)}
+        </GitHubItemsCard>
+      ) : null}
+    </div>
   );
 }
 
@@ -1682,13 +1855,14 @@ function GitPanel({
       <div className={`min-h-0 flex-1 flex-col ${diffPath ? "hidden" : "flex"}`}>
         <SearchInput inputRef={searchRef} value={query} placeholder="Search items" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-3 p-3" style={contentZoomStyle(fontSize)}>
+          <div className="flex flex-col gap-5 p-3" style={contentZoomStyle(fontSize)}>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
             {shown.map((repository) => (
-              <RepositoryCard
+              <RepositorySection
                 key={(repository.url ?? repository.path)?.toLowerCase()}
                 repository={repository}
                 loadingUrls={loadingUrls}
+                searching={Boolean(lowered)}
                 onOpenDiff={(path) => void openDiff(path)}
                 onRemove={
                   repository.url && itemRepositories.has(githubRepositoryKey(repository.url))
@@ -1729,48 +1903,86 @@ function missingUsage(session: Session): string {
 function UsagePanel({
   session,
   fontSize,
+  active,
   onLoad,
 }: {
   session: Session;
   fontSize: number;
+  active: boolean;
   onLoad: (tab: InspectorTab) => void;
 }) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
 
+  // Usage is read while it is visible, and again a second after each turn ends, when the harness has
+  // written it. Claude can also switch models mid-turn, and its status line rewrites the local snapshot
+  // 300 ms later, so for Claude any output starts that second; the other harnesses are read once per
+  // finished turn, which Codex marks with a notification and whose read starts an app server.
   useEffect(() => {
+    if (!active) return;
     let disposed = false;
-    setError("");
-    void invoke<UsageSnapshot | null>("read_usage", {
-      agent: session.agent,
-      provider: session.provider,
-      sessionId: session.id,
-      host: session.host,
-    })
-      .then((next) => {
-        if (!disposed) {
-          usageCache.set(session.id, next);
-          setUsage(next);
-        }
+    let settle = 0;
+    const read = () => {
+      setError("");
+      void invoke<UsageSnapshot | null>("read_usage", {
+        agent: session.agent,
+        provider: session.provider,
+        sessionId: session.id,
+        host: session.host,
       })
-      .catch((reason) => {
-        if (!disposed) setError(String(reason));
-      })
-      .finally(() => {
-        if (!disposed) onLoad("usage");
-      });
+        .then((next) => {
+          if (!disposed) {
+            usageCache.set(session.id, next);
+            setUsage(next);
+          }
+        })
+        .catch((reason) => {
+          if (!disposed) setError(String(reason));
+        })
+        .finally(() => {
+          if (!disposed) onLoad("usage");
+        });
+    };
+    read();
+    const settled = () => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(read, 1000);
+    };
+    const unsubscribe =
+      session.agent === "claude"
+        ? subscribeTerminalOutput(session.id, settled)
+        : subscribeNotifications(session.id, settled);
     return () => {
       disposed = true;
+      window.clearTimeout(settle);
+      unsubscribe();
     };
-  }, [onLoad, session.agent, session.provider, session.id, session.host]);
+  }, [active, onLoad, session.agent, session.provider, session.id, session.host]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-3" style={contentZoomStyle(fontSize)}>
-          <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-            <ProviderIcon agent={session.agent} provider={session.provider} className="size-5" />
-            {session.agent === "codex" && session.provider ? providerLabel(session.provider) : sessionLabel(session)}
+          <div className="mb-3 flex items-center gap-2.5">
+            <ProviderIcon agent={session.agent} provider={session.provider} className="size-5 shrink-0" />
+            <span className="min-w-0 flex-1">
+              {usage?.model ? (
+                <span className="block truncate text-sm font-medium" title={usage.model}>
+                  {usage.model}
+                </span>
+              ) : null}
+              <span className={usage?.model ? "block truncate text-xs text-muted-foreground" : "text-sm font-medium"}>
+                {session.agent === "codex" && session.provider
+                  ? providerLabel(session.provider)
+                  : sessionLabel(session)}
+              </span>
+            </span>
+            {usage?.reasoning ? (
+              <Badge variant="secondary" title="Reasoning">
+                <Brain />
+                {usage.reasoning}
+              </Badge>
+            ) : null}
           </div>
           {error ? (
             <p className="text-sm text-destructive">{error}</p>
@@ -1783,66 +1995,101 @@ function UsagePanel({
               </EmptyHeader>
             </Empty>
           ) : (
-            <ItemGroup>
+            <div className="flex flex-col gap-5">
+              {/* This conversation's context is the number a session acts on, so it leads. */}
               {usage.contextUsedPercent != null || usage.contextTokens != null ? (
-                <Item variant="outline" className="flex-col items-stretch">
+                <section className="rounded-lg bg-muted/60 p-3">
+                  <p className="text-xs text-muted-foreground">Context used</p>
+                  <p className="mt-1 flex items-baseline gap-1.5">
+                    {usage.contextTokens != null ? (
+                      <span className="text-3xl font-semibold tracking-tight tabular-nums">
+                        {formatNumber.format(usage.contextTokens)}
+                      </span>
+                    ) : null}
+                    {usage.contextWindow ? (
+                      <span className="text-sm text-muted-foreground">
+                        of {formatNumber.format(usage.contextWindow)}
+                      </span>
+                    ) : null}
+                    {usage.contextUsedPercent != null ? (
+                      <span className="ml-auto text-sm font-medium tabular-nums">
+                        {Math.round(usage.contextUsedPercent)}%
+                      </span>
+                    ) : null}
+                  </p>
                   {usage.contextUsedPercent != null ? (
-                    <Meter label="Session context" value={usage.contextUsedPercent} />
-                  ) : (
-                    <ItemDescription>Session context</ItemDescription>
-                  )}
-                  {usage.contextTokens != null ? (
-                    <ItemDescription className="tabular-nums">
-                      {formatNumber.format(usage.contextTokens)}
-                      {usage.contextWindow ? ` of ${formatNumber.format(usage.contextWindow)}` : ""} tokens
-                    </ItemDescription>
+                    <Meter
+                      label="Context used"
+                      value={usage.contextUsedPercent}
+                      className="mt-3 [&_[data-slot=progress-track]]:h-2"
+                    />
                   ) : null}
-                  {usage.costUsd != null ? (
-                    <ItemDescription className="tabular-nums">${usage.costUsd.toFixed(2)} session cost</ItemDescription>
-                  ) : null}
-                </Item>
+                  <p className="mt-2 flex text-xs text-muted-foreground tabular-nums">
+                    {usage.contextWindow && usage.contextTokens != null ? (
+                      <span>{formatNumber.format(Math.max(0, usage.contextWindow - usage.contextTokens))} left</span>
+                    ) : null}
+                    {usage.costUsd != null ? <span className="ml-auto">${usage.costUsd.toFixed(2)} so far</span> : null}
+                  </p>
+                </section>
               ) : (
-                <ItemDescription>
+                <p className="text-sm text-muted-foreground">
                   Session context appears after this harness reports its first response.
-                </ItemDescription>
+                </p>
               )}
-              {usage.windows.map((window) => (
-                <Item
-                  key={`${window.label}-${window.windowMinutes ?? ""}`}
-                  variant="outline"
-                  className="flex-col items-stretch"
-                >
-                  <Meter label={window.label} value={window.usedPercent} />
-                  {window.resetsAt != null ? (
-                    <ItemDescription>Resets {timeUntil(window.resetsAt)}</ItemDescription>
+              {usage.windows.length || usage.bankedResets != null || usage.lifetimeTokens != null ? (
+                <section className="flex flex-col gap-4">
+                  <h3 className="text-xs font-medium text-muted-foreground">Plan limits</h3>
+                  {usage.windows.map((window) => {
+                    const wait = window.resetsAt == null ? undefined : waitUntil(window.resetsAt);
+                    return (
+                      <div key={`${window.label}-${window.windowMinutes ?? ""}`} className="flex flex-col gap-1.5">
+                        <p className="flex items-baseline gap-2 text-sm">
+                          <span className="truncate">{window.label}</span>
+                          <span className="text-muted-foreground tabular-nums">{Math.round(window.usedPercent)}%</span>
+                          {wait ? (
+                            <span className="ml-auto shrink-0 text-xs text-muted-foreground tabular-nums">
+                              {wait} left
+                            </span>
+                          ) : null}
+                        </p>
+                        <Meter label={window.label} value={window.usedPercent} />
+                        {window.resetsAt != null ? (
+                          <p className="text-right text-xs text-muted-foreground first-letter:uppercase">
+                            {dayAndTime(window.resetsAt)}
+                          </p>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {usage.bankedResets != null ? (
+                    <div className="flex flex-col gap-1">
+                      <p className="flex items-baseline gap-2 text-sm">
+                        Banked resets
+                        <span className="ml-auto text-muted-foreground tabular-nums">
+                          {usage.bankedResets} available
+                        </span>
+                      </p>
+                      {usage.bankedResetExpiries.map((expiresAt, index) => (
+                        <p key={index} className="text-xs text-muted-foreground">
+                          Reset {index + 1}: {expiresAt == null ? "No expiry" : `Expires ${timeUntil(expiresAt)}`}
+                        </p>
+                      ))}
+                      {usage.bankedResets > usage.bankedResetExpiries.length ? (
+                        <p className="text-xs text-muted-foreground">Expiry dates unavailable for remaining resets.</p>
+                      ) : null}
+                    </div>
                   ) : null}
-                </Item>
-              ))}
-              {usage.bankedResets != null ? (
-                <Item variant="outline" className="flex-col items-stretch">
-                  <ItemDescription>Banked resets</ItemDescription>
-                  <ItemTitle className="text-lg tabular-nums">{usage.bankedResets} available</ItemTitle>
-                  {usage.bankedResetExpiries.map((expiresAt, index) => (
-                    <ItemDescription key={index}>
-                      Reset {index + 1}: {expiresAt == null ? "No expiry" : `Expires ${timeUntil(expiresAt)}`}
-                    </ItemDescription>
-                  ))}
-                  {usage.bankedResets > usage.bankedResetExpiries.length ? (
-                    <ItemDescription>Expiry dates unavailable for remaining resets.</ItemDescription>
+                  {usage.lifetimeTokens != null ? (
+                    <p className="flex items-baseline gap-2 text-sm">
+                      Provider total
+                      <span className="ml-auto text-muted-foreground tabular-nums">
+                        {formatNumber.format(usage.lifetimeTokens)} tokens
+                      </span>
+                    </p>
                   ) : null}
-                </Item>
+                </section>
               ) : null}
-              {usage.lifetimeTokens != null ? (
-                <Item variant="outline">
-                  <ItemContent>
-                    <ItemDescription>Provider total</ItemDescription>
-                    <ItemTitle className="text-lg tabular-nums">
-                      {formatNumber.format(usage.lifetimeTokens)} tokens
-                    </ItemTitle>
-                  </ItemContent>
-                </Item>
-              ) : null}
-            </ItemGroup>
+            </div>
           )}
         </div>
       </ScrollArea>
@@ -2018,7 +2265,13 @@ export const Inspector = memo(function Inspector({
           ) : null}
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
-              <UsagePanel key={reload.usage} session={session} fontSize={fontSize} onLoad={finishRefresh} />
+              <UsagePanel
+                key={reload.usage}
+                session={session}
+                fontSize={fontSize}
+                active={tab === "usage" && !collapsed}
+                onLoad={finishRefresh}
+              />
             </TabsContent>
           ) : null}
         </Tabs>

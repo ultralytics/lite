@@ -14,6 +14,8 @@ export interface Session {
   // Provider model chosen when the session was created; absent for providers that own model choice.
   model?: string;
   reasoningEffort?: string;
+  // CLI flags typed when the session was created, passed again on every launch so a resume keeps them.
+  flags?: string;
   // Sign-in and rebuild commands are temporary sessions; neither is stored or resumed.
   mode?: "login" | "rebuild";
   name: string;
@@ -109,4 +111,8 @@ export interface GitStatus {
   changes: { status: string; path: string }[];
   lineDiffs: Record<string, { additions: number; deletions: number }>;
   changesTruncated: boolean;
+  // Null on a detached HEAD; upstream is null until the branch is first pushed.
+  sync: { upstream: string | null; ahead: number; behind: number } | null;
+  // Null before the first commit.
+  lastCommit: { subject: string; committedAt: string } | null;
 }
