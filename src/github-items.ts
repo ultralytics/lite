@@ -14,7 +14,9 @@ export interface GitHubReferences {
 
 // Repository-qualified references are certain. A bare number from prose or an unqualified GitHub CLI command
 // may belong to any repository the session has named, and a short name narrows it to that one: GitHub
-// activity must confirm one before the panel shows it. A logged commit's trailing (#N) is history, not work.
+// activity must confirm one before the panel shows it. A logged commit's trailing (#N) is history, not work,
+// and a raw Markdown link target is source a command printed, such as a bot comment's footer: an agent's own
+// links arrive rendered, as terminal hyperlinks.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC hyperlinks are terminal framing.
@@ -28,6 +30,7 @@ const ITEM_MENTION =
 const ITEM_REFERENCE =
   /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const LOGGED_COMMIT = /^([^\w\n]*[\da-f]{7,40} .*)\(#\d+\)[ \t]*$/gim;
+const MARKDOWN_TARGET = /\]\(https:\/\/github\.com\/[^\s)]*\)/gi;
 const GH_COMMAND = /\bgh\s+([\w-]+)\s+([\w-]+)((?:(?!\bgh\s)[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
   /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;
@@ -42,7 +45,7 @@ export function githubItemReferences(
   terminalStream: string,
   prose: string,
 ): GitHubReferences {
-  const text = output.replace(COLOR, "");
+  const text = output.replace(COLOR, "").replace(MARKDOWN_TARGET, "]");
   const userText = prose.replace(COLOR, "");
   const candidates: Candidate[] = [];
   const repositories = new Map<string, string>();
@@ -116,10 +119,8 @@ export function githubItemReferences(
 const RECENT_ACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
 
 // Each ambiguous reference keeps at most one item: the most recently updated of its candidates, and only
-// one GitHub confirms was active in the last 30 days. A certain reference joins while it is open or was
-// active in that time, so a stale link quoted in a bot comment stays out; one GitHub could not answer
-// joins as printed.
-export function likelyGitHubItems<T extends { state?: string | null; updatedAt: string | null; url: string }>(
+// one GitHub confirms was active in the last 30 days.
+export function likelyGitHubItems<T extends { updatedAt: string | null; url: string }>(
   items: T[],
   inferred: string[][],
   now = Date.now(),
@@ -127,20 +128,15 @@ export function likelyGitHubItems<T extends { state?: string | null; updatedAt: 
   const updated = (item: T) => (item.updatedAt ? Date.parse(item.updatedAt) : Number.NaN);
   const byKey = new Map(items.map((item) => [itemKey(item.url), item]));
   const candidates = new Set(inferred.flat().map(itemKey));
-  const recent = (item: T) => now - updated(item) <= RECENT_ACTIVITY_MS;
   const chosen = new Set<T>();
   for (const group of inferred) {
     const [best] = group
       .map((url) => byKey.get(itemKey(url)))
-      .filter((item): item is T => !!item && recent(item))
+      .filter((item): item is T => !!item && now - updated(item) <= RECENT_ACTIVITY_MS)
       .sort((left, right) => updated(right) - updated(left));
     if (best) chosen.add(best);
   }
-  return items.filter((item) =>
-    candidates.has(itemKey(item.url))
-      ? chosen.has(item)
-      : !item.state || item.state === "open" || item.state === "draft" || recent(item),
-  );
+  return items.filter((item) => !candidates.has(itemKey(item.url)) || chosen.has(item));
 }
 
 export function mergeGitHubItems<T extends { url: string }>(current: T[], updates: T[]): T[] {

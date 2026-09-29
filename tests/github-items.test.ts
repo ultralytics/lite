@@ -145,6 +145,18 @@ gh issue view 102 --repo ULTRALYTICS/LITE
     ]);
   });
 
+  test("leaves a printed Markdown link target to the command that printed it", () => {
+    const comment = `Merged https://github.com/ultralytics/lite/pull/12 and [PR 13](https://github.com/ultralytics/lite/pull/13)
+📢 Thoughts on this report? [Let us know!](https://github.com/codecov/feedback/issues/255)
+#14 is next`;
+    const stream = "\u001b]8;;https://github.com/ultralytics/lite/pull/15\u0007#15\u001b]8;;\u0007";
+
+    expect(references(comment, "https://github.com/ultralytics/lite", stream, "")).toEqual({
+      explicit: ["https://github.com/ultralytics/lite/pull/15", "https://github.com/ultralytics/lite/pull/12"],
+      inferred: [["https://github.com/ultralytics/lite/pull/13"], ["https://github.com/ultralytics/lite/pull/14"]],
+    });
+  });
+
   test("does not recover incomplete plain URLs from the control stream", () => {
     const stream = "https://github.com/ultralytics/lite/pull/36\u001b[2D12";
     expect(references("", "", stream)).toEqual({ explicit: [], inferred: [] });
@@ -211,7 +223,7 @@ The agent also discussed ultralytics/portal PR #3612.`,
     });
   });
 
-  test("keeps inferred items and closed certain ones only when GitHub confirms recent activity", () => {
+  test("keeps inferred items only when GitHub confirms activity in the last 30 days", () => {
     const inferred = [
       "https://github.com/ultralytics/portal/pull/102",
       "https://github.com/ultralytics/portal/issues/3052",
@@ -221,8 +233,6 @@ The agent also discussed ultralytics/portal PR #3612.`,
       { url: inferred[0], updatedAt: "2026-07-14T18:00:00Z" },
       { url: inferred[1], updatedAt: "2026-07-16T18:00:00Z" },
       { url: "https://github.com/ultralytics/lite/pull/102", updatedAt: null },
-      { url: "https://github.com/codecov/feedback/issues/255", state: "closed", updatedAt: "2026-07-14T18:00:00Z" },
-      { url: "https://github.com/ultralytics/lite/issues/9", state: "open", updatedAt: "2025-01-01T00:00:00Z" },
     ];
 
     expect(
@@ -231,7 +241,7 @@ The agent also discussed ultralytics/portal PR #3612.`,
         inferred.map((url) => [url]),
         now,
       ),
-    ).toEqual([items[1], items[2], items[4]]);
+    ).toEqual([items[1], items[2]]);
   });
 
   test("resolves a bare reference to the session repository GitHub shows active", () => {
