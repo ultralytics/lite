@@ -159,16 +159,11 @@ jobs:
       - name: Validate and upload SBOM
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_ID: ${{ needs.check.outputs.release_id }}
           TAG: ${{ needs.check.outputs.tag }}
         run: |
           jq -e --arg version "${TAG#v}" '.spdxVersion == "SPDX-2.3" and .name == "Lite" and any(.packages[]; .name == "lite" and .versionInfo == $version)' sbom.spdx.json >/dev/null
           jq -e '[.packages[].externalRefs[]? | select(.referenceType == "purl") | .referenceLocator] | any(startswith("pkg:cargo/")) and any(startswith("pkg:npm/"))' sbom.spdx.json >/dev/null
-          ASSET_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq 'map(select(.name == "sbom.spdx.json")) | first.id // empty')
-          if [ -n "$ASSET_ID" ]; then
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
-          fi
-          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=sbom.spdx.json" -H "Content-Type: application/json" --input sbom.spdx.json >/dev/null
+          gh release upload "$TAG" sbom.spdx.json --repo "$GITHUB_REPOSITORY" --clobber
 
   publish:
     needs: [check, build, sbom]
@@ -207,12 +202,8 @@ jobs:
           x86_64-unknown-linux-gnu Lite_${VERSION}_linux_amd64.AppImage linux-x86_64,linux-x86_64-appimage
           x86_64-pc-windows-msvc Lite_${VERSION}_windows_x64-setup.exe windows-x86_64,windows-x86_64-nsis
           EOF
-          ASSET_ID=$(jq -r 'map(select(.name == "latest.json")) | first.id // empty' <<< "$ASSETS")
-          if [ -n "$ASSET_ID" ]; then
-            gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID"
-          fi
           printf '%s\n' "$MANIFEST" > "$RUNNER_TEMP/latest.json"
-          gh api --method POST "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" -H "Content-Type: application/json" --input "$RUNNER_TEMP/latest.json" >/dev/null
+          gh release upload "$TAG" "$RUNNER_TEMP/latest.json" --repo "$GITHUB_REPOSITORY" --clobber
       - name: Verify updater manifest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
