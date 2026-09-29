@@ -504,11 +504,11 @@ export function NewSessionDialog({
       ]
     : [
         {
-          label: "Recent in Lite",
+          label: "Recent",
           repositories: recent,
         },
         {
-          label: "Your repositories",
+          label: "All",
           repositories: listed.filter((repository) => !recentNames.has(fullName(repository).toLowerCase())),
         },
       ];
