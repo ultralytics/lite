@@ -854,6 +854,55 @@ struct GitStatus {
     changes: Vec<GitChange>,
     line_diffs: BTreeMap<String, LineDiff>,
     changes_truncated: bool,
+    #[serde(flatten)]
+    head: BranchHead,
+}
+
+// Where the branch stands: against its upstream, absent on a detached HEAD and without an upstream until
+// the branch is first pushed, and its newest commit, absent before the first one.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BranchHead {
+    sync: Option<BranchSync>,
+    last_commit: Option<LastCommit>,
+}
+
+#[derive(Serialize)]
+struct BranchSync {
+    upstream: Option<String>,
+    ahead: u64,
+    behind: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LastCommit {
+    subject: String,
+    committed_at: String,
+}
+
+// Reads what `rev-parse --abbrev-ref @{upstream}`, `rev-list --left-right --count @{upstream}...HEAD`
+// and `log -1 --format=%cI%n%s` printed, each empty when Git had nothing to say, so the local and SSH
+// paths share one reading.
+fn branch_head(branch: &str, upstream: &str, counts: &str, log: &str) -> BranchHead {
+    let mut counts = counts
+        .split_whitespace()
+        .map(|count| count.parse().unwrap_or(0));
+    let behind = counts.next().unwrap_or(0);
+    let ahead = counts.next().unwrap_or(0);
+    BranchHead {
+        sync: (!branch.is_empty()).then(|| BranchSync {
+            upstream: (!upstream.is_empty()).then(|| upstream.to_owned()),
+            ahead,
+            behind,
+        }),
+        last_commit: log
+            .split_once('\n')
+            .map(|(committed_at, subject)| LastCommit {
+                subject: subject.to_owned(),
+                committed_at: committed_at.to_owned(),
+            }),
+    }
 }
 
 fn git_status_result(
@@ -863,6 +912,7 @@ fn git_status_result(
     mut line_diffs: BTreeMap<String, LineDiff>,
     changes_truncated: bool,
     scope: &Path,
+    head: BranchHead,
 ) -> GitStatus {
     changes.retain(|change| Path::new(&change.path).starts_with(scope));
     line_diffs.retain(|path, _| Path::new(path).starts_with(scope));
@@ -876,6 +926,7 @@ fn git_status_result(
         changes,
         line_diffs,
         changes_truncated,
+        head,
     }
 }
 
@@ -2130,6 +2181,7 @@ struct GitHubItem {
     updated_at: Option<String>,
     additions: Option<u64>,
     deletions: Option<u64>,
+    head_branch: Option<String>,
 }
 
 // The repository and number a GitHub work-item link names, or nothing if the link is not one. Owner
@@ -2210,7 +2262,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             ));
         }
         query.push_str(
-            "}\nfragment f on IssueOrPullRequest {\n__typename\n... on Issue { title state createdAt updatedAt closedAt }\n... on PullRequest { title state isDraft createdAt updatedAt closedAt mergedAt additions deletions }\n}",
+            "}\nfragment f on IssueOrPullRequest {\n__typename\n... on Issue { title state createdAt updatedAt closedAt }\n... on PullRequest { title state isDraft createdAt updatedAt closedAt mergedAt additions deletions headRefName }\n}",
         );
         let output = Command::new(gh)
             .args(["api", "graphql", "-f", &format!("query={query}")])
@@ -2275,6 +2327,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                     updated_at: item["updatedAt"].as_str().map(str::to_owned),
                     additions: item["additions"].as_u64(),
                     deletions: item["deletions"].as_u64(),
+                    head_branch: item["headRefName"].as_str().map(str::to_owned),
                 });
             }
             // GitHub has no such repository, or the number names nothing in it.
@@ -2287,6 +2340,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                 updated_at: None,
                 additions: None,
                 deletions: None,
+                head_branch: None,
             }),
         }
     }
@@ -2310,6 +2364,7 @@ async fn github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             updated_at: None,
             additions: None,
             deletions: None,
+            head_branch: None,
         })
         .collect();
     tauri::async_runtime::spawn_blocking(move || {
@@ -6055,7 +6110,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             let output = ssh_output(
                 &root,
                 &format!(
-                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; {SSH_GIT_BASE} code=$(mktemp) || exit; trap 'rm -f -- \"$code\"' EXIT; printf '%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\"; {{ git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -z -n {} | head -c {status_limit}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; printf '\\0%s\\0' {}; {{ git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -c {MAX_GIT_DIFF_BYTES}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; rm -f -- \"$code\"; trap - EXIT",
+                    "root={}; repository=$(git -C \"$root\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '%s\\0\\0\\0' {}; exit 0; }}; case \"$root\" in \"$repository\") scope=.;; \"$repository\"/*) scope=${{root#\"$repository\"/}};; *) printf '%s\\n' 'The selected folder is outside the Git repository' >&2; exit 1;; esac; branch=$(git -C \"$root\" branch --show-current) || exit; upstream=; counts=; test -n \"$branch\" && upstream=$(git -C \"$root\" rev-parse --abbrev-ref --symbolic-full-name '@{{upstream}}' 2>/dev/null) && counts=$(git -C \"$root\" rev-list --left-right --count '@{{upstream}}...HEAD' 2>/dev/null); last=$(git -C \"$root\" log -1 --format=%cI%n%s 2>/dev/null); {SSH_GIT_BASE} code=$(mktemp) || exit; trap 'rm -f -- \"$code\"' EXIT; printf '%s\\0%s\\0%s\\0%s\\0%s\\0%s\\0' {} \"$repository\" \"$branch\" \"$upstream\" \"$counts\" \"$last\"; {{ git -C \"$repository\" --literal-pathspecs status --porcelain=v1 -z --no-renames --untracked-files=all -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -z -n {} | head -c {status_limit}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; printf '\\0%s\\0' {}; {{ git -C \"$repository\" --literal-pathspecs diff --no-ext-diff --no-textconv --no-renames --numstat -z \"$base\" -- \"$scope\"; printf '%s' $? > \"$code\"; }} | head -c {MAX_GIT_DIFF_BYTES}; result=$(cat \"$code\"); test \"$result\" = 0 || test \"$result\" = 141 || exit \"$result\"; rm -f -- \"$code\"; trap - EXIT",
                     posix_quote(&root.path),
                     posix_quote(&marker),
                     MAX_GIT_CHANGES + 1,
@@ -6063,7 +6118,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                     posix_quote(&marker),
                 ),
             )?;
-            let mut header = output.splitn(4, |byte| *byte == 0);
+            let mut header = output.splitn(7, |byte| *byte == 0);
             if header.next() != Some(marker.as_bytes()) {
                 return Err("Could not read remote Git status".into());
             }
@@ -6074,6 +6129,9 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             }
             let branch = String::from_utf8(header.next().unwrap_or_default().to_vec())
                 .map_err(|_| "Git returned a non-UTF-8 branch")?;
+            let [upstream, counts, log] = [(); 3]
+                .map(|()| String::from_utf8_lossy(header.next().unwrap_or_default()).into_owned());
+            let head = branch_head(&branch, &upstream, &counts, log.trim_end());
             let body = header.next().ok_or("Could not read remote Git status")?;
             let separator = separator.as_bytes();
             let split = body
@@ -6101,6 +6159,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
                 git_line_diffs(&diffs),
                 changes_truncated,
                 Path::new(scope),
+                head,
             )))
         })
         .await
@@ -6182,6 +6241,34 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             })
             .map(|output| git_line_diffs(&output))
             .unwrap_or_default();
+        let upstream = if branch.is_empty() {
+            String::new()
+        } else {
+            command_output(
+                &git,
+                &path,
+                &[
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "@{upstream}",
+                ],
+            )
+            .unwrap_or_default()
+        };
+        let counts = if upstream.is_empty() {
+            String::new()
+        } else {
+            command_output(
+                &git,
+                &path,
+                &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+            )
+            .unwrap_or_default()
+        };
+        let log =
+            command_output(&git, &path, &["log", "-1", "--format=%cI%n%s"]).unwrap_or_default();
+        let head = branch_head(&branch, &upstream, &counts, &log);
         Ok(Some(git_status_result(
             root,
             branch,
@@ -6189,6 +6276,7 @@ async fn git_status(roots: State<'_, Roots>, root_id: String) -> Result<Option<G
             line_diffs,
             changes_truncated,
             scope,
+            head,
         )))
     })
     .await

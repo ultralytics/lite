@@ -137,6 +137,7 @@ interface GitHubItem {
   updatedAt: string | null;
   additions: number | null;
   deletions: number | null;
+  headBranch: string | null;
 }
 
 function pendingGitHubItem(url: string): GitHubItem {
@@ -148,6 +149,7 @@ function pendingGitHubItem(url: string): GitHubItem {
     updatedAt: null,
     additions: null,
     deletions: null,
+    headBranch: null,
   };
 }
 
@@ -205,11 +207,20 @@ const GITHUB_STATE_ICON = {
   closed: "text-red-700 dark:text-red-400",
 } as const;
 
+const GITHUB_STATE_BAR = {
+  open: "bg-success",
+  draft: "bg-muted-foreground/40",
+  merged: "bg-violet-500",
+  closed: "bg-destructive",
+} as const satisfies Record<keyof typeof GITHUB_STATE_ICON, string>;
+
 interface RepositoryGroup {
   branch: string | null;
   changes: GitStatus["changes"];
   changesTruncated: boolean;
   lineDiffs: GitStatus["lineDiffs"];
+  sync: GitStatus["sync"];
+  lastCommit: GitStatus["lastCommit"];
   items: (GitHubItem & GitHubReference)[];
   name: string;
   path: string | null;
@@ -249,6 +260,8 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
       changes: status.changes,
       changesTruncated: status.changesTruncated,
       lineDiffs: status.lineDiffs,
+      sync: status.sync,
+      lastCommit: status.lastCommit,
       items: [],
       name: remote ? repoName(remote) : folderName(status.worktree) || status.worktree,
       path: status.worktree,
@@ -263,6 +276,8 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
       changes: [],
       changesTruncated: false,
       lineDiffs: {},
+      sync: null,
+      lastCommit: null,
       items: [],
       name: reference.repository,
       path: null,
@@ -1316,7 +1331,6 @@ function DiffViewer({
 }
 
 // What a porcelain status means to someone deciding what to commit, in the letters and colors editors use.
-// Conflicts lead because they block a commit.
 const CHANGE_KIND = {
   conflicted: { letter: "!", className: "text-red-700 dark:text-red-400" },
   modified: { letter: "M", className: "text-amber-700 dark:text-amber-400" },
@@ -1333,12 +1347,57 @@ function changeKind(status: string): keyof typeof CHANGE_KIND {
   return "modified";
 }
 
+// Each list opens with its first few entries, so the tab reads as a summary first, as Usage does.
+const LIST_PREVIEW = { changes: 3, "pull requests": 2, issues: 2 } as const;
+type ListName = keyof typeof LIST_PREVIEW;
+
 function SectionLabel({ children, loading = false }: { children: string; loading?: boolean }) {
   return (
     <h3 className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
       {children}
       {loading ? <Spinner className="size-3" aria-label={`Loading ${children.toLowerCase()}`} /> : null}
     </h3>
+  );
+}
+
+function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+// A linked repository has no working tree here, so its summary is where its pull requests and issues stand.
+function ItemSummary({ items }: { items: RepositoryGroup["items"] }) {
+  const counts = (Object.keys(GITHUB_STATE_BAR) as (keyof typeof GITHUB_STATE_BAR)[])
+    .map((state) => [state, items.filter((item) => item.state === state).length] as const)
+    .filter(([, count]) => count);
+  const total = counts.reduce((sum, [, count]) => sum + count, 0);
+  if (!total) return null;
+  return (
+    <section className="rounded-lg bg-muted/60 p-3">
+      <p className="text-xs text-muted-foreground">Pull requests and issues</p>
+      <p className="mt-1 flex items-baseline gap-1.5">
+        <span className="text-3xl font-semibold tracking-tight tabular-nums">
+          {items.filter((item) => item.state === "open").length}
+        </span>
+        <span className="text-sm text-muted-foreground">open of {total}</span>
+      </p>
+      <div
+        role="img"
+        aria-label={counts.map(([state, count]) => `${count} ${state}`).join(", ")}
+        className="mt-3 flex h-2 gap-0.5 overflow-hidden rounded-full"
+      >
+        {counts.map(([state, count]) => (
+          <span key={state} className={GITHUB_STATE_BAR[state]} style={{ flexGrow: count }} />
+        ))}
+      </div>
+      <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+        {counts.map(([state, count]) => (
+          <span key={state} className="flex items-center gap-1.5">
+            <span className={cn("size-2 rounded-full", GITHUB_STATE_BAR[state])} />
+            {count} {state}
+          </span>
+        ))}
+      </p>
+    </section>
   );
 }
 
@@ -1355,34 +1414,54 @@ function RepositorySection({
   onOpenDiff: (path: string) => void;
   onRemove?: () => void;
 }) {
-  const pullRequests = repository.items.filter((item) => item.kind === "pull request");
+  const [expanded, setExpanded] = useState(() => new Set<string>());
+  const allPullRequests = repository.items.filter((item) => item.kind === "pull request");
   const issues = repository.items.filter((item) => item.kind === "issue");
+  // The newest pull request opened from the checked-out branch is the one this work is up for review in.
+  const branchPullRequest =
+    repository.path && repository.branch && !searching
+      ? allPullRequests.find((item) => item.headBranch === repository.branch)
+      : undefined;
+  const pullRequests = allPullRequests.filter((item) => item !== branchPullRequest);
   const loadingKinds = new Set(
     loadingUrls
       .filter((url) => repository.url && githubRepositoryKey(url) === githubRepositoryKey(repository.url))
       .map((url) => githubReference(url).kind),
   );
-  const kinds: Partial<Record<keyof typeof CHANGE_KIND, number>> = {};
   let additions = 0;
   let deletions = 0;
   for (const change of repository.changes) {
-    const kind = changeKind(change.status);
-    kinds[kind] = (kinds[kind] ?? 0) + 1;
     additions += repository.lineDiffs[change.path]?.additions ?? 0;
     deletions += repository.lineDiffs[change.path]?.deletions ?? 0;
   }
+  const { sync, lastCommit } = repository;
+  const shown = <T,>(name: ListName, list: T[]) =>
+    searching || expanded.has(name) ? list : list.slice(0, LIST_PREVIEW[name]);
+  const more = (name: ListName, count: number) =>
+    !searching && count > LIST_PREVIEW[name] ? (
+      <button
+        type="button"
+        className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        aria-expanded={expanded.has(name)}
+        onClick={() =>
+          setExpanded((current) => (current.has(name) ? without(current, name) : including(current, name)))
+        }
+      >
+        <ChevronRight className={cn("size-3", expanded.has(name) && "-rotate-90")} />
+        {expanded.has(name) ? "Show fewer" : `${count - LIST_PREVIEW[name]} more`}
+      </button>
+    ) : null;
   const identity = (
     <>
       <GitHubLogomark className="size-5 shrink-0" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{repository.name}</span>
-        {/* A repository the session only linked to has no working tree here, so it says what it holds. */}
         <span className="block truncate text-xs text-muted-foreground" title={repository.path ?? undefined}>
           {repository.path
             ? tilde(repository.path)
             : [
-                pullRequests.length && `${pullRequests.length} pull request${pullRequests.length === 1 ? "" : "s"}`,
-                issues.length && `${issues.length} issue${issues.length === 1 ? "" : "s"}`,
+                allPullRequests.length && plural(allPullRequests.length, "pull request"),
+                issues.length && plural(issues.length, "issue"),
               ]
                 .filter(Boolean)
                 .join(" · ")}
@@ -1425,8 +1504,9 @@ function RepositorySection({
           </ActionIconButton>
         ) : null}
       </div>
-      {/* The working tree is what the session is changing right now, so it leads, as context leads Usage. */}
-      {repository.path && (repository.changes.length || !searching) ? (
+      {/* The working tree is what the session is changing right now, so it leads, as context leads Usage:
+          what is uncommitted, whether it is pushed, and the pull request it is up for review in. */}
+      {repository.path && !searching ? (
         <section className="rounded-lg bg-muted/60 p-3">
           <p className="text-xs text-muted-foreground">Uncommitted changes</p>
           {repository.changes.length ? (
@@ -1451,12 +1531,6 @@ function RepositorySection({
                   className="mt-3 [&_[data-slot=progress-indicator]]:bg-success [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-destructive"
                 />
               ) : null}
-              <p className="mt-2 text-xs text-muted-foreground tabular-nums">
-                {(Object.keys(CHANGE_KIND) as (keyof typeof CHANGE_KIND)[])
-                  .filter((kind) => kinds[kind])
-                  .map((kind) => `${kinds[kind]} ${kind}`)
-                  .join(" · ")}
-              </p>
             </>
           ) : (
             <p className="mt-1 flex items-center gap-2 text-xl font-semibold tracking-tight">
@@ -1464,13 +1538,38 @@ function RepositorySection({
               Clean
             </p>
           )}
+          {sync || lastCommit ? (
+            <p className="mt-2 flex gap-3 text-xs text-muted-foreground tabular-nums">
+              {sync ? (
+                <span className="truncate" title={sync.upstream ?? undefined}>
+                  {sync.upstream
+                    ? [sync.ahead && `${sync.ahead} to push`, sync.behind && `${sync.behind} to pull`]
+                        .filter(Boolean)
+                        .join(" · ") || "Up to date"
+                    : "Not pushed"}
+                </span>
+              ) : null}
+              {lastCommit ? (
+                <span className="ml-auto shrink-0" title={lastCommit.subject}>
+                  committed {relativeAge(lastCommit.committedAt)}
+                </span>
+              ) : null}
+            </p>
+          ) : null}
+          {branchPullRequest ? (
+            <div className="mt-3 border-t pt-2">
+              <p className="text-xs text-muted-foreground">This branch's pull request</p>
+              <GitHubItemList items={[branchPullRequest]} />
+            </div>
+          ) : null}
         </section>
       ) : null}
+      {!repository.path && !searching ? <ItemSummary items={repository.items} /> : null}
       {repository.changes.length ? (
         <section>
           <SectionLabel>Changes</SectionLabel>
           <div className="-mx-1.5">
-            {repository.changes.map((change) => {
+            {shown("changes", repository.changes).map((change) => {
               const diff = repository.lineDiffs[change.path];
               const kind = changeKind(change.status);
               const slash = change.path.lastIndexOf("/");
@@ -1510,18 +1609,23 @@ function RepositorySection({
               );
             })}
           </div>
+          {more("changes", repository.changes.length)}
         </section>
       ) : null}
       {pullRequests.length || loadingKinds.has("pull request") ? (
         <section>
-          <SectionLabel loading={loadingKinds.has("pull request")}>Pull requests</SectionLabel>
-          <GitHubItemList items={pullRequests} />
+          <SectionLabel loading={loadingKinds.has("pull request")}>
+            {branchPullRequest ? "Other pull requests" : "Pull requests"}
+          </SectionLabel>
+          <GitHubItemList items={shown("pull requests", pullRequests)} />
+          {more("pull requests", pullRequests.length)}
         </section>
       ) : null}
       {issues.length || loadingKinds.has("issue") ? (
         <section>
           <SectionLabel loading={loadingKinds.has("issue")}>Issues</SectionLabel>
-          <GitHubItemList items={issues} />
+          <GitHubItemList items={shown("issues", issues)} />
+          {more("issues", issues.length)}
         </section>
       ) : null}
     </div>

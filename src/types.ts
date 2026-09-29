@@ -111,4 +111,8 @@ export interface GitStatus {
   changes: { status: string; path: string }[];
   lineDiffs: Record<string, { additions: number; deletions: number }>;
   changesTruncated: boolean;
+  // Null on a detached HEAD; upstream is null until the branch is first pushed.
+  sync: { upstream: string | null; ahead: number; behind: number } | null;
+  // Null before the first commit.
+  lastCommit: { subject: string; committedAt: string } | null;
 }
