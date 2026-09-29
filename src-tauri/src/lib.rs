@@ -2262,7 +2262,7 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
             ));
         }
         query.push_str(
-            "}\nfragment f on IssueOrPullRequest {\n__typename\n... on Issue { title state createdAt updatedAt closedAt }\n... on PullRequest { title state isDraft createdAt updatedAt closedAt mergedAt additions deletions headRefName }\n}",
+            "}\nfragment f on IssueOrPullRequest {\n__typename\n... on Issue { title state createdAt updatedAt closedAt }\n... on PullRequest { title state isDraft createdAt updatedAt closedAt mergedAt additions deletions headRefName isCrossRepository }\n}",
         );
         let output = Command::new(gh)
             .args(["api", "graphql", "-f", &format!("query={query}")])
@@ -2327,7 +2327,11 @@ fn check_github_items(urls: Vec<String>) -> Vec<GitHubItem> {
                     updated_at: item["updatedAt"].as_str().map(str::to_owned),
                     additions: item["additions"].as_u64(),
                     deletions: item["deletions"].as_u64(),
-                    head_branch: item["headRefName"].as_str().map(str::to_owned),
+                    // A fork's branch can share any name with a local one, so only a branch in this
+                    // repository can be the one a worktree has checked out.
+                    head_branch: (item["isCrossRepository"].as_bool() == Some(false))
+                        .then(|| item["headRefName"].as_str().map(str::to_owned))
+                        .flatten(),
                 });
             }
             // GitHub has no such repository, or the number names nothing in it.
