@@ -33,6 +33,8 @@ const ITEM_MENTION =
 const ITEM_REFERENCE =
   /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const LOGGED_COMMIT = /^([^\w\n]*[\da-f]{7,40} .*)\(#\d+\)[ \t]*$/gim;
+// A mention whose own link follows it, as a Markdown label or a parenthesized URL.
+const LINKED = /^\]?[ \t]*\(?[ \t]*https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/(?:pull|issues)\/([1-9]\d{0,8})(?!\w)/i;
 const CODECOV_FOOTER = /Thoughts\s+on\s+this\s+report\?\s+\[Let\s+us\s+know!\]\([^\s)]*\)/gi;
 const GH_COMMAND = /\bgh\s+([\w-]+)\s+([\w-]+)((?:(?!\bgh\s)[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
@@ -94,9 +96,16 @@ export function githubItemReferences(
   }
   for (const match of text.matchAll(GH_API))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase() === "pulls" ? "pull" : "issues", match[4], 3);
+  // A mention its own link follows is that linked item, and is not kept to be resolved again later.
+  const owned = new Set<string>();
   for (const source of new Set([text, userText])) {
-    for (const match of source.replace(LOGGED_COMMIT, "$1").matchAll(ITEM_REFERENCE))
-      mentions.push(`${itemKind(match[2])} ${match[3]} ${match[1]?.toLowerCase() ?? ""}`);
+    const scanned = source.replace(LOGGED_COMMIT, "$1");
+    for (const match of scanned.matchAll(ITEM_REFERENCE)) {
+      const mention = `${itemKind(match[2])} ${match[3]} ${match[1]?.toLowerCase() ?? ""}`;
+      const end = (match.index ?? 0) + match[0].length;
+      if (scanned.slice(end, end + 120).match(LINKED)?.[1] === match[3]) owned.add(mention);
+      mentions.push(mention);
+    }
   }
 
   candidates.sort((left, right) => left.index - right.index);
@@ -108,20 +117,15 @@ export function githubItemReferences(
   }
   const explicit = [...items.values()].map((candidate) => candidate.url);
   const inferred = new Map<string, string[]>();
-  // A mention this text shows beside a certain reference it may name, such as a Markdown link's label, is that
-  // item. A word this text does not know as a repository may name one it does not show, so it stays ambiguous.
-  const shown = new Set(mentions);
-  const owned = new Set<string>();
   const names = new Set([...repositories.keys()].map((repository) => repository.split("/")[1]));
   for (const mention of new Set([...mentions, ...remembered])) {
     const [kind, number, word] = mention.split(" ");
     const group = [...repositories.values()]
       .filter((repository) => !names.has(word) || repository.split("/")[1].toLowerCase() === word)
       .map((repository) => `https://github.com/${repository}/${kind}/${number}`);
-    if (!group.some((url) => items.has(itemKey(url)))) {
-      if (group.length) inferred.set(group.join(" "), group);
-    } else if (shown.has(mention) && (!word || names.has(word))) owned.add(mention);
+    if (group.length && !group.some((url) => items.has(itemKey(url)))) inferred.set(group.join(" "), group);
   }
+  const shown = new Set(mentions);
   return {
     explicit,
     inferred: [...inferred.values()],
