@@ -7,8 +7,10 @@ import { Terminal } from "@xterm/xterm";
 import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "../src/github-items";
 import { appendOutput, clearOutput, readTerminalInput, recordTerminalInput, renderedOutput } from "../src/output-store";
 
-const references = (output: string, remote = "", terminalStream = "", prose = output) =>
-  githubItemReferences(output, remote, terminalStream, prose);
+const references = (output: string, remote = "", terminalStream = "", prose = output) => {
+  const { explicit, inferred } = githubItemReferences(output, remote, terminalStream, prose);
+  return { explicit, inferred };
+};
 const explicit = (output: string) => references(output).explicit;
 
 describe("output activity", () => {
@@ -213,6 +215,19 @@ The agent also discussed ultralytics/portal PR #3612.`,
         group("issues", 90),
       ],
     });
+  });
+
+  test("resolves references a redraw removed against the repositories named since", () => {
+    const { mentions } = githubItemReferences("#26430 is merged; Lite #192 and gh pr view 7", "", "", "");
+    expect(mentions).toEqual(["pull 7 ", "pull 26430 ", "pull 192 lite"]);
+    expect(
+      githubItemReferences("gh pr view 3 -R ultralytics/sdk", "https://github.com/ultralytics/lite", "", "", mentions)
+        .inferred,
+    ).toEqual([
+      ["https://github.com/ultralytics/lite/pull/7", "https://github.com/ultralytics/sdk/pull/7"],
+      ["https://github.com/ultralytics/lite/pull/26430", "https://github.com/ultralytics/sdk/pull/26430"],
+      ["https://github.com/ultralytics/lite/pull/192"],
+    ]);
   });
 
   test("uses one named repository to resolve user prose without a Git remote", () => {

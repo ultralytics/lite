@@ -10,6 +10,9 @@ export interface GitHubReferences {
   explicit: string[];
   // One entry per ambiguous reference: the item it would name in each repository the session has named.
   inferred: string[][];
+  // The ambiguous references this text holds, as "kind number word", where the word before a reference may
+  // name its repository. A session keeps them so a reference redrawn away still resolves.
+  mentions: string[];
 }
 
 // Repository-qualified references are certain. A bare number from prose or an unqualified GitHub CLI command
@@ -43,6 +46,7 @@ export function githubItemReferences(
   remote: string,
   terminalStream: string,
   prose: string,
+  remembered: string[] = [],
 ): GitHubReferences {
   const text = output.replace(COLOR, "").replace(CODECOV_FOOTER, "");
   const userText = prose.replace(COLOR, "");
@@ -72,7 +76,7 @@ export function githubItemReferences(
     for (const match of source.matchAll(ITEM_MENTION)) add(match, match[1], itemKind(match[2]), match[3], 2);
   }
   // Ambiguous forms are read once every repository the session names is known.
-  const ambiguous: { kind: string; number: string; name?: string }[] = [];
+  const mentions: string[] = [];
   for (const match of text.matchAll(GH_COMMAND)) {
     const repository = match[3].match(GH_REPOSITORY)?.slice(2).find(Boolean);
     // Any command names its repository, even one that names no item or whose number is a shell variable.
@@ -85,16 +89,13 @@ export function githubItemReferences(
     if (numbers?.length !== 1) continue;
     const kind = match[1].toLowerCase() === "pr" ? "pull" : "issues";
     if (repository) add(match, repository, kind, numbers[0].trim(), 2);
-    else ambiguous.push({ kind, number: numbers[0].trim() });
+    else mentions.push(`${kind} ${numbers[0].trim()} `);
   }
   for (const match of text.matchAll(GH_API))
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase() === "pulls" ? "pull" : "issues", match[4], 3);
-  const names = new Set([...repositories.keys()].map((repository) => repository.split("/")[1]));
   for (const source of new Set([text, userText])) {
-    for (const match of source.replace(LOGGED_COMMIT, "$1").matchAll(ITEM_REFERENCE)) {
-      const name = match[1]?.toLowerCase();
-      ambiguous.push({ kind: itemKind(match[2]), number: match[3], name: name && names.has(name) ? name : undefined });
-    }
+    for (const match of source.replace(LOGGED_COMMIT, "$1").matchAll(ITEM_REFERENCE))
+      mentions.push(`${itemKind(match[2])} ${match[3]} ${match[1]?.toLowerCase() ?? ""}`);
   }
 
   candidates.sort((left, right) => left.index - right.index);
@@ -106,13 +107,15 @@ export function githubItemReferences(
   }
   const explicit = [...items.values()].map((candidate) => candidate.url);
   const inferred = new Map<string, string[]>();
-  for (const { kind, number, name } of ambiguous) {
+  const names = new Set([...repositories.keys()].map((repository) => repository.split("/")[1]));
+  for (const mention of new Set([...mentions, ...remembered])) {
+    const [kind, number, word] = mention.split(" ");
     const group = [...repositories.values()]
-      .filter((repository) => !name || repository.split("/")[1].toLowerCase() === name)
+      .filter((repository) => !names.has(word) || repository.split("/")[1].toLowerCase() === word)
       .map((repository) => `https://github.com/${repository}/${kind}/${number}`);
     if (group.length && !group.some((url) => items.has(itemKey(url)))) inferred.set(group.join(" "), group);
   }
-  return { explicit, inferred: [...inferred.values()] };
+  return { explicit, inferred: [...inferred.values()], mentions: [...new Set(mentions)] };
 }
 
 const RECENT_ACTIVITY_MS = 30 * 24 * 60 * 60 * 1000;
