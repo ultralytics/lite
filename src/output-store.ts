@@ -25,6 +25,7 @@ const terminalReaders = new Map<string, () => string>();
 const terminalSnapshots = new Map<string, string>();
 const terminalInputs = new Map<string, string>();
 const terminalListeners = new Map<string, Set<() => void>>();
+const notificationListeners = new Map<string, Set<() => void>>();
 
 // Titles and working directories arrive whether or not the session is visible, so their shared OSC
 // owner lives here where every session's output arrives rather than in the mounted terminal. Lite's
@@ -135,6 +136,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   const previousActivity = buffer.backgroundActivity;
   const activityChanged = activity !== undefined && activity !== previousActivity;
   if (activity !== undefined) buffer.backgroundActivity = activity;
+  if (notification) for (const listener of notificationListeners.get(sessionId) ?? []) listener();
   const tail = text.match(UNTERMINATED)?.[0] ?? "";
   if (activity === undefined && tail.startsWith("\x1b]6973;lite-")) activity = false;
   buffer.tail = tail.length > MAX_TAIL ? "" : tail;
@@ -260,6 +262,14 @@ export function subscribeTerminalOutput(sessionId: string, listener: () => void)
   return () => sessionListeners.delete(listener);
 }
 
+// A harness notifies when a turn ends or it needs the user, whether or not its terminal is visible.
+export function subscribeNotifications(sessionId: string, listener: () => void) {
+  const sessionListeners = notificationListeners.get(sessionId) ?? new Set();
+  sessionListeners.add(listener);
+  notificationListeners.set(sessionId, sessionListeners);
+  return () => sessionListeners.delete(listener);
+}
+
 export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
   listeners.delete(sessionId);
@@ -267,6 +277,7 @@ export function clearOutput(sessionId: string) {
   terminalSnapshots.delete(sessionId);
   terminalInputs.delete(sessionId);
   terminalListeners.delete(sessionId);
+  notificationListeners.delete(sessionId);
   writes.delete(sessionId);
 }
 

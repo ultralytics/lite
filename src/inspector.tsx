@@ -62,7 +62,13 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { githubItemReferences, itemKey, likelyGitHubItems, mergeGitHubItems } from "@/github-items";
 import { SEMANTIC_PROGRESS_CLASSES, type SemanticTone } from "@/lib/semantic-styles";
 import { cn, including, without } from "@/lib/utils";
-import { readTerminalInput, readTerminalOutput, readTerminalStream, subscribeTerminalOutput } from "@/output-store";
+import {
+  readTerminalInput,
+  readTerminalOutput,
+  readTerminalStream,
+  subscribeNotifications,
+  subscribeTerminalOutput,
+} from "@/output-store";
 import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import { contentZoomStyle } from "@/theme";
 import {
@@ -75,6 +81,7 @@ import {
   repoName,
   type Session,
   sessionLabel,
+  tilde,
 } from "@/types";
 
 const CodePreview = lazy(() => import("@/code-preview"));
@@ -125,7 +132,7 @@ function githubRepositoryKey(url: string) {
 interface GitHubItem {
   url: string;
   title: string | null;
-  state: keyof typeof GITHUB_STATE | null;
+  state: keyof typeof GITHUB_STATE_ICON | null;
   occurredAt: string | null;
   updatedAt: string | null;
   additions: number | null;
@@ -191,13 +198,6 @@ export function rememberGitHubReferences(sessionId: string, output: string, term
 }
 
 // The colors GitHub itself answers in, so a glance here reads the same as a glance there.
-const GITHUB_STATE = {
-  open: "success",
-  draft: "secondary",
-  merged: "purple",
-  closed: "error",
-} as const;
-
 const GITHUB_STATE_ICON = {
   open: "text-success",
   draft: "text-muted-foreground",
@@ -275,71 +275,49 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
   return [...groups.values()];
 }
 
-function GitHubItemList({
-  label,
-  items,
-  loading,
-}: {
-  label: string;
-  items: RepositoryGroup["items"];
-  loading: boolean;
-}) {
-  if (!items.length)
-    return loading ? (
-      <div className="border-t">
-        <Loading label={`Loading ${label.toLowerCase()}…`} />
-      </div>
-    ) : null;
+// A quiet two-line row: the icon's color carries the state, so the line beneath can say when it happened.
+function GitHubItemList({ items }: { items: RepositoryGroup["items"] }) {
   return (
-    <div className="border-t">
-      <p className="flex items-center gap-2 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
-        {label}
-        {loading ? <Spinner className="size-3" aria-label={`Loading ${label.toLowerCase()}`} /> : null}
-      </p>
-      <ItemGroup className="has-data-[size=xs]:gap-0">
-        {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
-          <Item
-            key={url}
-            size="xs"
-            className="flex-nowrap items-start rounded-none px-3 text-left hover:bg-muted"
-            render={
-              <button
-                type="button"
-                title={url}
-                data-context-url={url}
-                onClick={() => void invoke("open_url", { url })}
-              />
-            }
-          >
-            <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
-              <GitHubItemIcon kind={kind} state={state} />
-            </ItemMedia>
-            <ItemContent>
-              <ItemTitle className="w-full">{title ?? `#${number}`}</ItemTitle>
-              {title ? (
-                <div className="flex min-w-0 items-center gap-2">
-                  <ItemDescription className="min-w-0 truncate font-mono">
-                    #{number}
-                    {occurredAt ? ` · ${relativeAge(occurredAt)}` : ""}
-                  </ItemDescription>
-                  {additions ? (
-                    <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">+{additions}</span>
-                  ) : null}
-                  {deletions ? (
-                    <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{deletions}</span>
-                  ) : null}
-                  {state ? (
-                    <Badge className="ml-auto" variant={GITHUB_STATE[state]}>
-                      {state}
-                    </Badge>
-                  ) : null}
-                </div>
-              ) : null}
-            </ItemContent>
-          </Item>
-        ))}
-      </ItemGroup>
-    </div>
+    <ItemGroup className="-mx-1.5 has-data-[size=xs]:gap-0">
+      {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
+        <Item
+          key={url}
+          size="xs"
+          className="flex-nowrap items-start px-1.5 py-1.5 text-left hover:bg-muted"
+          render={
+            <button type="button" title={url} data-context-url={url} onClick={() => void invoke("open_url", { url })} />
+          }
+        >
+          <ItemMedia variant="icon" className={state ? GITHUB_STATE_ICON[state] : "text-muted-foreground"}>
+            <GitHubItemIcon kind={kind} state={state} />
+          </ItemMedia>
+          <ItemContent className="min-w-0">
+            <ItemTitle className="block w-full truncate font-normal">{title ?? `#${number}`}</ItemTitle>
+            {title ? (
+              <div className="flex min-w-0 items-center gap-2">
+                <ItemDescription className="min-w-0 truncate">
+                  #{number}
+                  {state ? ` · ${state === "open" ? "opened" : state === "draft" ? "drafted" : state}` : ""}
+                  {occurredAt ? ` ${relativeAge(occurredAt)}` : ""}
+                </ItemDescription>
+                {additions ? (
+                  <span className="ml-auto shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
+                    +{additions}
+                  </span>
+                ) : null}
+                {deletions ? (
+                  <span
+                    className={cn("shrink-0 font-mono text-xs text-red-600 dark:text-red-400", !additions && "ml-auto")}
+                  >
+                    -{deletions}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
+          </ItemContent>
+        </Item>
+      ))}
+    </ItemGroup>
   );
 }
 
@@ -1337,14 +1315,43 @@ function DiffViewer({
   );
 }
 
-function RepositoryCard({
+// What a porcelain status means to someone deciding what to commit, in the letters and colors editors use.
+// Conflicts lead because they block a commit.
+const CHANGE_KIND = {
+  conflicted: { letter: "!", className: "text-red-700 dark:text-red-400" },
+  modified: { letter: "M", className: "text-amber-700 dark:text-amber-400" },
+  added: { letter: "A", className: "text-success" },
+  deleted: { letter: "D", className: "text-red-700 dark:text-red-400" },
+  untracked: { letter: "U", className: "text-success" },
+} as const;
+
+function changeKind(status: string): keyof typeof CHANGE_KIND {
+  if (status === "??") return "untracked";
+  if (status.includes("U") || status === "AA" || status === "DD") return "conflicted";
+  if (status.includes("D")) return "deleted";
+  if (status.includes("A")) return "added";
+  return "modified";
+}
+
+function SectionLabel({ children, loading = false }: { children: string; loading?: boolean }) {
+  return (
+    <h3 className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+      {children}
+      {loading ? <Spinner className="size-3" aria-label={`Loading ${children.toLowerCase()}`} /> : null}
+    </h3>
+  );
+}
+
+function RepositorySection({
   repository,
   loadingUrls,
+  searching,
   onOpenDiff,
   onRemove,
 }: {
   repository: RepositoryGroup;
   loadingUrls: string[];
+  searching: boolean;
   onOpenDiff: (path: string) => void;
   onRemove?: () => void;
 }) {
@@ -1355,54 +1362,61 @@ function RepositoryCard({
       .filter((url) => repository.url && githubRepositoryKey(url) === githubRepositoryKey(repository.url))
       .map((url) => githubReference(url).kind),
   );
-  const header = (
+  const kinds: Partial<Record<keyof typeof CHANGE_KIND, number>> = {};
+  let additions = 0;
+  let deletions = 0;
+  for (const change of repository.changes) {
+    const kind = changeKind(change.status);
+    kinds[kind] = (kinds[kind] ?? 0) + 1;
+    additions += repository.lineDiffs[change.path]?.additions ?? 0;
+    deletions += repository.lineDiffs[change.path]?.deletions ?? 0;
+  }
+  const identity = (
     <>
-      <span className="flex min-w-0 w-full items-center gap-2.5">
-        <GitHubLogomark className="size-5 shrink-0" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{repository.name}</span>
-          {repository.path ? (
-            <span className="block truncate font-mono text-xs text-muted-foreground" title={repository.path}>
-              {repository.path}
-            </span>
-          ) : null}
+      <GitHubLogomark className="size-5 shrink-0" />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm font-medium">{repository.name}</span>
+        {/* A repository the session only linked to has no working tree here, so it says what it holds. */}
+        <span className="block truncate text-xs text-muted-foreground" title={repository.path ?? undefined}>
+          {repository.path
+            ? tilde(repository.path)
+            : [
+                pullRequests.length && `${pullRequests.length} pull request${pullRequests.length === 1 ? "" : "s"}`,
+                issues.length && `${issues.length} issue${issues.length === 1 ? "" : "s"}`,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
         </span>
       </span>
-      {repository.branch ? (
-        <span className="flex min-w-0 w-full items-center gap-1.5 pl-8">
-          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate font-mono text-xs">{repository.branch}</span>
-          {repository.changes.length ? (
-            <Badge variant="secondary">
-              {repository.changes.length}
-              {repository.changesTruncated ? "+" : ""} changed
-            </Badge>
-          ) : null}
-        </span>
-      ) : null}
     </>
   );
 
   return (
-    <section className="overflow-hidden rounded-lg border">
-      <div className="group/repository flex items-start hover:bg-muted focus-within:bg-muted">
+    <div className="flex flex-col gap-5 not-first:border-t not-first:pt-5">
+      <div className="group/repository flex items-center gap-2">
         {repository.url ? (
           <button
             type="button"
-            className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5 text-left"
+            className="-m-1.5 flex min-w-0 flex-1 items-center gap-2.5 rounded-md p-1.5 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             title={`Open ${repository.url}`}
             data-context-url={repository.url}
             onClick={() => void invoke("open_url", { url: repository.url })}
           >
-            {header}
+            {identity}
           </button>
         ) : (
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2.5">{header}</div>
+          <div className="flex min-w-0 flex-1 items-center gap-2.5">{identity}</div>
         )}
+        {repository.branch ? (
+          <Badge variant="secondary" className="max-w-1/2" title={repository.branch}>
+            <GitBranch />
+            <span className="truncate">{repository.branch}</span>
+          </Badge>
+        ) : null}
         {onRemove ? (
           <ActionIconButton
             size="icon-sm"
-            className="mt-1.5 mr-1.5 hidden text-muted-foreground hover:text-destructive group-hover/repository:inline-flex group-focus-within/repository:inline-flex"
+            className="hidden text-muted-foreground hover:text-destructive group-hover/repository:inline-flex group-focus-within/repository:inline-flex"
             tooltip="Remove repository"
             aria-label={`Remove ${repository.name}`}
             onClick={onRemove}
@@ -1411,43 +1425,106 @@ function RepositoryCard({
           </ActionIconButton>
         ) : null}
       </div>
-      {repository.changes.length ? (
-        <div className="border-t px-2.5 py-2">
-          <p className="mb-1 px-0.5 text-xs font-medium">Changes</p>
-          {repository.changes.map((change) => {
-            const diff = repository.lineDiffs[change.path];
-            return (
-              <button
-                key={`${change.status}:${change.path}`}
-                type="button"
-                className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                aria-label={`View diff for ${change.path}`}
-                onClick={() => onOpenDiff(change.path)}
-              >
-                <span
-                  className={`${change.status === "??" ? "w-16" : "w-5"} shrink-0 font-mono text-xs text-muted-foreground`}
-                >
-                  {change.status === "??" ? "Untracked" : change.status.trim()}
+      {/* The working tree is what the session is changing right now, so it leads, as context leads Usage. */}
+      {repository.path && (repository.changes.length || !searching) ? (
+        <section className="rounded-lg bg-muted/60 p-3">
+          <p className="text-xs text-muted-foreground">Uncommitted changes</p>
+          {repository.changes.length ? (
+            <>
+              <p className="mt-1 flex items-baseline gap-1.5">
+                <span className="text-3xl font-semibold tracking-tight tabular-nums">
+                  {formatNumber.format(repository.changes.length)}
+                  {repository.changesTruncated ? "+" : ""}
                 </span>
-                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={change.path}>
-                  {change.path}
+                <span className="text-sm text-muted-foreground">
+                  {repository.changes.length === 1 ? "file" : "files"}
                 </span>
-                {diff?.additions ? (
-                  <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
-                    +{diff.additions}
-                  </span>
-                ) : null}
-                {diff?.deletions ? (
-                  <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{diff.deletions}</span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
+                <span className="ml-auto flex gap-1.5 font-mono text-sm font-medium">
+                  <span className="text-green-600 dark:text-green-400">+{formatNumber.format(additions)}</span>
+                  <span className="text-red-600 dark:text-red-400">-{formatNumber.format(deletions)}</span>
+                </span>
+              </p>
+              {additions + deletions ? (
+                <Progress
+                  value={(additions / (additions + deletions)) * 100}
+                  aria-label={`${additions} lines added, ${deletions} removed`}
+                  className="mt-3 [&_[data-slot=progress-indicator]]:bg-success [&_[data-slot=progress-track]]:h-2 [&_[data-slot=progress-track]]:bg-destructive"
+                />
+              ) : null}
+              <p className="mt-2 text-xs text-muted-foreground tabular-nums">
+                {(Object.keys(CHANGE_KIND) as (keyof typeof CHANGE_KIND)[])
+                  .filter((kind) => kinds[kind])
+                  .map((kind) => `${kinds[kind]} ${kind}`)
+                  .join(" · ")}
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 flex items-center gap-2 text-xl font-semibold tracking-tight">
+              <CircleCheck className="size-5 text-success" />
+              Clean
+            </p>
+          )}
+        </section>
       ) : null}
-      <GitHubItemList label="Pull requests" items={pullRequests} loading={loadingKinds.has("pull request")} />
-      <GitHubItemList label="Issues" items={issues} loading={loadingKinds.has("issue")} />
-    </section>
+      {repository.changes.length ? (
+        <section>
+          <SectionLabel>Changes</SectionLabel>
+          <div className="-mx-1.5">
+            {repository.changes.map((change) => {
+              const diff = repository.lineDiffs[change.path];
+              const kind = changeKind(change.status);
+              const slash = change.path.lastIndexOf("/");
+              return (
+                <button
+                  key={`${change.status}:${change.path}`}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  aria-label={`View diff for ${change.path}`}
+                  title={change.path}
+                  onClick={() => onOpenDiff(change.path)}
+                >
+                  <span
+                    className={cn(
+                      "w-3 shrink-0 text-center font-mono text-xs font-semibold",
+                      CHANGE_KIND[kind].className,
+                    )}
+                    title={kind}
+                  >
+                    {CHANGE_KIND[kind].letter}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-xs">
+                    {change.path.slice(slash + 1)}
+                    {slash > 0 ? (
+                      <span className="ml-1.5 text-muted-foreground">{change.path.slice(0, slash)}</span>
+                    ) : null}
+                  </span>
+                  {diff?.additions ? (
+                    <span className="shrink-0 font-mono text-xs text-green-600 dark:text-green-400">
+                      +{diff.additions}
+                    </span>
+                  ) : null}
+                  {diff?.deletions ? (
+                    <span className="shrink-0 font-mono text-xs text-red-600 dark:text-red-400">-{diff.deletions}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
+      {pullRequests.length || loadingKinds.has("pull request") ? (
+        <section>
+          <SectionLabel loading={loadingKinds.has("pull request")}>Pull requests</SectionLabel>
+          <GitHubItemList items={pullRequests} />
+        </section>
+      ) : null}
+      {issues.length || loadingKinds.has("issue") ? (
+        <section>
+          <SectionLabel loading={loadingKinds.has("issue")}>Issues</SectionLabel>
+          <GitHubItemList items={issues} />
+        </section>
+      ) : null}
+    </div>
   );
 }
 
@@ -1688,13 +1765,14 @@ function GitPanel({
       <div className={`min-h-0 flex-1 flex-col ${diffPath ? "hidden" : "flex"}`}>
         <SearchInput inputRef={searchRef} value={query} placeholder="Search items" onChange={setQuery} />
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-3 p-3" style={contentZoomStyle(fontSize)}>
+          <div className="flex flex-col gap-5 p-3" style={contentZoomStyle(fontSize)}>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
             {shown.map((repository) => (
-              <RepositoryCard
+              <RepositorySection
                 key={(repository.url ?? repository.path)?.toLowerCase()}
                 repository={repository}
                 loadingUrls={loadingUrls}
+                searching={Boolean(lowered)}
                 onOpenDiff={(path) => void openDiff(path)}
                 onRemove={
                   repository.url && itemRepositories.has(githubRepositoryKey(repository.url))
@@ -1746,9 +1824,10 @@ function UsagePanel({
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
 
-  // Usage is read while it is visible. Claude can switch models mid-turn, and its status line rewrites the
-  // local snapshot 300 ms later, so the panel reads it again in place once the terminal has been quiet
-  // for a second.
+  // Usage is read while it is visible, and again a second after each turn ends, when the harness has
+  // written it. Claude can also switch models mid-turn, and its status line rewrites the local snapshot
+  // 300 ms later, so for Claude any output starts that second; the other harnesses are read once per
+  // finished turn, which Codex marks with a notification and whose read starts an app server.
   useEffect(() => {
     if (!active) return;
     let disposed = false;
@@ -1775,17 +1854,18 @@ function UsagePanel({
         });
     };
     read();
+    const settled = () => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(read, 1000);
+    };
     const unsubscribe =
       session.agent === "claude"
-        ? subscribeTerminalOutput(session.id, () => {
-            window.clearTimeout(settle);
-            settle = window.setTimeout(read, 1000);
-          })
-        : undefined;
+        ? subscribeTerminalOutput(session.id, settled)
+        : subscribeNotifications(session.id, settled);
     return () => {
       disposed = true;
       window.clearTimeout(settle);
-      unsubscribe?.();
+      unsubscribe();
     };
   }, [active, onLoad, session.agent, session.provider, session.id, session.host]);
 
