@@ -239,9 +239,8 @@ export function readTerminalOutput(sessionId: string) {
   return terminalReaders.get(sessionId)?.() ?? terminalSnapshots.get(sessionId) ?? readTerminalStream(sessionId);
 }
 
-// User input is the provenance boundary for ambiguous prose. Agent text, command output, and restored
-// history may contain any number of unrelated PRs; only text the user submitted can resolve a bare
-// reference against this session's repository. Keep the same bound as terminal output.
+// What the user submitted is kept apart from what the terminal shows, so a reference the user typed still
+// counts after the agent's interface redraws it away. Keep the same bound as terminal output.
 export function recordTerminalInput(sessionId: string, input: string) {
   const current = terminalInputs.get(sessionId);
   terminalInputs.set(sessionId, `${current ? `${current}\n` : ""}${input}`.slice(-MAX_OUTPUT_BYTES));

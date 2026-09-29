@@ -172,23 +172,29 @@ ultralytics/lite PR #102
     });
   });
 
-  test("accepts user prose while rejecting unrelated output prose", () => {
+  test("reads bare references in user and agent prose but not commit subjects", () => {
     const found = references(
       `https://github.com/ultralytics/lite/pull/111
-PRs #57/#56 merged
-sessionUndoToast, PR 57, Shift+Enter, PR 56
+#57, #56 and #58 are merged
+- #59 (palette masks): rewritten smaller
 91cec83 Add macOS session notifications and settings workspace (#84)
 The agent also discussed ultralytics/portal PR #3612.`,
       "https://github.com/ultralytics/lite",
       "",
       "Review PR #112 and issue 90 in this session",
     );
+    const group = (kind: string, number: number) =>
+      ["lite", "portal"].map((name) => `https://github.com/ultralytics/${name}/${kind}/${number}`);
 
     expect(found).toEqual({
       explicit: ["https://github.com/ultralytics/lite/pull/111", "https://github.com/ultralytics/portal/pull/3612"],
       inferred: [
-        ["https://github.com/ultralytics/lite/pull/112", "https://github.com/ultralytics/portal/pull/112"],
-        ["https://github.com/ultralytics/lite/issues/90", "https://github.com/ultralytics/portal/issues/90"],
+        group("pull", 57),
+        group("pull", 56),
+        group("pull", 58),
+        group("pull", 59),
+        group("pull", 112),
+        group("issues", 90),
       ],
     });
   });
@@ -200,7 +206,7 @@ The agent also discussed ultralytics/portal PR #3612.`,
     });
   });
 
-  test("keeps inferred items only when GitHub confirms activity in the last 30 days", () => {
+  test("keeps inferred items and closed certain ones only when GitHub confirms recent activity", () => {
     const inferred = [
       "https://github.com/ultralytics/portal/pull/102",
       "https://github.com/ultralytics/portal/issues/3052",
@@ -210,6 +216,8 @@ The agent also discussed ultralytics/portal PR #3612.`,
       { url: inferred[0], updatedAt: "2026-07-14T18:00:00Z" },
       { url: inferred[1], updatedAt: "2026-07-16T18:00:00Z" },
       { url: "https://github.com/ultralytics/lite/pull/102", updatedAt: null },
+      { url: "https://github.com/codecov/feedback/issues/255", state: "closed", updatedAt: "2026-07-14T18:00:00Z" },
+      { url: "https://github.com/ultralytics/lite/issues/9", state: "open", updatedAt: "2025-01-01T00:00:00Z" },
     ];
 
     expect(
@@ -218,7 +226,7 @@ The agent also discussed ultralytics/portal PR #3612.`,
         inferred.map((url) => [url]),
         now,
       ),
-    ).toEqual([items[1], items[2]]);
+    ).toEqual([items[1], items[2], items[4]]);
   });
 
   test("resolves a bare reference to the session repository GitHub shows active", () => {
@@ -247,7 +255,7 @@ gh pr merge 347 -R ultralytics/handbook --squash`,
     expect(likelyGitHubItems(checked, [group], now)).toEqual([checked[1]]);
   });
 
-  test("resolves a short repository name only against repositories the session names", () => {
+  test("narrows a reference to a short repository name the session names", () => {
     expect(
       references(
         "ultralytics/portal#4225 merged; Lite #192 is approved; Since #3143 it skips",
@@ -255,7 +263,10 @@ gh pr merge 347 -R ultralytics/handbook --squash`,
         "",
         "",
       ).inferred,
-    ).toEqual([["https://github.com/ultralytics/lite/pull/192"]]);
+    ).toEqual([
+      ["https://github.com/ultralytics/lite/pull/192"],
+      ["https://github.com/ultralytics/lite/pull/3143", "https://github.com/ultralytics/portal/pull/3143"],
+    ]);
   });
 
   test("reads an unqualified command number inside Claude Code's Bash(...)", () => {

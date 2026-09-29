@@ -1697,13 +1697,13 @@ function GitPanel({
     };
   }, [active, remote, sessionId]);
 
-  // A named item belongs to the session once. Later checks update its GitHub state, but never remove it.
-  // User prose or an unqualified command first has to be confirmed as recent activity, and each check asks
-  // about every candidate, so a repository named later can still hold the most active one.
+  // A named item belongs to the session once GitHub has answered for it. Later checks update its GitHub
+  // state, but never remove it. Until then it has to pass likelyGitHubItems, and each check asks about every
+  // candidate, so a repository named later can still hold the most active one.
   useEffect(() => {
     const { explicit, inferred } = references;
     const visible = sessionGitHubItems(sessionId);
-    const known = new Set(visible.map((item) => itemKey(item.url)));
+    const known = new Set(visible.filter((item) => item.title !== null).map((item) => itemKey(item.url)));
     const shown = mergeGitHubItems(
       visible,
       explicit.map((url) => ({ url })),
@@ -1725,9 +1725,13 @@ function GitPanel({
             known.has(itemKey(item.url)) ? item.title !== null : likely.has(item),
           );
           // An item GitHub left out of its answer is one GitHub says does not exist, such as a link
-          // a redraw clipped, so the session forgets it rather than keeping it as printed.
+          // a redraw clipped, so the session forgets it rather than keeping it as printed; so is one
+          // remembered while the panel was closed that its answer does not admit.
           const answered = new Set(checked.map((item) => itemKey(item.url)));
-          const disowned = new Set(urls.map(itemKey).filter((key) => !answered.has(key)));
+          const kept = new Set(updates.map((item) => itemKey(item.url)));
+          const disowned = new Set(
+            urls.map(itemKey).filter((key) => !answered.has(key) || (!known.has(key) && !kept.has(key))),
+          );
           setItems(retainGitHubItems(sessionId, updates, disowned));
         }
       })
