@@ -169,6 +169,10 @@ const REMEMBERED_REFERENCES_KEY = "lite.github-items.remembered";
 const MAX_MENTIONS = 500;
 const MAX_REPOSITORIES = 50;
 
+// What each session's last render showed. A new reference is kept only once two renders in a row show it,
+// so a number or link still streaming in, such as #10 on its way to #102, is never kept.
+const lastRendered = new Map<string, RememberedReferences>();
+
 function rememberedReferences(sessionId: string): RememberedReferences {
   const sessions = JSON.parse(localStorage.getItem(REMEMBERED_REFERENCES_KEY) ?? "{}") as Record<
     string,
@@ -215,11 +219,17 @@ function retainGitHubItems(sessionId: string, updates: GitHubItem[], disowned = 
 export function rememberGitHubReferences(sessionId: string, output: string, terminalStream: string) {
   const current = rememberedReferences(sessionId);
   const { explicit, remembered } = githubItemReferences(output, "", terminalStream, "", current);
-  // What the terminal still shows comes last, so the same output always keeps the same, newest mentions;
-  // repositories stop being added once the session holds its limit.
+  const last = lastRendered.get(sessionId) ?? { mentions: [], repositories: [] };
+  lastRendered.set(sessionId, remembered);
+  const mentions = new Set([...current.mentions, ...last.mentions]);
+  const repositories = new Set([...current.repositories, ...last.repositories]);
+  // What the terminal still shows comes last, so the same output always keeps the same, newest mentions, and
+  // the first repositories a session names stay named.
   const next = {
-    mentions: remembered.mentions.slice(-MAX_MENTIONS),
-    repositories: remembered.repositories.length > MAX_REPOSITORIES ? current.repositories : remembered.repositories,
+    mentions: remembered.mentions.filter((mention) => mentions.has(mention)).slice(-MAX_MENTIONS),
+    repositories: remembered.repositories
+      .filter((repository) => repositories.has(repository))
+      .slice(0, MAX_REPOSITORIES),
   };
   if (JSON.stringify(next) !== JSON.stringify(current)) {
     const sessions = JSON.parse(localStorage.getItem(REMEMBERED_REFERENCES_KEY) ?? "{}") as Record<
@@ -1677,6 +1687,7 @@ export function clearInspectorCache(sessionId: string) {
   >;
   delete remembered[sessionId];
   localStorage.setItem(REMEMBERED_REFERENCES_KEY, JSON.stringify(remembered));
+  lastRendered.delete(sessionId);
 }
 
 function GitPanel({
@@ -1766,8 +1777,9 @@ function GitPanel({
       visible,
       references.explicit.map((url) => ({ url })),
     ).map((item) => item.url);
-    // A bare reference to an item the session already lists is that item, not a new question.
-    const listed = new Set(shown.map(itemKey));
+    // A bare reference to an item the session already lists, or listed until the user removed it, is that
+    // item, not a new question.
+    const listed = new Set([...shown.map(itemKey), ...removedGitHubItems(sessionId)]);
     const inferred = references.inferred.filter((group) => !group.some((url) => listed.has(itemKey(url))));
     const urls = [...shown, ...inferred.flat()];
     const keys = [...new Set(urls.map(itemKey))];
