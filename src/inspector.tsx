@@ -293,12 +293,12 @@ function repositoryGroups(remote: string, status: GitStatus | null, items: GitHu
 // A quiet two-line row: the icon's color carries the state, so the line beneath can say when it happened.
 function GitHubItemList({ items }: { items: RepositoryGroup["items"] }) {
   return (
-    <ItemGroup className="-mx-1.5 has-data-[size=xs]:gap-0">
+    <ItemGroup className="-mx-1.5 w-auto has-data-[size=xs]:gap-0">
       {items.map(({ url, title, state, occurredAt, additions, deletions, kind, number }) => (
         <Item
           key={url}
           size="xs"
-          className="flex-nowrap items-start px-1.5 py-1.5 text-left hover:bg-muted"
+          className="flex-nowrap items-start px-1.5 py-1.5 text-left hover:bg-foreground/5"
           render={
             <button type="button" title={url} data-context-url={url} onClick={() => void invoke("open_url", { url })} />
           }
@@ -1348,55 +1348,42 @@ function changeKind(status: string): keyof typeof CHANGE_KIND {
 }
 
 // Each list opens with its first few entries, so the tab reads as a summary first, as Usage does.
-const LIST_PREVIEW = { changes: 3, "pull requests": 2, issues: 2 } as const;
+const LIST_PREVIEW = { changes: 3, "pull requests": 5, issues: 5 } as const;
 type ListName = keyof typeof LIST_PREVIEW;
 
-function SectionLabel({ children, loading = false }: { children: string; loading?: boolean }) {
-  return (
-    <h3 className="mb-1 flex items-center gap-2 text-xs font-medium text-muted-foreground">
-      {children}
-      {loading ? <Spinner className="size-3" aria-label={`Loading ${children.toLowerCase()}`} /> : null}
-    </h3>
-  );
-}
-
-function plural(count: number, word: string) {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
-}
-
-// A linked repository has no working tree here, so its summary is where its pull requests and issues stand.
-function ItemSummary({ items }: { items: RepositoryGroup["items"] }) {
+// Pull requests and issues each sit in a card that opens with where they stand, as each of Usage's limits
+// opens with its meter: the count in each state, and one bar split the same way across the whole list.
+function GitHubItemsCard({
+  label,
+  items,
+  loading,
+  children,
+}: {
+  label: string;
+  items: RepositoryGroup["items"];
+  loading: boolean;
+  children: ReactNode;
+}) {
   const counts = (Object.keys(GITHUB_STATE_BAR) as (keyof typeof GITHUB_STATE_BAR)[])
     .map((state) => [state, items.filter((item) => item.state === state).length] as const)
     .filter(([, count]) => count);
-  const total = counts.reduce((sum, [, count]) => sum + count, 0);
-  if (!total) return null;
+  const summary = counts.map(([state, count]) => `${count} ${state}`).join(" · ");
   return (
     <section className="rounded-lg bg-muted/60 p-3">
-      <p className="text-xs text-muted-foreground">Pull requests and issues</p>
-      <p className="mt-1 flex items-baseline gap-1.5">
-        <span className="text-3xl font-semibold tracking-tight tabular-nums">
-          {items.filter((item) => item.state === "open").length}
-        </span>
-        <span className="text-sm text-muted-foreground">open of {total}</span>
-      </p>
-      <div
-        role="img"
-        aria-label={counts.map(([state, count]) => `${count} ${state}`).join(", ")}
-        className="mt-3 flex h-2 gap-0.5 overflow-hidden rounded-full"
-      >
-        {counts.map(([state, count]) => (
-          <span key={state} className={GITHUB_STATE_BAR[state]} style={{ flexGrow: count }} />
-        ))}
-      </div>
-      <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-        {counts.map(([state, count]) => (
-          <span key={state} className="flex items-center gap-1.5">
-            <span className={cn("size-2 rounded-full", GITHUB_STATE_BAR[state])} />
-            {count} {state}
-          </span>
-        ))}
-      </p>
+      <h3 className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        {label}
+        {loading ? <Spinner className="size-3" aria-label={`Loading ${label.toLowerCase()}`} /> : null}
+        <span className="ml-auto truncate font-normal tabular-nums">{summary}</span>
+      </h3>
+      {/* One item's bar would only repeat its icon's color; two or more show the split, even a single state. */}
+      {items.length > 1 && counts.length ? (
+        <div role="img" aria-label={summary} className="mt-2 flex h-1.5 gap-0.5 overflow-hidden rounded-full">
+          {counts.map(([state, count]) => (
+            <span key={state} className={GITHUB_STATE_BAR[state]} style={{ flexGrow: count }} />
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-2">{children}</div>
     </section>
   );
 }
@@ -1441,7 +1428,7 @@ function RepositorySection({
     !searching && count > LIST_PREVIEW[name] ? (
       <button
         type="button"
-        className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-1 text-xs text-muted-foreground hover:bg-foreground/5 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         aria-expanded={expanded.has(name)}
         onClick={() =>
           setExpanded((current) => (current.has(name) ? without(current, name) : including(current, name)))
@@ -1456,16 +1443,11 @@ function RepositorySection({
       <GitHubLogomark className="size-5 shrink-0" />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium">{repository.name}</span>
-        <span className="block truncate text-xs text-muted-foreground" title={repository.path ?? undefined}>
-          {repository.path
-            ? tilde(repository.path)
-            : [
-                allPullRequests.length && plural(allPullRequests.length, "pull request"),
-                issues.length && plural(issues.length, "issue"),
-              ]
-                .filter(Boolean)
-                .join(" · ")}
-        </span>
+        {repository.path ? (
+          <span className="block truncate text-xs text-muted-foreground" title={repository.path}>
+            {tilde(repository.path)}
+          </span>
+        ) : null}
       </span>
     </>
   );
@@ -1492,10 +1474,12 @@ function RepositorySection({
             <span className="truncate">{repository.branch}</span>
           </Badge>
         ) : null}
+        {/* Keeps its place while unseen, and gives back the height a one-line header lacks, so revealing it
+            on hover moves nothing. */}
         {onRemove ? (
           <ActionIconButton
             size="icon-sm"
-            className="hidden text-muted-foreground hover:text-destructive group-hover/repository:inline-flex group-focus-within/repository:inline-flex"
+            className="invisible -my-1 text-muted-foreground group-focus-within/repository:visible group-hover/repository:visible hover:text-destructive"
             tooltip="Remove repository"
             aria-label={`Remove ${repository.name}`}
             onClick={onRemove}
@@ -1564,10 +1548,9 @@ function RepositorySection({
           ) : null}
         </section>
       ) : null}
-      {!repository.path && !searching ? <ItemSummary items={repository.items} /> : null}
       {repository.changes.length ? (
         <section>
-          <SectionLabel>Changes</SectionLabel>
+          <h3 className="mb-1 text-xs font-medium text-muted-foreground">Changes</h3>
           <div className="-mx-1.5">
             {shown("changes", repository.changes).map((change) => {
               const diff = repository.lineDiffs[change.path];
@@ -1613,20 +1596,20 @@ function RepositorySection({
         </section>
       ) : null}
       {pullRequests.length || loadingKinds.has("pull request") ? (
-        <section>
-          <SectionLabel loading={loadingKinds.has("pull request")}>
-            {branchPullRequest ? "Other pull requests" : "Pull requests"}
-          </SectionLabel>
+        <GitHubItemsCard
+          label={branchPullRequest ? "Other pull requests" : "Pull requests"}
+          items={pullRequests}
+          loading={loadingKinds.has("pull request")}
+        >
           <GitHubItemList items={shown("pull requests", pullRequests)} />
           {more("pull requests", pullRequests.length)}
-        </section>
+        </GitHubItemsCard>
       ) : null}
       {issues.length || loadingKinds.has("issue") ? (
-        <section>
-          <SectionLabel loading={loadingKinds.has("issue")}>Issues</SectionLabel>
+        <GitHubItemsCard label="Issues" items={issues} loading={loadingKinds.has("issue")}>
           <GitHubItemList items={shown("issues", issues)} />
           {more("issues", issues.length)}
-        </section>
+        </GitHubItemsCard>
       ) : null}
     </div>
   );
