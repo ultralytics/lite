@@ -26,7 +26,8 @@ const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!
 const ITEM_MENTION =
   /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const ITEM_REFERENCE =
-  /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d|(?<=^[^\w\n]*[\da-f]{7,40} .*\(#\d+)\)[ \t]*$)/gim;
+  /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d)/gi;
+const LOGGED_COMMIT = /^([^\w\n]*[\da-f]{7,40} .*)\(#\d+\)[ \t]*$/gim;
 const GH_COMMAND = /\bgh\s+([\w-]+)\s+([\w-]+)((?:(?!\bgh\s)[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
   /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;
@@ -88,7 +89,7 @@ export function githubItemReferences(
     add(match, `${match[1]}/${match[2]}`, match[3].toLowerCase() === "pulls" ? "pull" : "issues", match[4], 3);
   const names = new Set([...repositories.keys()].map((repository) => repository.split("/")[1]));
   for (const source of new Set([text, userText])) {
-    for (const match of source.matchAll(ITEM_REFERENCE)) {
+    for (const match of source.replace(LOGGED_COMMIT, "$1").matchAll(ITEM_REFERENCE)) {
       const name = match[1]?.toLowerCase();
       ambiguous.push({ kind: itemKind(match[2]), number: match[3], name: name && names.has(name) ? name : undefined });
     }

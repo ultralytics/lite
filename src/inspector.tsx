@@ -1701,13 +1701,15 @@ function GitPanel({
   // state, but never remove it. Until then it has to pass likelyGitHubItems, and each check asks about every
   // candidate, so a repository named later can still hold the most active one.
   useEffect(() => {
-    const { explicit, inferred } = references;
     const visible = sessionGitHubItems(sessionId);
     const known = new Set(visible.filter((item) => item.title !== null).map((item) => itemKey(item.url)));
     const shown = mergeGitHubItems(
       visible,
-      explicit.map((url) => ({ url })),
+      references.explicit.map((url) => ({ url })),
     ).map((item) => item.url);
+    // A bare reference to an item the session already lists is that item, not a new question.
+    const listed = new Set(shown.map(itemKey));
+    const inferred = references.inferred.filter((group) => !group.some((url) => listed.has(itemKey(url))));
     const urls = [...shown, ...inferred.flat()];
     if (!urls.length) {
       setItems([]);
