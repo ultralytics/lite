@@ -1421,6 +1421,9 @@ function RepositorySection({
     additions += repository.lineDiffs[change.path]?.additions ?? 0;
     deletions += repository.lineDiffs[change.path]?.deletions ?? 0;
   }
+  // Git counts lines only in files it tracks, so the totals say what they leave out.
+  const untracked = repository.changes.filter((change) => change.status === "??").length;
+  const lineScope = `Lines changed in tracked files${untracked ? `; ${untracked} untracked ${untracked === 1 ? "file is" : "files are"} not counted` : ""}`;
   const { sync, lastCommit } = repository;
   const shown = <T,>(name: ListName, list: T[]) =>
     searching || expanded.has(name) ? list : list.slice(0, LIST_PREVIEW[name]);
@@ -1503,7 +1506,7 @@ function RepositorySection({
                 <span className="text-sm text-muted-foreground">
                   {repository.changes.length === 1 ? "file" : "files"}
                 </span>
-                <span className="ml-auto flex gap-1.5 font-mono text-sm font-medium">
+                <span className="ml-auto flex gap-1.5 font-mono text-sm font-medium" title={lineScope}>
                   <span className="text-green-600 dark:text-green-400">+{formatNumber.format(additions)}</span>
                   <span className="text-red-600 dark:text-red-400">-{formatNumber.format(deletions)}</span>
                 </span>
