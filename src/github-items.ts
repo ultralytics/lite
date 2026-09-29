@@ -14,7 +14,7 @@ export interface GitHubReferences {
 
 // Repository-qualified references are certain. A bare number from prose or an unqualified GitHub CLI command
 // may belong to any repository the session has named, and a short name narrows it to that one: GitHub
-// activity must confirm one before the panel shows it. A commit subject's trailing (#N) is history, not work.
+// activity must confirm one before the panel shows it. A logged commit's trailing (#N) is history, not work.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a color code has to be named to be removed.
 const COLOR = /\u001b\[[0-9;?]*[ -/]*[@-~]/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC hyperlinks are terminal framing.
@@ -26,7 +26,7 @@ const QUALIFIED_ITEM = /(?:^|[^\w./-])(\w[\w.-]*)\/(\w[\w.-]*)#([1-9]\d{0,8})(?!
 const ITEM_MENTION =
   /(?:^|[^\w./-])(\w[\w.-]*\/\w[\w.-]*)[ \t]+(pull requests?|PRs?|issues?)[ \t]+#?([1-9]\d{0,8})(?!\w|\.\d)/gi;
 const ITEM_REFERENCE =
-  /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d|\)[ \t]*$)/gim;
+  /(?:^|[^\w./-])(?:(\w[\w.-]*)[ \t]+)?(?:(pull requests?|PRs?|issues?)[ \t]+#?|#)([1-9]\d{0,8})(?!\w|\.\d|(?<=^[^\w\n]*[\da-f]{7,40} .*\(#\d+)\)[ \t]*$)/gim;
 const GH_COMMAND = /\bgh\s+([\w-]+)\s+([\w-]+)((?:(?!\bgh\s)[^;&|'"\\\r\n]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*)/gi;
 const GH_REPOSITORY =
   /^((?:[^'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")*?\s)(?:--repo|-R)(?:=|\s+)(?:([\w.-]+\/[\w.-]+)|'([\w.-]+\/[\w.-]+)'|"([\w.-]+\/[\w.-]+)")/i;

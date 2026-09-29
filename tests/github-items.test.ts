@@ -172,12 +172,15 @@ ultralytics/lite PR #102
     });
   });
 
-  test("reads bare references in user and agent prose but not commit subjects", () => {
+  test("reads bare references in user and agent prose but not logged commits", () => {
     const found = references(
       `https://github.com/ultralytics/lite/pull/111
 #57, #56 and #58 are merged
 - #59 (palette masks): rewritten smaller
 91cec83 Add macOS session notifications and settings workspace (#84)
+  ⎿  7da5382 Update zensical (#349)
+Merged the docs note (#60)
+Please review (PR #61)
 The agent also discussed ultralytics/portal PR #3612.`,
       "https://github.com/ultralytics/lite",
       "",
@@ -193,6 +196,8 @@ The agent also discussed ultralytics/portal PR #3612.`,
         group("pull", 56),
         group("pull", 58),
         group("pull", 59),
+        group("pull", 60),
+        group("pull", 61),
         group("pull", 112),
         group("issues", 90),
       ],
