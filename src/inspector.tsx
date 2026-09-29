@@ -169,9 +169,10 @@ const REMEMBERED_REFERENCES_KEY = "lite.github-items.remembered";
 const MAX_MENTIONS = 500;
 const MAX_REPOSITORIES = 50;
 
-// What each session's last render showed. A new reference is kept only once two renders in a row show it,
-// so a number or link still streaming in, such as #10 on its way to #102, is never kept.
-const lastRendered = new Map<string, RememberedReferences>();
+// The mentions each session's last render showed. A new mention is kept only once two renders in a row show
+// it, so a number still streaming in, such as #10 on its way to #102, is not kept. A repository is kept when
+// first seen, because a mention kept later may depend on it.
+const lastRendered = new Map<string, string[]>();
 
 function rememberedReferences(sessionId: string): RememberedReferences {
   const sessions = JSON.parse(localStorage.getItem(REMEMBERED_REFERENCES_KEY) ?? "{}") as Record<
@@ -219,17 +220,13 @@ function retainGitHubItems(sessionId: string, updates: GitHubItem[], disowned = 
 export function rememberGitHubReferences(sessionId: string, output: string, terminalStream: string) {
   const current = rememberedReferences(sessionId);
   const { explicit, remembered } = githubItemReferences(output, "", terminalStream, "", current);
-  const last = lastRendered.get(sessionId) ?? { mentions: [], repositories: [] };
-  lastRendered.set(sessionId, remembered);
-  const mentions = new Set([...current.mentions, ...last.mentions]);
-  const repositories = new Set([...current.repositories, ...last.repositories]);
+  const settled = new Set([...current.mentions, ...(lastRendered.get(sessionId) ?? [])]);
+  lastRendered.set(sessionId, remembered.mentions);
   // What the terminal still shows comes last, so the same output always keeps the same, newest mentions, and
   // the first repositories a session names stay named.
   const next = {
-    mentions: remembered.mentions.filter((mention) => mentions.has(mention)).slice(-MAX_MENTIONS),
-    repositories: remembered.repositories
-      .filter((repository) => repositories.has(repository))
-      .slice(0, MAX_REPOSITORIES),
+    mentions: remembered.mentions.filter((mention) => settled.has(mention)).slice(-MAX_MENTIONS),
+    repositories: remembered.repositories.slice(0, MAX_REPOSITORIES),
   };
   if (JSON.stringify(next) !== JSON.stringify(current)) {
     const sessions = JSON.parse(localStorage.getItem(REMEMBERED_REFERENCES_KEY) ?? "{}") as Record<
