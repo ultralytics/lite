@@ -392,8 +392,8 @@ const TABS = [
   { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
 ] as const;
 type InspectorTab = (typeof TABS)[number]["value"];
-// One choice for every session: switching sessions keeps the panel on the tab you last picked.
-let inspectorTab: InspectorTab = TABS[0].value;
+// One choice for every session: switching sessions keeps the panel on the tab you last picked, Git until then.
+let inspectorTab: InspectorTab = "git";
 
 // Every optional field arrives from Serde as null, never as a missing key.
 interface UsageWindow {
