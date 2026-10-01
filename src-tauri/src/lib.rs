@@ -1992,20 +1992,17 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
         .and_then(serde_json::Value::as_u64)
         .unwrap_or(0);
     let mut windows = Vec::new();
-    for (key, label) in [
-        ("five_hour", "Current session"),
-        ("seven_day", "Current week"),
-    ] {
+    for (key, minutes) in [("five_hour", 300), ("seven_day", 10080)] {
         if let Some(window) = input.get("rate_limits").and_then(|limits| limits.get(key))
             && let Some(used_percent) = window
                 .get("used_percentage")
                 .and_then(serde_json::Value::as_f64)
         {
             windows.push(UsageWindow {
-                label: label.into(),
+                label: limit_label(Some(minutes)),
                 used_percent,
                 resets_at: window.get("resets_at").and_then(serde_json::Value::as_u64),
-                window_minutes: None,
+                window_minutes: Some(minutes),
             });
         }
     }
@@ -2999,6 +2996,16 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
         })
 }
 
+// Harnesses name a limit differently, so Lite names it for the window it measures.
+fn limit_label(window_minutes: Option<u64>) -> String {
+    match window_minutes {
+        Some(10080) => "Week".into(),
+        Some(minutes) if minutes % 60 == 0 => format!("{}h", minutes / 60),
+        Some(minutes) => format!("{minutes}m"),
+        None => "Limit".into(),
+    }
+}
+
 fn codex_usage(
     server: &CodexServer,
     thread_id: Option<&str>,
@@ -3065,23 +3072,26 @@ fn codex_usage(
         .and_then(serde_json::Value::as_object)
     {
         for bucket in buckets.values() {
-            let name = bucket
-                .get("limitName")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("Codex");
-            for (key, suffix) in [("primary", ""), ("secondary", " secondary")] {
+            // The account-wide bucket has no name; others name the model their quota covers.
+            let name = bucket.get("limitName").and_then(serde_json::Value::as_str);
+            for key in ["primary", "secondary"] {
                 if let Some(window) = bucket.get(key).filter(|value| !value.is_null())
                     && let Some(used_percent) = window
                         .get("usedPercent")
                         .and_then(serde_json::Value::as_f64)
                 {
+                    let window_minutes = window
+                        .get("windowDurationMins")
+                        .and_then(serde_json::Value::as_u64);
+                    let label = limit_label(window_minutes);
                     windows.push(UsageWindow {
-                        label: format!("{name}{suffix}"),
+                        label: match name {
+                            Some(name) => format!("{name} · {label}"),
+                            None => label,
+                        },
                         used_percent,
                         resets_at: window.get("resetsAt").and_then(serde_json::Value::as_u64),
-                        window_minutes: window
-                            .get("windowDurationMins")
-                            .and_then(serde_json::Value::as_u64),
+                        window_minutes,
                     });
                 }
             }
@@ -3091,13 +3101,14 @@ fn codex_usage(
             .get("usedPercent")
             .and_then(serde_json::Value::as_f64)
     {
+        let window_minutes = window
+            .get("windowDurationMins")
+            .and_then(serde_json::Value::as_u64);
         windows.push(UsageWindow {
-            label: "Codex".into(),
+            label: limit_label(window_minutes),
             used_percent,
             resets_at: window.get("resetsAt").and_then(serde_json::Value::as_u64),
-            window_minutes: window
-                .get("windowDurationMins")
-                .and_then(serde_json::Value::as_u64),
+            window_minutes,
         });
     }
     let thread = responses
@@ -7114,9 +7125,9 @@ async fn read_usage(
                             windows.into_iter().map(move |window| (modified, window))
                         })
                     {
-                        let index = match window.label.as_str() {
-                            "Current session" | "5 hour" => 0,
-                            "Current week" | "7 day" => 1,
+                        let index = match window.window_minutes {
+                            Some(300) => 0,
+                            Some(10080) => 1,
                             _ => continue,
                         };
                         if latest[index]
@@ -7134,13 +7145,6 @@ async fn read_usage(
                     if !windows.is_empty() {
                         usage.windows = windows;
                     }
-                }
-                for window in &mut usage.windows {
-                    window.label = match window.label.as_str() {
-                        "5 hour" => "Current session".into(),
-                        "7 day" => "Current week".into(),
-                        _ => continue,
-                    };
                 }
                 let now = SystemTime::now()
                     .duration_since(SystemTime::UNIX_EPOCH)
