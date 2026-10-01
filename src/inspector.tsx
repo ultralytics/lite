@@ -392,7 +392,8 @@ const TABS = [
   { value: "usage", label: "Usage", icon: ChartNoAxesColumn },
 ] as const;
 type InspectorTab = (typeof TABS)[number]["value"];
-const inspectorTabsBySession = new Map<string, InspectorTab>();
+// One choice for every session: switching sessions keeps the panel on the tab you last picked.
+let inspectorTab: InspectorTab = TABS[0].value;
 
 // Every optional field arrives from Serde as null, never as a missing key.
 interface UsageWindow {
@@ -1423,8 +1424,7 @@ function GitHubItemsCard({
         {loading ? <Spinner className="size-3" aria-label={`Loading ${label.toLowerCase()}`} /> : null}
         <span className="ml-auto truncate font-normal tabular-nums">{summary}</span>
       </h3>
-      {/* One item's bar would only repeat its icon's color; two or more show the split, even a single state. */}
-      {items.length > 1 && counts.length ? (
+      {counts.length ? (
         <div role="img" aria-label={summary} className="mt-2 flex h-1.5 gap-0.5 overflow-hidden rounded-full">
           {counts.map(([state, count]) => (
             <span key={state} className={GITHUB_STATE_BAR[state]} style={{ flexGrow: count }} />
@@ -1671,7 +1671,6 @@ const usageCache = new Map<string, UsageSnapshot | null>();
 export function clearInspectorCache(sessionId: string) {
   usageCache.delete(sessionId);
   fileEditorsBySession.delete(sessionId);
-  inspectorTabsBySession.delete(sessionId);
   const sessions = JSON.parse(localStorage.getItem(GITHUB_ITEMS_KEY) ?? "{}") as Record<string, GitHubItem[]>;
   delete sessions[sessionId];
   localStorage.setItem(GITHUB_ITEMS_KEY, JSON.stringify(sessions));
@@ -2190,7 +2189,7 @@ export const Inspector = memo(function Inspector({
   onExpand: () => void;
   onCollapse: () => void;
 }) {
-  const [tab, setTab] = useState<InspectorTab>(() => inspectorTabsBySession.get(session.id) ?? TABS[0].value);
+  const [tab, setTab] = useState<InspectorTab>(inspectorTab);
   const fileSearch = useRef<HTMLInputElement>(null);
   const gitSearch = useRef<HTMLInputElement>(null);
   const [visited, setVisited] = useState(() => new Set<string>([tab]));
@@ -2210,7 +2209,7 @@ export const Inspector = memo(function Inspector({
 
   function selectTab(value: string) {
     const next = value as InspectorTab;
-    inspectorTabsBySession.set(session.id, next);
+    inspectorTab = next;
     setTab(next);
     setVisited((current) => including(current, next));
     if (next !== "git") refreshTab(next);
