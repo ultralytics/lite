@@ -4368,7 +4368,32 @@ async fn agent_availability(
 async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, String> {
     let handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        let mut command = if agent == "kimi" || agent == "claude" {
+        // An update goes through whoever owns the installed CLI: npm or an install script refuses to
+        // replace a Homebrew link, or leaves it shadowing the new copy, so Homebrew upgrades its own.
+        let homebrew = agent_executable(&agent)
+            .and_then(resolve_executable)
+            .and_then(|path| fs::canonicalize(path).ok())
+            .and_then(|path| {
+                let parts: Vec<_> = path.iter().collect();
+                let room = parts
+                    .iter()
+                    .position(|part| *part == "Caskroom" || *part == "Cellar")?;
+                let brew = parts[..room].iter().collect::<PathBuf>().join("bin/brew");
+                Some((
+                    brew,
+                    parts[room] == "Caskroom",
+                    parts.get(room + 1)?.to_os_string(),
+                ))
+            });
+        let mut command = if let Some((brew, cask, name)) = homebrew {
+            let mut command = Command::new(brew);
+            command.arg("upgrade");
+            if cask {
+                command.arg("--cask");
+            }
+            command.arg(name);
+            command
+        } else if agent == "kimi" || agent == "claude" {
             let url = if agent == "kimi" {
                 "https://code.kimi.com/kimi-code/install"
             } else {
@@ -4384,10 +4409,14 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                     .arg(format!("irm {url}.ps1 | iex"));
                 command
             }
+            // A pipe reports only bash's status, and bash given nothing succeeds, so the script is
+            // downloaded first and a failed download fails the install.
             #[cfg(unix)]
             {
                 let mut command = Command::new("/bin/sh");
-                command.arg("-c").arg(format!("curl -fsSL {url}.sh | bash"));
+                command.arg("-c").arg(format!(
+                    "script=$(curl -fsSL {url}.sh) && printf '%s\\n' \"$script\" | bash"
+                ));
                 command
             }
         } else {
@@ -4405,7 +4434,12 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
         if let Some(path) = user_path() {
             command.env("PATH", path);
         }
-        command.stdout(Stdio::null()).stderr(Stdio::piped());
+        // No one can answer a prompt, so an installer that asks (sudo, a confirmation) fails instead
+        // of waiting forever.
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
         // A pipeline installer keeps stderr open through every process it spawned, so a cancel has
         // to reach the whole group before this read can end.
         #[cfg(unix)]
