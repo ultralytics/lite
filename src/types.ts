@@ -92,11 +92,7 @@ export interface FileEntry {
   path: string;
   isDirectory: boolean;
   isSymlink: boolean;
-}
-
-// A file to open in the editor, optionally at a 1-based line.
-export interface FileRequest {
-  path: string;
+  // The line a path clicked in the terminal opens at.
   line?: number;
 }
 

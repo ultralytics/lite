@@ -639,13 +639,9 @@ export default function SourceEditor({
       .then((language) => {
         if (!disposed) editor.dispatch({ effects: StateEffect.appendConfig.of(language) });
       });
-    if (initialLine.current) {
-      const target = editor.state.doc.line(Math.min(initialLine.current, editor.state.doc.lines));
-      editor.dispatch({
-        selection: { anchor: target.from },
-        effects: EditorView.scrollIntoView(target.from, { y: "center" }),
-      });
-    }
+    // A file opened at a line starts with the cursor on it, scrolled to the middle.
+    const at = initialLine.current && editor.state.doc.line(Math.min(initialLine.current, editor.state.doc.lines)).from;
+    if (at) editor.dispatch({ selection: { anchor: at }, effects: EditorView.scrollIntoView(at, { y: "center" }) });
     editor.focus();
     return () => {
       disposed = true;

@@ -6,7 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { type IBuffer, type IBufferLine, type ILink, type ITheme, Terminal } from "@xterm/xterm";
+import { type ILink, type ITheme, Terminal } from "@xterm/xterm";
 import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
@@ -24,7 +24,7 @@ import {
 } from "@/output-store";
 import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import type { Theme } from "@/theme";
-import type { Agent, FileRequest } from "@/types";
+import type { Agent, FileEntry } from "@/types";
 
 const ACKNOWLEDGE_BYTES = 64 * 1024;
 const SEARCH_HIGHLIGHT_LIMIT = 5000;
@@ -112,109 +112,37 @@ const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$/;
 
-// What a file name is made of: letters, digits and marks of any script, so 中文.ts and résumé.md are whole.
-const WORD = String.raw`\p{L}\p{N}\p{M}_`;
+// A file path with an extension and an optional :line that does not start inside a longer word, a URL, or
+// a ~/ path. An extension never follows another dot, as the end of a range such as main...HEAD does.
+const FILE_PATH =
+  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])((?:[A-Za-z]:[\\/]|[\\/])?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]*(?<!\.)\.[A-Za-z]\w*)(?::(\d+))?/gu;
 
-// A file path with an extension and an optional :line:column, from a Windows drive, /, or the session's
-// folder, that does not start inside a longer token, a URL, or a ~/ path. An extension never follows
-// another dot, as the end of a range such as main...HEAD does.
-const FILE_PATH = new RegExp(
-  String.raw`(?<![${WORD}@+.~:/\\-])((?:[A-Za-z]:[\\/]|[\\/])?(?:[${WORD}@+.-]+[\\/])*[${WORD}@+.-]*(?<!\.)\.[A-Za-z]\w*)(?::(\d+))?(?::\d+)?`,
-  "gu",
-);
-
-// The end of a row that cut a path, and the start of the row that picks it up after its indent. A
-// path is cut after a folder, so the next row starts inside it, never with a / or a drive of its own.
-const CUT_END = new RegExp(String.raw`[${WORD}@+.][-/\\]$`, "u");
-const CUT_REST = /^[\s│]*(?![A-Za-z]:[\\/]|[\\/])\S/;
-
-// How many cells the indent an app drew takes: spaces and │, a wide space counting as two.
-function indentCells(line: IBufferLine) {
-  let x = 0;
-  while (x < line.length && /^[\s│]?$/.test(line.getCell(x)?.getChars() ?? "")) x++;
-  return x;
-}
-
-// Cells in the word a row starts with after its indent, which a wrapping app will not split, counted on
-// through the rows the terminal wrapped it onto. A wide character takes two.
-function wordCells(buffer: IBuffer, row: number, indent: number) {
-  let total = 0;
-  for (let from = indent, line = buffer.getLine(row); line; from = 0, line = buffer.getLine(++row)) {
-    let x = from;
-    while (x < line.length && (line.getCell(x)?.getWidth() === 0 || /\S/.test(line.getCell(x)?.getChars() ?? ""))) x++;
-    total += x - from;
-    if (x < line.length || row + 1 >= buffer.length || !buffer.getLine(row + 1)?.isWrapped) break;
-  }
-  return total;
-}
-
-// A row continues the one above when the terminal soft-wrapped it, or when that row ends in a path cut
-// at a "-" or "/" and this one picks it up after its indent, which is how Codex and Claude draw a long
-// path. An app cuts there only because the next word would not fit, so a short row at the same indent,
-// as in a list of folders, is never joined.
-function continues(buffer: IBuffer, row: number) {
-  // The buffer is a ring: past its last row, getLine wraps around to the first.
-  const line = buffer.getLine(row);
-  if (!line || row === 0 || row >= buffer.length) return false;
-  if (line.isWrapped) return true;
-  const prev = buffer.getLine(row - 1);
-  if (!CUT_REST.test(line.translateToString(true)) || !CUT_END.test(prev?.translateToString(true) ?? "")) return false;
-  let used = line.length;
-  while (used > 0 && !prev?.getCell(used - 1)?.getChars()) used--;
-  const indent = indentCells(line);
-  // Or the row is indented under the one above, as a wrapped line's rest is. That outlasts a resize,
-  // which the width the app cut at does not.
-  return used + wordCells(buffer, row, indent) > line.length || (prev !== undefined && indent > indentCells(prev));
-}
-
-// Links the file paths on the row at 1-based `y`, reading through the rows of one path. Only a path
-// with a folder or a :line is a link, so names such as Node.js and README.md stay prose. The @ that
-// marks a file mention is not part of the path.
-function fileLinks(terminal: Terminal, y: number, open: (request: FileRequest) => void): ILink[] {
+// Links the file paths on the row at 1-based `y`, read across the rows the terminal wrapped it onto. Only a
+// path with a folder or a :line links, so a name such as Node.js stays prose. A leading @ marks a mention.
+function fileLinks(terminal: Terminal, y: number, open: (file: Pick<FileEntry, "path" | "line">) => void): ILink[] {
   const buffer = terminal.buffer.active;
   let first = y - 1;
-  while (continues(buffer, first)) first--;
+  while (first > 0 && buffer.getLine(first)?.isWrapped) first--;
   let text = "";
-  const cells: number[] = [];
-  for (let row = first, line = buffer.getLine(row); line; line = buffer.getLine(++row)) {
-    if (row > first && !continues(buffer, row)) break;
-    // A row joined by hand starts after the indent the app drew, which is not part of the path.
-    const indent = row > first && !line.isWrapped ? indentCells(line) : 0;
-    // Cells after the last one written are padding, not text: a wide character that did not fit leaves
-    // one, and a screen that grew leaves many.
-    let last = terminal.cols - 1;
-    while (last > indent && !line.getCell(last)?.getChars()) last--;
-    for (let x = indent; x <= last; x++) {
-      const cell = line.getCell(x);
+  const cells: { x: number; y: number }[] = [];
+  for (let row = first; row < buffer.length && (row === first || buffer.getLine(row)?.isWrapped); row++)
+    for (let x = 0; x < terminal.cols; x++) {
+      const cell = buffer.getLine(row)?.getCell(x);
       if (!cell?.getWidth()) continue;
       const chars = cell.getChars() || " ";
       text += chars;
-      for (let i = 0; i < chars.length; i++) cells.push(row * terminal.cols + x);
+      for (let i = 0; i < chars.length; i++) cells.push({ x: x + 1, y: row + 1 });
     }
-    // The blank cells after a row that was cut by hand would split the path.
-    if (!buffer.getLine(row + 1)?.isWrapped)
-      while (text.endsWith(" ")) {
-        text = text.slice(0, -1);
-        cells.pop();
-      }
-  }
-  const links: ILink[] = [];
-  for (const { 0: link, 1: path, 2: line, index } of text.matchAll(FILE_PATH)) {
-    if (!line && !/[^\\/][\\/]/.test(path)) continue;
-    const start = cells[index];
-    const end = cells[index + link.length - 1];
-    const range = {
-      start: { x: (start % terminal.cols) + 1, y: Math.floor(start / terminal.cols) + 1 },
-      end: { x: (end % terminal.cols) + 1, y: Math.floor(end / terminal.cols) + 1 },
-    };
-    if (y >= range.start.y && y <= range.end.y)
-      links.push({
-        range,
-        text: link,
-        activate: () => open({ path: path.replace(/^@/, ""), line: line ? Number(line) : undefined }),
-      });
-  }
-  return links;
+  return Array.from(text.matchAll(FILE_PATH))
+    .filter(
+      ({ 0: link, 1: path, 2: line, index }) =>
+        (line || /[^\\/][\\/]/.test(path)) && cells[index].y <= y && cells[index + link.length - 1].y >= y,
+    )
+    .map(({ 0: link, 1: path, 2: line, index }) => ({
+      range: { start: cells[index], end: cells[index + link.length - 1] },
+      text: link,
+      activate: () => open({ path: path.replace(/^@/, ""), line: line ? Number(line) : undefined }),
+    }));
 }
 
 export function TerminalView({
@@ -243,7 +171,7 @@ export function TerminalView({
   onZoom: (step: -1 | 0 | 1) => void;
   onPrompt: (text: string) => void;
   onOutput: (output: string, terminalStream: string) => void;
-  onOpenFile: (request: FileRequest) => void;
+  onOpenFile: (file: Pick<FileEntry, "path" | "line">) => void;
   onRecover: () => Promise<void>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -320,7 +248,7 @@ export function TerminalView({
     });
     terminal.loadAddon(new WebLinksAddon(openLink));
     terminal.registerLinkProvider({
-      provideLinks: (y, callback) => callback(fileLinks(terminal, y, (request) => openFileRef.current(request))),
+      provideLinks: (y, callback) => callback(fileLinks(terminal, y, (file) => openFileRef.current(file))),
     });
     terminal.open(container);
     const scroll = terminal.onScroll((viewportY) => setScrolledUp(viewportY < terminal.buffer.active.baseY));

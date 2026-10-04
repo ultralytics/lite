@@ -118,15 +118,7 @@ import {
   shortcutText,
 } from "@/shortcuts";
 import { applyTheme, contentZoomStyle, initialTheme, storedFontSize, type Theme, zoomedFontSize } from "@/theme";
-import {
-  type Agent,
-  defaultSessionName,
-  type FileRequest,
-  folderName,
-  repoName,
-  type Session,
-  sessionLabel,
-} from "@/types";
+import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -1597,8 +1589,8 @@ function App() {
   // A tab asked for from elsewhere, such as the new-session dialog's key setup; otherwise Settings opens on its first.
   const [settingsTab, setSettingsTab] = useState<string>();
   const [fileBrowserVersion, setFileBrowserVersion] = useState(0);
-  // A path clicked in a terminal, held until the inspector's file editor takes it.
-  const [fileRequest, setFileRequest] = useState<FileRequest>();
+  // A path clicked in a terminal, held until the inspector's Files panel opens it.
+  const [fileRequest, setFileRequest] = useState<{ path: string; line?: number }>();
   const clearFileRequest = useCallback(() => setFileRequest(undefined), []);
   const [notifications, setNotifications] = useState(() => localStorage.getItem(NOTIFICATIONS_KEY) !== "false");
   const [keepAwake, setKeepAwake] = useState(() => localStorage.getItem(KEEP_AWAKE_KEY) === "true");
