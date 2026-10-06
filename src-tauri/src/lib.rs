@@ -45,9 +45,11 @@ const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const CODEX_NOTIFICATION_ARGS: [&str; 7] = [
+const CODEX_NOTIFICATION_ARGS: [&str; 9] = [
     // Per-launch overrides require embedded mode; select it explicitly instead of warning on fallback.
     "--no-daemon",
+    "-c",
+    "tui.notifications=true",
     "-c",
     r#"tui.notification_method="osc9""#,
     "-c",
@@ -3883,7 +3885,9 @@ fn session_flags(agent: &str, flags: Option<&str>) -> Result<Vec<String>, String
                     matches!(flag.as_str(), "resume" | "fork")
                         || matches!(flag.split('=').next(), Some("--remote" | "--cd" | "--worktree"))
                         || flag.starts_with("-C")
-                        || key.is_some_and(|key| key == "tui" || key.contains("terminal_title"))
+                        || key.is_some_and(|key| {
+                            key == "tui" || key.contains("terminal_title") || key.contains("notification")
+                        })
                 })
                 .map(conflict)
         }
@@ -7759,22 +7763,26 @@ mod tests {
     }
 
     #[test]
-    fn codex_refuses_a_tui_table_that_drops_the_title() {
+    fn codex_flags_preserve_identity_and_completion_reports() {
         let accepted = [
             "-c 'tui={notification_condition=\"always\"}'",
             "--config='tui={notification_condition=\"always\"}'",
             "-c'tui={notification_condition=\"always\"}'",
             "-c='tui={notification_condition=\"always\"}'",
+            "-c 'tui.notifications=false'",
+            "--config='tui.notification_method=\"bel\"'",
+            "-c'tui.notification_condition=\"unfocused\"'",
         ]
         .into_iter()
         .filter(|flags| check_session_flags("codex".into(), (*flags).into()).is_ok())
         .collect::<Vec<_>>();
         assert!(accepted.is_empty(), "accepted {accepted:?}");
-        // Only a config key can move the title; other values may name `tui` or `terminal_title`.
+        // Only config keys can disable tracking; values may name the same settings.
         let refused = [
             "--add-dir tui=workspace",
             "--add-dir /tmp/terminal_title",
             "-c 'model=\"terminal_title\"'",
+            "--add-dir /tmp/notifications",
         ]
         .into_iter()
         .filter(|flags| check_session_flags("codex".into(), (*flags).into()).is_err())
