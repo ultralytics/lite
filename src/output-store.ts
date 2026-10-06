@@ -16,6 +16,7 @@ interface Buffer {
   tail: string;
   controlTail: string;
   themeReporting: boolean;
+  title: string;
   backgroundActivity?: boolean;
 }
 
@@ -78,7 +79,8 @@ export function syncTerminalTheme(theme: Theme) {
   }
 }
 
-// Returns the last title and directory the chunk set, empty when it set neither.
+// A completion notification also reports the current title: a provider may have
+// persisted a newly forked thread without changing its title again.
 export function appendOutput(sessionId: string, bytes: Uint8Array) {
   const buffer = buffers.get(sessionId) ?? {
     chunks: [],
@@ -87,6 +89,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     tail: "",
     controlTail: "",
     themeReporting: false,
+    title: "",
     backgroundActivity: undefined,
   };
   buffer.chunks.push(bytes);
@@ -131,7 +134,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
       if (match[2] === "lite-rebuild-finished") rebuildFinished = true;
       const working = match[2] === "lite-working";
       if (working || match[2] === "lite-idle") activity = working;
-    } else title = match[2];
+    } else title = buffer.title = match[2].slice(0, MAX_TAIL);
   }
   const previousActivity = buffer.backgroundActivity;
   const activityChanged = activity !== undefined && activity !== previousActivity;
@@ -141,7 +144,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   if (activity === undefined && tail.startsWith("\x1b]6973;lite-")) activity = false;
   buffer.tail = tail.length > MAX_TAIL ? "" : tail;
   return {
-    title,
+    title: title || (notification ? buffer.title : ""),
     path,
     activity,
     activityChanged,
