@@ -45,17 +45,15 @@ const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const CODEX_NOTIFICATION_ARGS: [&str; 9] = [
+const CODEX_NOTIFICATION_ARGS: [&str; 7] = [
     // Per-launch overrides require embedded mode; select it explicitly instead of warning on fallback.
     "--no-daemon",
-    "-c",
-    "tui.notifications=true",
     "-c",
     r#"tui.notification_method="osc9""#,
     "-c",
     r#"tui.notification_condition="always""#,
     "-c",
-    r#"tui.terminal_title=["session-id","thread"]"#,
+    r#"tui.terminal_title=["session-id","thread","status"]"#,
 ];
 const SUPPORTED_KEYS: [&str; 8] = [
     "claude",
@@ -3152,7 +3150,14 @@ fn codex_usage(
     })
 }
 
-fn codex_thread_ids(server: &CodexServer) -> Result<HashSet<String>, String> {
+fn codex_thread_ids(server: &CodexServer, prefix: &str) -> Result<HashSet<String>, String> {
+    // A UUIDv7 embeds its creation time. Older history cannot contain this thread,
+    // so an ephemeral thread need not scan every saved conversation on each status change.
+    let created_at = uuid::Uuid::parse_str(&format!("{:0<32}", prefix.replace('-', "")))
+        .ok()
+        .filter(|id| id.get_version_num() == 7)
+        .and_then(|id| id.get_timestamp())
+        .map(|timestamp| timestamp.to_unix().0);
     let mut ids = HashSet::new();
     let mut cursor = serde_json::Value::Null;
     loop {
@@ -3161,17 +3166,18 @@ fn codex_thread_ids(server: &CodexServer) -> Result<HashSet<String>, String> {
             &[(
                 3,
                 "thread/list",
-                serde_json::json!({"cursor": cursor, "limit": 100, "modelProviders": []}),
+                serde_json::json!({"cursor": cursor, "limit": 100, "modelProviders": [], "sortKey": "created_at", "sortDirection": "desc"}),
             )],
         )?;
+        let page = responses
+            .get(&3)
+            .and_then(|response| response.get("data"))
+            .and_then(serde_json::Value::as_array);
         ids.extend(
-            responses
-                .get(&3)
-                .and_then(|response| response.get("data"))
-                .and_then(serde_json::Value::as_array)
-                .into_iter()
+            page.into_iter()
                 .flatten()
                 .filter_map(|thread| thread.get("id").and_then(serde_json::Value::as_str))
+                .filter(|id| id.starts_with(prefix))
                 .map(str::to_owned),
         );
         cursor = responses
@@ -3179,7 +3185,15 @@ fn codex_thread_ids(server: &CodexServer) -> Result<HashSet<String>, String> {
             .and_then(|response| response.get("nextCursor"))
             .cloned()
             .unwrap_or_default();
-        if cursor.is_null() {
+        let oldest = page
+            .and_then(|page| page.last())
+            .and_then(|thread| thread.get("createdAt"))
+            .and_then(serde_json::Value::as_u64);
+        if cursor.is_null()
+            || created_at
+                .zip(oldest)
+                .is_some_and(|(created, oldest)| oldest < created)
+        {
             return Ok(ids);
         }
     }
@@ -3222,7 +3236,7 @@ async fn record_codex_session(
             let ids = if let Some(root) = ssh_root(&roots, &root_id)? {
                 ssh_provider_session_ids(&root, "codex")?
             } else {
-                codex_thread_ids(&app.state::<CodexServer>())?
+                codex_thread_ids(&app.state::<CodexServer>(), prefix)?
             };
             let mut matching = ids.iter().filter(|id| id.starts_with(prefix));
             let Some(id) = matching.next() else {
@@ -3885,9 +3899,7 @@ fn session_flags(agent: &str, flags: Option<&str>) -> Result<Vec<String>, String
                     matches!(flag.as_str(), "resume" | "fork")
                         || matches!(flag.split('=').next(), Some("--remote" | "--cd" | "--worktree"))
                         || flag.starts_with("-C")
-                        || key.is_some_and(|key| {
-                            key == "tui" || key.contains("terminal_title") || key.contains("notification")
-                        })
+                        || key.is_some_and(|key| key == "tui" || key.contains("terminal_title"))
                 })
                 .map(conflict)
         }
@@ -7763,26 +7775,22 @@ mod tests {
     }
 
     #[test]
-    fn codex_flags_preserve_identity_and_completion_reports() {
+    fn codex_refuses_a_tui_table_that_drops_the_title() {
         let accepted = [
             "-c 'tui={notification_condition=\"always\"}'",
             "--config='tui={notification_condition=\"always\"}'",
             "-c'tui={notification_condition=\"always\"}'",
             "-c='tui={notification_condition=\"always\"}'",
-            "-c 'tui.notifications=false'",
-            "--config='tui.notification_method=\"bel\"'",
-            "-c'tui.notification_condition=\"unfocused\"'",
         ]
         .into_iter()
         .filter(|flags| check_session_flags("codex".into(), (*flags).into()).is_ok())
         .collect::<Vec<_>>();
         assert!(accepted.is_empty(), "accepted {accepted:?}");
-        // Only config keys can disable tracking; values may name the same settings.
+        // Only a config key can move the title; other values may name `tui` or `terminal_title`.
         let refused = [
             "--add-dir tui=workspace",
             "--add-dir /tmp/terminal_title",
             "-c 'model=\"terminal_title\"'",
-            "--add-dir /tmp/notifications",
         ]
         .into_iter()
         .filter(|flags| check_session_flags("codex".into(), (*flags).into()).is_err())

@@ -14,21 +14,6 @@ const references = (output: string, remote = "", terminalStream = "", prose = ou
 const explicit = (output: string) => references(output).explicit;
 
 describe("output activity", () => {
-  test("reports the visible fork again on completion even when its title never changes", () => {
-    const bytes = (value: string) => new TextEncoder().encode(value);
-    const title = "01a11277-60a0-7383-881e-3935b... | Fork example";
-    appendOutput("fork", bytes(`\x1b]2;${title}\x07`));
-    expect(appendOutput("fork", bytes("answer")).title).toBe("");
-    expect(appendOutput("fork", bytes("\x1b]9;done\x07"))).toMatchObject({ title, notification: true });
-    appendOutput("fork", bytes("\x1b]2;Parent conversation\x07"));
-    expect(appendOutput("fork", bytes("\x07")).title).toBe("Parent conversation");
-    expect(appendOutput("other", bytes("\x07")).title).toBe("");
-    clearOutput("fork");
-    expect(appendOutput("fork", bytes("\x07")).title).toBe("");
-    clearOutput("fork");
-    clearOutput("other");
-  });
-
   test("keeps Claude background activity authoritative across output chunks", () => {
     const bytes = (value: string) => new TextEncoder().encode(value);
     expect(appendOutput("activity", bytes("\x1b]6973;lite-work"))).toMatchObject({
