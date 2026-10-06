@@ -5945,19 +5945,13 @@ fn monospace_family(file: &mut fs::File, face: u64) -> Option<String> {
     font_family(&font_bytes(file, name, length)?)
 }
 
-// The glyph a letter maps to through the font's Unicode format 4 character map, which every text font carries.
+// The glyph a letter maps to through the font's first format 4 character map, the Unicode map every text font
+// carries. Only that one is read, so a crafted font cannot make the lookup repeat.
 fn font_glyph(cmap: &[u8], letter: char) -> Option<u32> {
     let code = u32::from(letter);
     let at = (0..font_number(cmap, 2, 2)? as usize).find_map(|index| {
-        let unicode = matches!(
-            (
-                font_number(cmap, 4 + 8 * index, 2)?,
-                font_number(cmap, 6 + 8 * index, 2)?
-            ),
-            (0, _) | (3, 1)
-        );
         let at = font_number(cmap, 8 + 8 * index, 4)? as usize;
-        (unicode && font_number(cmap, at, 2)? == 4).then_some(at)
+        (font_number(cmap, at, 2)? == 4).then_some(at)
     })?;
     // Four parallel arrays, each a segment of two bytes: end codes, start codes, deltas, range offsets.
     let size = font_number(cmap, at + 6, 2)? as usize;
