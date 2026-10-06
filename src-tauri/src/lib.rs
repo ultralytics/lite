@@ -5835,6 +5835,27 @@ async fn delete_entry(
     remove_entry(&path)
 }
 
+// The installed monospace families a terminal can use, read each time Settings opens.
+// macOS hides its own interface faces behind names beginning with a period.
+#[tauri::command]
+async fn monospace_fonts() -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut fonts = fontdb::Database::new();
+        fonts.load_system_fonts();
+        let mut families: Vec<String> = fonts
+            .faces()
+            .filter(|face| face.monospaced)
+            .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+            .filter(|name| !name.starts_with('.'))
+            .collect();
+        families.sort_unstable();
+        families.dedup();
+        families
+    })
+    .await
+    .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn hide_hidden_files(settings: State<'_, FileBrowserSettings>) -> bool {
     settings.hide_hidden.load(Ordering::Relaxed)
@@ -7480,6 +7501,7 @@ pub fn run() {
             read_image_file,
             write_text_file,
             delete_entry,
+            monospace_fonts,
             hide_hidden_files,
             set_hide_hidden_files,
             git_status,

@@ -145,11 +145,14 @@ function fileLinks(terminal: Terminal, y: number, open: (file: Pick<FileEntry, "
     }));
 }
 
+const FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+
 export function TerminalView({
   sessionId,
   rootId,
   agent,
   theme,
+  font,
   fontSize,
   active,
   working,
@@ -164,6 +167,7 @@ export function TerminalView({
   rootId: string;
   agent: Agent;
   theme: Theme;
+  font: string;
   fontSize: number;
   active: boolean;
   working: boolean;
@@ -205,6 +209,9 @@ export function TerminalView({
   // without rebuilding it every time the theme changes.
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  const fontFamily = font ? `"${font}", ${FONT_FAMILY}` : FONT_FAMILY;
+  const fontFamilyRef = useRef(fontFamily);
+  fontFamilyRef.current = fontFamily;
   const fontSizeRef = useRef(fontSize);
   fontSizeRef.current = fontSize;
   // Followed without a rebuild, so a shell that starts an agent is picked up.
@@ -228,7 +235,7 @@ export function TerminalView({
       // The official search addon uses xterm decorations to count and mark every match.
       allowProposedApi: true,
       cursorBlink: true,
-      fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+      fontFamily: fontFamilyRef.current,
       fontSize: fontSizeRef.current,
       lineHeight: 1.25,
       minimumContrastRatio: 4.5,
@@ -449,10 +456,12 @@ export function TerminalView({
 
   useEffect(() => {
     const terminal = terminalRef.current;
-    if (!active || !terminal || terminal.options.fontSize === fontSize) return;
+    if (!active || !terminal) return;
+    if (terminal.options.fontFamily === fontFamily && terminal.options.fontSize === fontSize) return;
+    terminal.options.fontFamily = fontFamily;
     terminal.options.fontSize = fontSize;
     resizeRef.current();
-  }, [active, fontSize]);
+  }, [active, fontFamily, fontSize]);
 
   useEffect(() => {
     if (!searchOpen) return;

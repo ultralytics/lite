@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import {
   Check,
+  ChevronDown,
   ExternalLink,
   Info,
   Keyboard,
@@ -32,6 +33,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
@@ -208,6 +211,8 @@ export function SettingsDialog({
   onRemoteSshChange,
   theme,
   onThemeChange,
+  terminalFont,
+  onTerminalFontChange,
   versionBadge,
   commit,
   built,
@@ -228,6 +233,8 @@ export function SettingsDialog({
   onRemoteSshChange: (enabled: boolean) => void;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+  terminalFont: string;
+  onTerminalFontChange: (font: string) => void;
   versionBadge: ReactNode;
   commit?: string;
   built: string;
@@ -238,6 +245,7 @@ export function SettingsDialog({
   const [auth, setAuth] = useState<ProviderAuth[]>();
   const [hideHidden, setHideHidden] = useState<boolean>();
   const [repositories, setRepositories] = useState("");
+  const [fonts, setFonts] = useState<string[]>([]);
   // The vendor whose key is being added or replaced.
   const [keying, setKeying] = useState<KeyProvider>();
   const [busy, setBusy] = useState("");
@@ -263,6 +271,7 @@ export function SettingsDialog({
       invoke<boolean>("notifications_supported").then(setNotificationsSupported),
       invoke<boolean>("hide_hidden_files").then(setHideHidden),
       invoke<string>("repositories_directory").then(setRepositories),
+      invoke<string[]>("monospace_fonts").then(setFonts),
     ]).catch((reason) => setError(String(reason)));
   }, [isOpen, read]);
 
@@ -372,6 +381,33 @@ export function SettingsDialog({
                       </Button>
                     ))}
                   </fieldset>
+                </Setting>
+                <Setting title="Terminal font" description="The monospace font terminals use.">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button variant="outline" size="sm" className="max-w-48">
+                          <span className="truncate">{terminalFont || "System default"}</span>
+                          <ChevronDown />
+                        </Button>
+                      }
+                    />
+                    <DropdownMenuContent align="end" className="w-64">
+                      <DropdownMenuRadioGroup
+                        value={terminalFont}
+                        onValueChange={(font) => onTerminalFontChange(font as string)}
+                      >
+                        <DropdownMenuRadioItem value="">System default</DropdownMenuRadioItem>
+                        {fonts.map((font) => (
+                          <DropdownMenuRadioItem key={font} value={font} style={{ fontFamily: `"${font}"` }}>
+                            <span className="truncate" title={font}>
+                              {font}
+                            </span>
+                          </DropdownMenuRadioItem>
+                        ))}
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </Setting>
               </Section>
               <Section title="Sessions">

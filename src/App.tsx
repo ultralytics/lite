@@ -306,6 +306,7 @@ const RELEASE_NOTE = {
 
 const NOTIFICATIONS_KEY = "lite.notifications";
 const KEEP_AWAKE_KEY = "lite.keep-awake";
+const TERMINAL_FONT_FAMILY_KEY = "lite.terminal.fontFamily";
 const TERMINAL_FONT_KEY = "lite.terminal.fontSize";
 const SIDEBAR_FONT_KEY = "lite.sidebar.fontSize";
 const INSPECTOR_FONT_KEY = "lite.inspector.fontSize";
@@ -1633,6 +1634,7 @@ function App() {
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
   const [shut, setShut] = useState({ sidebar: false, inspector: false });
+  const [terminalFont, setTerminalFont] = useState(() => localStorage.getItem(TERMINAL_FONT_FAMILY_KEY) ?? "");
   const [terminalFontSize, setTerminalFontSize] = useState(() => storedFontSize(TERMINAL_FONT_KEY));
   const [sidebarFontSize, setSidebarFontSize] = useState(() => storedFontSize(SIDEBAR_FONT_KEY));
   const [inspectorFontSize, setInspectorFontSize] = useState(() => storedFontSize(INSPECTOR_FONT_KEY));
@@ -1711,6 +1713,10 @@ function App() {
     const next = current.filter((id) => id !== sessionId);
     attentionRef.current = next;
     setAttention(next);
+  }, []);
+  const changeTerminalFont = useCallback((font: string) => {
+    localStorage.setItem(TERMINAL_FONT_FAMILY_KEY, font);
+    setTerminalFont(font);
   }, []);
   const zoomTerminal = useCallback(
     (step: -1 | 0 | 1) => setTerminalFontSize((current) => zoomedFontSize(TERMINAL_FONT_KEY, current, step)),
@@ -3395,6 +3401,7 @@ function App() {
                               rootId={session.rootId}
                               agent={shellAgents.get(session.id) ?? session.agent}
                               theme={theme}
+                              font={terminalFont}
                               fontSize={terminalFontSize}
                               active={selected.running && session.id === selectedId}
                               working={working.has(session.id)}
@@ -3956,6 +3963,8 @@ function App() {
             onRemoteSshChange={changeRemoteSsh}
             theme={theme}
             onThemeChange={setTheme}
+            terminalFont={terminalFont}
+            onTerminalFontChange={changeTerminalFont}
             versionBadge={
               <VersionBadge
                 version={version}
