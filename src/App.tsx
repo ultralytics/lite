@@ -122,6 +122,7 @@ import { type Agent, defaultSessionName, folderName, repoName, type Session, ses
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
+const RECENT_FOLDERS_KEY = "lite.recentFolders.v1";
 const WORKING_KEY = "lite.working.v1";
 const SESSION_VIEW_KEY = "lite.sessionView.v1";
 const REMOTE_SSH_KEY = "lite.remoteSsh.v1";
@@ -891,6 +892,20 @@ function loadSessions(): Session[] {
   }
 }
 
+// The local folders sessions started or were opened in, the latest first, kept after those sessions close so
+// the new-session dialog can offer them again. A worktree session counts as its repository.
+function rememberFolder(folders: string[], session: Session): string[] {
+  const folder = session.repo ?? session.cwd;
+  if (session.host || session.mode || folders[0] === folder) return folders;
+  return [folder, ...folders.filter((path) => path !== folder)].slice(0, 8);
+}
+
+function loadRecentFolders(sessions: Session[]): string[] {
+  const stored = localStorage.getItem(RECENT_FOLDERS_KEY);
+  // Before Lite kept this list, the folders of the open sessions were the ones it knew.
+  return stored ? JSON.parse(stored) : sessions.reduceRight(rememberFolder, []);
+}
+
 function loadWorking(): Set<string> {
   try {
     const stored = JSON.parse(localStorage.getItem(WORKING_KEY) ?? "[]");
@@ -1579,6 +1594,7 @@ function commandAgent(command: string): Agent | undefined {
 
 function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
+  const [recentFolders, setRecentFolders] = useState(() => loadRecentFolders(sessions));
   const [sessionView, setSessionView] = useState(loadSessionView);
   const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
   const [sessionVisit, setSessionVisit] = useState(0);
@@ -1770,6 +1786,7 @@ function App() {
   notificationsRef.current = notifications;
   closeRef.current = closeSession;
   openRef.current = (session) => {
+    setRecentFolders((folders) => rememberFolder(folders, session));
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
     clearAttention(session.id);
     setSelectedId(session.id);
@@ -1961,6 +1978,10 @@ function App() {
       JSON.stringify(sessions.filter((session) => !session.mode).map((session) => ({ ...session, running: false }))),
     );
   }, [sessions]);
+
+  useEffect(() => {
+    localStorage.setItem(RECENT_FOLDERS_KEY, JSON.stringify(recentFolders));
+  }, [recentFolders]);
 
   // This is written while work changes rather than at shutdown, so a power loss still leaves the
   // next Lite process an exact list. Installing snapshots the live list before freezing this effect.
@@ -2445,6 +2466,7 @@ function App() {
   function createSession(session: Session) {
     session = { ...session, createdAt: session.createdAt ?? Date.now() };
     resumed.current = session.id;
+    setRecentFolders((folders) => rememberFolder(folders, session));
     recentSessions.current = [session.id, ...recentSessions.current];
     setSessions((current) => [session, ...current]);
     setSelectedId(session.id);
@@ -3882,6 +3904,7 @@ function App() {
             initialPath={newSessionPath}
             remoteSsh={remoteSsh}
             sessions={sessions}
+            recentFolders={recentFolders}
             onOpenChange={(open) => {
               setNewSessionOpen(open);
               // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
