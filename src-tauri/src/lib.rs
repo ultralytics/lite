@@ -5849,35 +5849,41 @@ async fn monospace_fonts(app: AppHandle) -> Result<Vec<String>, String> {
                 home.join("Library/Fonts"),
             ]
         } else if cfg!(windows) {
-            let windows = PathBuf::from(std::env::var_os("WINDIR").unwrap_or_default());
+            let windows = std::env::var_os("WINDIR").map_or("C:\\Windows".into(), PathBuf::from);
             vec![
                 windows.join("Fonts"),
                 home.join("AppData/Local/Microsoft/Windows/Fonts"),
             ]
         } else {
-            // fontconfig's default folders: each XDG data folder's fonts, then the user's own.
-            let data = std::env::var("XDG_DATA_DIRS")
-                .unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-            data.split(':')
-                .map(|folder| Path::new(folder).join("fonts"))
-                .chain([home.join(".local/share/fonts"), home.join(".fonts")])
-                .collect()
+            // fontconfig's default folders.
+            vec![
+                "/usr/share/fonts".into(),
+                "/usr/local/share/fonts".into(),
+                home.join(".local/share/fonts"),
+                home.join(".fonts"),
+            ]
         };
         let mut families = BTreeSet::new();
         while let Some(folder) = folders.pop() {
             for entry in fs::read_dir(folder).into_iter().flatten().flatten() {
-                // A linked folder is not followed, so a link back up the tree cannot loop.
+                let path = entry.path();
+                // A linked folder is not followed, so a link back up the tree cannot loop, and only regular
+                // files are opened, since opening a named pipe would wait forever.
                 if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                    folders.push(entry.path());
-                } else if let Ok(mut file) = fs::File::open(entry.path()) {
+                    folders.push(path);
+                } else if path.is_file()
+                    && let Ok(mut file) = fs::File::open(path)
+                {
                     families.extend(monospace_families(&mut file));
                 }
             }
         }
-        families
+        let mut families: Vec<String> = families
             .into_iter()
             .filter(|family| !family.starts_with('.'))
-            .collect()
+            .collect();
+        families.sort_by_key(|family| family.to_lowercase());
+        families
     })
     .await
     .map_err(|error| error.to_string())
@@ -5886,7 +5892,7 @@ async fn monospace_fonts(app: AppHandle) -> Result<Vec<String>, String> {
 // A font file's monospaced families: a collection holds several faces, any other font file one.
 fn monospace_families(file: &mut fs::File) -> Vec<String> {
     let header = font_bytes(file, 0, 12).unwrap_or_default();
-    let faces = match header.get(..4) {
+    let mut faces: Vec<u32> = match header.get(..4) {
         Some(b"ttcf") => font_number(&header, 8, 4)
             .and_then(|count| count.checked_mul(4))
             .and_then(|length| font_bytes(file, 12, length))
@@ -5897,6 +5903,8 @@ fn monospace_families(file: &mut fs::File) -> Vec<String> {
         Some([0, 1, 0, 0] | b"OTTO" | b"true") => vec![0],
         _ => Vec::new(),
     };
+    faces.sort_unstable();
+    faces.dedup();
     faces
         .into_iter()
         .filter_map(|face| monospace_family(file, face.into()))
@@ -5932,30 +5940,35 @@ fn monospace_family(file: &mut fs::File, face: u64) -> Option<String> {
     font_family(&font_bytes(file, name, length)?)
 }
 
-// The glyph a letter maps to through a format 4 character map, the Unicode map every text font carries.
+// The glyph a letter maps to through the font's Unicode format 4 character map, which every text font carries.
 fn font_glyph(cmap: &[u8], letter: char) -> Option<u32> {
     let code = u32::from(letter);
-    (0..font_number(cmap, 2, 2)? as usize).find_map(|index| {
+    let at = (0..font_number(cmap, 2, 2)? as usize).find_map(|index| {
+        let unicode = matches!(
+            (
+                font_number(cmap, 4 + 8 * index, 2)?,
+                font_number(cmap, 6 + 8 * index, 2)?
+            ),
+            (0, _) | (3, 1)
+        );
         let at = font_number(cmap, 8 + 8 * index, 4)? as usize;
-        if font_number(cmap, at, 2)? != 4 {
-            return None;
-        }
-        // Four parallel arrays, each a segment of two bytes: end codes, start codes, deltas, range offsets.
-        let size = font_number(cmap, at + 6, 2)? as usize;
-        let segment = (0..size).step_by(2).find(|&segment| {
-            font_number(cmap, at + 14 + segment, 2).is_some_and(|end| end >= code)
-        })?;
-        let start = font_number(cmap, at + 16 + size + segment, 2)?;
-        let delta = font_number(cmap, at + 16 + 2 * size + segment, 2)?;
-        let range_at = at + 16 + 3 * size + segment;
-        let glyph = match font_number(cmap, range_at, 2)? as usize {
-            _ if code < start => return None,
-            0 => code,
-            range => font_number(cmap, range_at + range + 2 * (code - start) as usize, 2)
-                .filter(|&glyph| glyph > 0)?,
-        };
-        Some((glyph + delta) & 0xFFFF).filter(|&glyph| glyph > 0)
-    })
+        (unicode && font_number(cmap, at, 2)? == 4).then_some(at)
+    })?;
+    // Four parallel arrays, each a segment of two bytes: end codes, start codes, deltas, range offsets.
+    let size = font_number(cmap, at + 6, 2)? as usize;
+    let segment = (0..size)
+        .step_by(2)
+        .find(|&segment| font_number(cmap, at + 14 + segment, 2).is_some_and(|end| end >= code))?;
+    let start = font_number(cmap, at + 16 + size + segment, 2)?;
+    let delta = font_number(cmap, at + 16 + 2 * size + segment, 2)?;
+    let range_at = at + 16 + 3 * size + segment;
+    let glyph = match font_number(cmap, range_at, 2)? as usize {
+        _ if code < start => return None,
+        0 => code,
+        range => font_number(cmap, range_at + range + 2 * (code - start) as usize, 2)
+            .filter(|&glyph| glyph > 0)?,
+    };
+    Some((glyph + delta) & 0xFFFF).filter(|&glyph| glyph > 0)
 }
 
 // The family a face goes by in CSS: its typographic family over its legacy one, in English when it has several.
@@ -5980,7 +5993,10 @@ fn font_family(name: &[u8]) -> Option<String> {
                 _ => return None,
             };
             let english = matches!((platform, language), (0, _) | (1, 0) | (3, 0x409));
-            matches!(id, 1 | 16).then_some(((id == 16, english), text))
+            // The name goes into a quoted CSS font-family, so one that could end the quote is not used.
+            let usable =
+                !text.is_empty() && !text.contains(['"', '\\']) && !text.contains(char::is_control);
+            (matches!(id, 1 | 16) && usable).then_some(((id == 16, english), text))
         })
         .max_by_key(|(rank, _)| *rank)
         .map(|(_, text)| text)
