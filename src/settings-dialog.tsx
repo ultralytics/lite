@@ -271,7 +271,6 @@ export function SettingsDialog({
       invoke<boolean>("notifications_supported").then(setNotificationsSupported),
       invoke<boolean>("hide_hidden_files").then(setHideHidden),
       invoke<string>("repositories_directory").then(setRepositories),
-      invoke<string[]>("monospace_fonts").then(setFonts),
     ]).catch((reason) => setError(String(reason)));
   }, [isOpen, read]);
 
@@ -383,7 +382,15 @@ export function SettingsDialog({
                   </fieldset>
                 </Setting>
                 <Setting title="Terminal font" description="The monospace font terminals use.">
-                  <DropdownMenu>
+                  {/* The installed fonts are read when the menu opens, so a font installed since shows up. */}
+                  <DropdownMenu
+                    onOpenChange={(open) => {
+                      if (open)
+                        void invoke<string[]>("monospace_fonts")
+                          .then(setFonts)
+                          .catch((reason) => setError(String(reason)));
+                    }}
+                  >
                     <DropdownMenuTrigger
                       render={
                         <Button variant="outline" size="sm" className="max-w-48">

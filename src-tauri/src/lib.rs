@@ -4,7 +4,7 @@ use atomicwrites::{AllowOverwrite, AtomicFile};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     fs,
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
@@ -5835,25 +5835,177 @@ async fn delete_entry(
     remove_entry(&path)
 }
 
-// The installed monospace families a terminal can use, read each time Settings opens.
-// macOS hides its own interface faces behind names beginning with a period.
+// The installed families whose letters share one width, the ones a terminal can use. Each font file is read
+// directly, only as far as the check needs, so every platform answers the same way without a font library.
+// macOS hides its interface faces behind names that begin with a period.
 #[tauri::command]
-async fn monospace_fonts() -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut fonts = fontdb::Database::new();
-        fonts.load_system_fonts();
-        let mut families: Vec<String> = fonts
-            .faces()
-            .filter(|face| face.monospaced)
-            .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
-            .filter(|name| !name.starts_with('.'))
-            .collect();
-        families.sort_unstable();
-        families.dedup();
+async fn monospace_fonts(app: AppHandle) -> Result<Vec<String>, String> {
+    let home = app.path().home_dir().map_err(|error| error.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut folders: Vec<PathBuf> = if cfg!(target_os = "macos") {
+            vec![
+                "/System/Library/Fonts".into(),
+                "/Library/Fonts".into(),
+                home.join("Library/Fonts"),
+            ]
+        } else if cfg!(windows) {
+            let windows = PathBuf::from(std::env::var_os("WINDIR").unwrap_or_default());
+            vec![
+                windows.join("Fonts"),
+                home.join("AppData/Local/Microsoft/Windows/Fonts"),
+            ]
+        } else {
+            // fontconfig's default folders: each XDG data folder's fonts, then the user's own.
+            let data = std::env::var("XDG_DATA_DIRS")
+                .unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+            data.split(':')
+                .map(|folder| Path::new(folder).join("fonts"))
+                .chain([home.join(".local/share/fonts"), home.join(".fonts")])
+                .collect()
+        };
+        let mut families = BTreeSet::new();
+        while let Some(folder) = folders.pop() {
+            for entry in fs::read_dir(folder).into_iter().flatten().flatten() {
+                // A linked folder is not followed, so a link back up the tree cannot loop.
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    folders.push(entry.path());
+                } else if let Ok(mut file) = fs::File::open(entry.path()) {
+                    families.extend(monospace_families(&mut file));
+                }
+            }
+        }
         families
+            .into_iter()
+            .filter(|family| !family.starts_with('.'))
+            .collect()
     })
     .await
     .map_err(|error| error.to_string())
+}
+
+// A font file's monospaced families: a collection holds several faces, any other font file one.
+fn monospace_families(file: &mut fs::File) -> Vec<String> {
+    let header = font_bytes(file, 0, 12).unwrap_or_default();
+    let faces = match header.get(..4) {
+        Some(b"ttcf") => font_number(&header, 8, 4)
+            .and_then(|count| count.checked_mul(4))
+            .and_then(|length| font_bytes(file, 12, length))
+            .unwrap_or_default()
+            .chunks(4)
+            .filter_map(|offset| font_number(offset, 0, 4))
+            .collect(),
+        Some([0, 1, 0, 0] | b"OTTO" | b"true") => vec![0],
+        _ => Vec::new(),
+    };
+    faces
+        .into_iter()
+        .filter_map(|face| monospace_family(file, face.into()))
+        .collect()
+}
+
+// A face's family when its 'i' and 'M' share one advance, as every monospaced face's letters do and no
+// proportional face's do. Emoji, symbol, and bitmap faces have no such letters to compare.
+fn monospace_family(file: &mut fs::File, face: u64) -> Option<String> {
+    let count = font_number(&font_bytes(file, face, 12)?, 4, 2)?;
+    let tables = font_bytes(file, face + 12, 16 * count)?;
+    let table = |tag: &[u8]| {
+        let entry = tables.chunks(16).find(|entry| entry.starts_with(tag))?;
+        Some((
+            u64::from(font_number(entry, 8, 4)?),
+            font_number(entry, 12, 4)?,
+        ))
+    };
+    let (cmap, length) = table(b"cmap")?;
+    let cmap = font_bytes(file, cmap, length)?;
+    let metrics = font_number(&font_bytes(file, table(b"hhea")?.0 + 34, 2)?, 0, 2)?;
+    let hmtx = table(b"hmtx")?.0;
+    // Glyphs past the last horizontal metric share its advance.
+    let mut advance = |letter| {
+        let glyph = font_glyph(&cmap, letter)?.min(metrics.checked_sub(1)?);
+        font_number(&font_bytes(file, hmtx + 4 * u64::from(glyph), 2)?, 0, 2)
+            .filter(|&width| width > 0)
+    };
+    if advance('i')? != advance('M')? {
+        return None;
+    }
+    let (name, length) = table(b"name")?;
+    font_family(&font_bytes(file, name, length)?)
+}
+
+// The glyph a letter maps to through a format 4 character map, the Unicode map every text font carries.
+fn font_glyph(cmap: &[u8], letter: char) -> Option<u32> {
+    let code = u32::from(letter);
+    (0..font_number(cmap, 2, 2)? as usize).find_map(|index| {
+        let at = font_number(cmap, 8 + 8 * index, 4)? as usize;
+        if font_number(cmap, at, 2)? != 4 {
+            return None;
+        }
+        // Four parallel arrays, each a segment of two bytes: end codes, start codes, deltas, range offsets.
+        let size = font_number(cmap, at + 6, 2)? as usize;
+        let segment = (0..size).step_by(2).find(|&segment| {
+            font_number(cmap, at + 14 + segment, 2).is_some_and(|end| end >= code)
+        })?;
+        let start = font_number(cmap, at + 16 + size + segment, 2)?;
+        let delta = font_number(cmap, at + 16 + 2 * size + segment, 2)?;
+        let range_at = at + 16 + 3 * size + segment;
+        let glyph = match font_number(cmap, range_at, 2)? as usize {
+            _ if code < start => return None,
+            0 => code,
+            range => font_number(cmap, range_at + range + 2 * (code - start) as usize, 2)
+                .filter(|&glyph| glyph > 0)?,
+        };
+        Some((glyph + delta) & 0xFFFF).filter(|&glyph| glyph > 0)
+    })
+}
+
+// The family a face goes by in CSS: its typographic family over its legacy one, in English when it has several.
+fn font_family(name: &[u8]) -> Option<String> {
+    let strings = font_number(name, 4, 2)? as usize;
+    (0..font_number(name, 2, 2)? as usize)
+        .filter_map(|index| {
+            let record = name.get(6 + 12 * index..18 + 12 * index)?;
+            let field = |at| font_number(record, at, 2);
+            let (platform, encoding, language, id) = (field(0)?, field(2)?, field(4)?, field(6)?);
+            let at = strings + field(10)? as usize;
+            let text = name.get(at..at + field(8)? as usize)?;
+            let text = match (platform, encoding) {
+                (0 | 3, _) => char::decode_utf16(
+                    text.chunks_exact(2)
+                        .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
+                )
+                .collect::<Result<String, _>>()
+                .ok()?,
+                // Apple's own faces name themselves only in Mac Roman, whose family names are ASCII.
+                (1, 0) => text.iter().map(|&byte| char::from(byte)).collect(),
+                _ => return None,
+            };
+            let english = matches!((platform, language), (0, _) | (1, 0) | (3, 0x409));
+            matches!(id, 1 | 16).then_some(((id == 16, english), text))
+        })
+        .max_by_key(|(rank, _)| *rank)
+        .map(|(_, text)| text)
+}
+
+// A big-endian number, as font tables store them.
+fn font_number(bytes: &[u8], at: usize, size: usize) -> Option<u32> {
+    Some(
+        bytes
+            .get(at..at + size)?
+            .iter()
+            .fold(0, |number, &byte| number << 8 | u32::from(byte)),
+    )
+}
+
+// A span of a font file, read without trusting its length: a damaged file ends the read instead of
+// allocating whatever it claims.
+fn font_bytes(file: &mut fs::File, at: u64, length: u32) -> Option<Vec<u8>> {
+    file.seek(SeekFrom::Start(at)).ok()?;
+    let mut bytes = Vec::new();
+    Read::by_ref(file)
+        .take(length.into())
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() == length as usize).then_some(bytes)
 }
 
 #[tauri::command]
