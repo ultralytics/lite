@@ -5864,12 +5864,17 @@ async fn monospace_fonts(app: AppHandle) -> Result<Vec<String>, String> {
             ]
         };
         let mut families = BTreeSet::new();
+        let mut seen = HashSet::new();
         while let Some(folder) = folders.pop() {
+            // Linked folders are followed, as fontconfig follows them, but each real folder is read once so a
+            // link back up the tree cannot loop.
+            if !fs::canonicalize(&folder).is_ok_and(|real| seen.insert(real)) {
+                continue;
+            }
             for entry in fs::read_dir(folder).into_iter().flatten().flatten() {
                 let path = entry.path();
-                // A linked folder is not followed, so a link back up the tree cannot loop, and only regular
-                // files are opened, since opening a named pipe would wait forever.
-                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                // Only regular files are opened, since opening a named pipe would wait forever.
+                if path.is_dir() {
                     folders.push(path);
                 } else if path.is_file()
                     && let Ok(mut file) = fs::File::open(path)
@@ -5889,13 +5894,14 @@ async fn monospace_fonts(app: AppHandle) -> Result<Vec<String>, String> {
     .map_err(|error| error.to_string())
 }
 
-// A font file's monospaced families: a collection holds several faces, any other font file one.
+// A font file's monospaced families: a collection holds several faces, any other font file one. Collections are
+// read to far more faces than any real one holds (Sarasa Gothic's holds about 420), so a crafted file with
+// thousands of faces cannot repeat the work without end.
 fn monospace_families(file: &mut fs::File) -> Vec<String> {
     let header = font_bytes(file, 0, 12).unwrap_or_default();
-    let mut faces: Vec<u32> = match header.get(..4) {
+    let faces: Vec<u32> = match header.get(..4) {
         Some(b"ttcf") => font_number(&header, 8, 4)
-            .and_then(|count| count.checked_mul(4))
-            .and_then(|length| font_bytes(file, 12, length))
+            .and_then(|count| font_bytes(file, 12, 4 * count.min(1024)))
             .unwrap_or_default()
             .chunks(4)
             .filter_map(|offset| font_number(offset, 0, 4))
@@ -5903,8 +5909,6 @@ fn monospace_families(file: &mut fs::File) -> Vec<String> {
         Some([0, 1, 0, 0] | b"OTTO" | b"true") => vec![0],
         _ => Vec::new(),
     };
-    faces.sort_unstable();
-    faces.dedup();
     faces
         .into_iter()
         .filter_map(|face| monospace_family(file, face.into()))
@@ -5972,34 +5976,36 @@ fn font_glyph(cmap: &[u8], letter: char) -> Option<u32> {
 }
 
 // The family a face goes by in CSS: its typographic family over its legacy one, in English when it has several.
+// Records are ranked by their headers alone, so only the chosen name is ever decoded.
 fn font_family(name: &[u8]) -> Option<String> {
     let strings = font_number(name, 4, 2)? as usize;
-    (0..font_number(name, 2, 2)? as usize)
+    let (_, platform, text) = (0..font_number(name, 2, 2)? as usize)
         .filter_map(|index| {
             let record = name.get(6 + 12 * index..18 + 12 * index)?;
             let field = |at| font_number(record, at, 2);
             let (platform, encoding, language, id) = (field(0)?, field(2)?, field(4)?, field(6)?);
             let at = strings + field(10)? as usize;
             let text = name.get(at..at + field(8)? as usize)?;
-            let text = match (platform, encoding) {
-                (0 | 3, _) => char::decode_utf16(
-                    text.chunks_exact(2)
-                        .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
-                )
-                .collect::<Result<String, _>>()
-                .ok()?,
-                // Apple's own faces name themselves only in Mac Roman, whose family names are ASCII.
-                (1, 0) => text.iter().map(|&byte| char::from(byte)).collect(),
-                _ => return None,
-            };
             let english = matches!((platform, language), (0, _) | (1, 0) | (3, 0x409));
-            // The name goes into a quoted CSS font-family, so one that could end the quote is not used.
-            let usable =
-                !text.is_empty() && !text.contains(['"', '\\']) && !text.contains(char::is_control);
-            (matches!(id, 1 | 16) && usable).then_some(((id == 16, english), text))
+            (matches!(id, 1 | 16) && matches!((platform, encoding), (0 | 3, _) | (1, 0)))
+                .then_some(((id == 16, english), platform, text))
         })
-        .max_by_key(|(rank, _)| *rank)
-        .map(|(_, text)| text)
+        .max_by_key(|(rank, ..)| *rank)?;
+    // Unicode and Windows names are UTF-16; Apple's own faces name themselves only in Mac Roman, whose family
+    // names are ASCII.
+    let text = if platform == 1 {
+        text.iter().map(|&byte| char::from(byte)).collect()
+    } else {
+        char::decode_utf16(
+            text.chunks_exact(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
+        )
+        .collect::<Result<String, _>>()
+        .ok()?
+    };
+    // The name goes into a quoted CSS font-family, so one that could end the quote is not used.
+    (!text.is_empty() && !text.contains(['"', '\\']) && !text.contains(char::is_control))
+        .then_some(text)
 }
 
 // A big-endian number, as font tables store them.
