@@ -5841,6 +5841,10 @@ async fn delete_entry(
 #[tauri::command]
 async fn monospace_fonts(app: AppHandle) -> Result<Vec<String>, String> {
     let home = app.path().home_dir().map_err(|error| error.to_string())?;
+    let data = app
+        .path()
+        .local_data_dir()
+        .map_err(|error| error.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let mut folders: Vec<PathBuf> = if cfg!(target_os = "macos") {
             vec![
@@ -5850,16 +5854,13 @@ async fn monospace_fonts(app: AppHandle) -> Result<Vec<String>, String> {
             ]
         } else if cfg!(windows) {
             let windows = std::env::var_os("WINDIR").map_or("C:\\Windows".into(), PathBuf::from);
-            vec![
-                windows.join("Fonts"),
-                home.join("AppData/Local/Microsoft/Windows/Fonts"),
-            ]
+            vec![windows.join("Fonts"), data.join("Microsoft/Windows/Fonts")]
         } else {
             // fontconfig's default folders.
             vec![
                 "/usr/share/fonts".into(),
                 "/usr/local/share/fonts".into(),
-                home.join(".local/share/fonts"),
+                data.join("fonts"),
                 home.join(".fonts"),
             ]
         };
@@ -6018,9 +6019,11 @@ fn font_number(bytes: &[u8], at: usize, size: usize) -> Option<u32> {
     )
 }
 
-// A span of a font file, read without trusting its length: a damaged file ends the read instead of
-// allocating whatever it claims.
+// A span of a font file, read without trusting its length: a short file ends the read, and no span is read past
+// 1 MiB, far more than any real table (the largest on macOS is about 320 KB), so a file claiming gigabytes costs
+// no more than one that does not.
 fn font_bytes(file: &mut fs::File, at: u64, length: u32) -> Option<Vec<u8>> {
+    let length = length.min(1 << 20);
     file.seek(SeekFrom::Start(at)).ok()?;
     let mut bytes = Vec::new();
     Read::by_ref(file)
