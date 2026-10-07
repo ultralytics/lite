@@ -1586,6 +1586,11 @@ fn ssh_native_session_state(
             "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/projects\" -type f -path {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
             posix_quote(&format!("*/chats/{id}.jsonl")),
         ),
+        // A rollout holds a conversation once a turn starts, or in older ones, once the assistant replies.
+        "codex" => format!(
+            "home=${{{variable}:-$HOME/{fallback}}}; file=$(find \"$home/sessions\" -type f -name {} -print -quit 2>/dev/null); test -n \"$file\" && grep -m 1 -E -q '\"type\":\"turn_context\"|\"role\":\"assistant\"' \"$file\" && printf 1 || printf 0",
+            posix_quote(&format!("rollout-*-{id}.jsonl")),
+        ),
         _ => return Ok(RemoteSessionState::Missing),
     };
     match ssh_text(root, &script)?.as_str() {
@@ -3303,9 +3308,9 @@ async fn fork_source(
                 let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&session_id));
                 saved.then_some(id)
             }
-            ("claude", Some(root)) => Some(known.unwrap_or(session_id)).filter(|id| {
+            ("claude" | "codex", Some(root)) => Some(known.unwrap_or(session_id)).filter(|id| {
                 matches!(
-                    ssh_native_session_state(&root, "claude", id),
+                    ssh_native_session_state(&root, &agent, id),
                     Ok(RemoteSessionState::Ready)
                 )
             }),
@@ -3315,9 +3320,6 @@ async fn fork_source(
                 }
                 _ => None,
             },
-            ("codex", Some(root)) => known.filter(|thread| {
-                ssh_provider_session_ids(&root, "codex").is_ok_and(|ids| ids.contains(thread))
-            }),
             _ => return Err("This session's CLI cannot fork a conversation.".into()),
         };
         saved.ok_or_else(|| "This session has no conversation to fork yet.".into())
