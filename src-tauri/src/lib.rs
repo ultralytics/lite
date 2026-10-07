@@ -3782,12 +3782,22 @@ fn session_arguments(
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
+    fork: Option<&str>,
 ) -> Result<Vec<String>, String> {
     match agent {
-        "claude" => Ok(vec![
-            if resume { "--resume" } else { "--session-id" }.into(),
-            provider_session_id.unwrap_or(session_id).into(),
-        ]),
+        "claude" => {
+            let own = provider_session_id.unwrap_or(session_id).into();
+            Ok(match fork {
+                Some(parent) => vec![
+                    "--resume".into(),
+                    parent.into(),
+                    "--fork-session".into(),
+                    "--session-id".into(),
+                    own,
+                ],
+                None => vec![if resume { "--resume" } else { "--session-id" }.into(), own],
+            })
+        }
         "gemini" | "qwen" => Ok(vec![
             if resume { "--resume" } else { "--session-id" }.into(),
             session_id.into(),
@@ -3890,10 +3900,12 @@ fn check_session_flags(agent: String, flags: String) -> Result<(), String> {
     session_flags(&agent, Some(&flags)).map(drop)
 }
 
-fn codex_resume_arguments(provider_session_id: Option<&str>) -> Vec<String> {
-    provider_session_id
-        .map(|id| vec!["resume".into(), id.into()])
-        .unwrap_or_default()
+fn codex_session_arguments(provider_session_id: Option<&str>, fork: Option<&str>) -> Vec<String> {
+    match (fork, provider_session_id) {
+        (Some(parent), _) => vec!["fork".into(), parent.into()],
+        (None, Some(id)) => vec!["resume".into(), id.into()],
+        (None, None) => Vec::new(),
+    }
 }
 
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
@@ -4133,6 +4145,7 @@ struct SessionCommand<'a> {
     resume: bool,
     session_id: &'a str,
     provider_session_id: Option<&'a str>,
+    fork: Option<&'a str>,
 }
 
 fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<CommandBuilder, String> {
@@ -4153,6 +4166,7 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                 resume,
                 session_id,
                 provider_session_id,
+                launch.fork,
             )?);
             command
         }
@@ -4242,7 +4256,7 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                     ]);
                 }
             }
-            command.args(codex_resume_arguments(provider_session_id));
+            command.args(codex_session_arguments(provider_session_id, launch.fork));
             command
         }
         "shell" => {
@@ -4743,13 +4757,17 @@ fn ssh_session_command(
                 );
             }
             args.extend(CODEX_NOTIFICATION_ARGS.map(str::to_owned));
-            args.extend(codex_resume_arguments(launch.provider_session_id));
+            args.extend(codex_session_arguments(
+                launch.provider_session_id,
+                launch.fork,
+            ));
         } else {
             args.extend(session_arguments(
                 launch.agent,
                 launch.resume,
                 launch.session_id,
                 launch.provider_session_id,
+                launch.fork,
             )?);
             if launch.agent == "claude" {
                 args.extend([
@@ -4805,6 +4823,8 @@ struct SessionLaunch {
     initial_prompt: Option<String>,
     theme: Option<String>,
     resume: bool,
+    // The tab whose conversation this new session starts as a copy of.
+    fork: Option<String>,
     cols: u16,
     rows: u16,
 }
@@ -4835,10 +4855,32 @@ async fn spawn_session(
         initial_prompt,
         theme,
         resume,
+        fork,
         cols,
         rows,
     } = launch;
     let flags = session_flags(&agent, flags.as_deref())?;
+    // A fork names the conversation it copies, so the tab it came from keeps writing its own.
+    let fork = fork
+        .map(|parent| {
+            let known = provider_sessions
+                .0
+                .lock()
+                .map_err(|error| error.to_string())?
+                .get(&parent)
+                .cloned();
+            match agent.as_str() {
+                "claude" if host.is_none() => {
+                    let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&parent));
+                    saved.then_some(id)
+                }
+                "claude" => Some(known.unwrap_or(parent)),
+                "codex" => known,
+                _ => None,
+            }
+            .ok_or_else(|| "This session has no conversation to fork yet.".to_owned())
+        })
+        .transpose()?;
     let root = roots
         .0
         .lock()
@@ -5048,6 +5090,7 @@ async fn spawn_session(
         resume,
         session_id: &session_id,
         provider_session_id: provider_session_id.as_deref(),
+        fork: fork.as_deref(),
     };
     let mut command = if let Some(root) = ssh.as_ref() {
         ssh_session_command(root, &launch, initial_prompt.as_deref())?
