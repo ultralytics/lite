@@ -6,7 +6,6 @@ import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 
-import { SEMANTIC_BADGE_CLASSES } from "@/lib/semantic-styles";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
@@ -21,9 +20,10 @@ const badgeVariants = cva(
         outline: "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost: "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
-        success: SEMANTIC_BADGE_CLASSES.success,
-        warning: SEMANTIC_BADGE_CLASSES.warning,
-        error: SEMANTIC_BADGE_CLASSES.error,
+        success:
+          "bg-success/10 text-success focus-visible:ring-success/20 dark:bg-success/20 dark:focus-visible:ring-success/40 [a]:hover:bg-success/20",
+        warning:
+          "bg-warning/10 text-warning focus-visible:ring-warning/20 dark:bg-warning/20 dark:focus-visible:ring-warning/40 [a]:hover:bg-warning/20",
         purple: "border-transparent bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400",
       },
     },
