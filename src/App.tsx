@@ -2485,28 +2485,31 @@ function App() {
     recentSessions.current = [session.id, ...recentSessions.current];
     setSessions((current) => [session, ...current]);
     setSelectedId(session.id);
-    return launch(session, false, undefined, fork);
+    void launch(session, false, undefined, fork);
   }
 
   // A fork continues a copy of the conversation in the same folder under its own folder grant, so
-  // closing either tab leaves the other's access in place. One that cannot start is dropped: resumed
-  // later, it would open a blank conversation under the fork's name.
+  // closing either tab leaves the other's access in place.
   async function forkSession(session: Session) {
-    const fork: Session = {
-      ...session,
-      id: crypto.randomUUID(),
-      createdAt: undefined,
-      rootId: crypto.randomUUID(),
-      name: `${session.name} (fork)`,
-      renamed: true,
-      running: false,
-      providerSessionId: undefined,
-    };
-    if (await createSession(fork, session.id)) return;
-    recentSessions.current = recentSessions.current.filter((id) => id !== fork.id);
-    setSessions((current) => current.filter((item) => item.id !== fork.id));
-    setSelectedId((current) => (current === fork.id ? session.id : current));
-    void cleanupSession(fork);
+    const source = await invoke<string>("fork_source", {
+      sessionId: session.id,
+      agent: session.agent,
+      remote: Boolean(session.host),
+    }).catch((reason) => void setError(String(reason)));
+    if (!source) return;
+    createSession(
+      {
+        ...session,
+        id: crypto.randomUUID(),
+        createdAt: undefined,
+        rootId: crypto.randomUUID(),
+        name: `${session.name} (fork)`,
+        renamed: true,
+        running: false,
+        providerSessionId: undefined,
+      },
+      source,
+    );
   }
 
   function reorderSession(draggedId: string, targetId: string, after: boolean) {

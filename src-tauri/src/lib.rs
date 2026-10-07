@@ -3280,32 +3280,40 @@ fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool,
     })
 }
 
-// The saved conversation a tab holds. Codex names a thread before its first message but writes
-// nothing until then; a remote tab's conversation is taken as saved, as its resume does.
-fn saved_conversation(
-    app: &AppHandle,
-    agent: &str,
+// The saved conversation a fork of this tab copies, asked before the fork's tab exists so one that
+// cannot start never appears. Codex names a thread before its first message but writes nothing until
+// then; a remote tab's conversation is taken as saved, as its resume does.
+#[tauri::command]
+async fn fork_source(
+    app: AppHandle,
+    session_id: String,
+    agent: String,
     remote: bool,
-    tab: &str,
-) -> Result<Option<String>, String> {
-    let known = app
-        .state::<ProviderSessions>()
-        .0
-        .lock()
-        .map_err(|error| error.to_string())?
-        .get(tab)
-        .cloned();
-    Ok(match agent {
-        "claude" if !remote => {
-            let (id, saved) = claude_launch_id(app, known.as_deref().unwrap_or(tab));
-            saved.then_some(id)
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = app
+            .state::<ProviderSessions>()
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(&session_id)
+            .cloned();
+        match agent.as_str() {
+            "claude" if !remote => {
+                let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&session_id));
+                saved.then_some(id)
+            }
+            "claude" => Some(known.unwrap_or(session_id)),
+            "codex" => known.filter(|thread| {
+                remote
+                    || codex_thread_resumable(&app.state::<CodexServer>(), thread).unwrap_or(true)
+            }),
+            _ => None,
         }
-        "claude" => Some(known.unwrap_or_else(|| tab.to_owned())),
-        "codex" => known.filter(|thread| {
-            remote || codex_thread_resumable(&app.state::<CodexServer>(), thread).unwrap_or(true)
-        }),
-        _ => None,
+        .ok_or_else(|| "This session has no conversation to fork yet.".to_owned())
     })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 fn stop_codex_server(server: &CodexServer) {
@@ -4855,7 +4863,8 @@ struct SessionLaunch {
     initial_prompt: Option<String>,
     theme: Option<String>,
     resume: bool,
-    // The tab whose conversation this new session starts as a copy of.
+    // The saved conversation, from `fork_source`, that this new session starts as a copy of; the tab it
+    // came from keeps writing its own.
     fork: Option<String>,
     cols: u16,
     rows: u16,
@@ -4892,13 +4901,6 @@ async fn spawn_session(
         rows,
     } = launch;
     let flags = session_flags(&agent, flags.as_deref())?;
-    // A fork copies the conversation of the tab it came from, which keeps writing its own.
-    let fork = fork
-        .map(|tab| {
-            saved_conversation(&app, &agent, host.is_some(), &tab)?
-                .ok_or_else(|| "This session has no conversation to fork yet.".to_owned())
-        })
-        .transpose()?;
     let root = roots
         .0
         .lock()
@@ -7721,6 +7723,7 @@ pub fn run() {
             spawn_session,
             codex_pickers,
             record_codex_session,
+            fork_source,
             write_session,
             watch_shell_agent,
             resize_session,
