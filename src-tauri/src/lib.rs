@@ -3171,6 +3171,33 @@ fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>,
         .collect())
 }
 
+// Codex lists a thread only once it holds a message of its own, which a fork has not yet; the rollout
+// it saved on forking already names the full id, as the SSH discovery reads it.
+fn codex_rollout_ids(app: &AppHandle) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    let Ok(home) = codex_home(app) else {
+        return ids;
+    };
+    let mut directories = vec![home.join("sessions")];
+    while let Some(directory) = directories.pop() {
+        for entry in fs::read_dir(directory).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                directories.push(path);
+            } else if let Some(id) = path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .filter(|stem| stem.starts_with("rollout-"))
+                .and_then(|stem| stem.get(stem.len().saturating_sub(36)..))
+                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+            {
+                ids.insert(id.to_owned());
+            }
+        }
+    }
+    ids
+}
+
 // Before saving a new thread, Codex reports "shortened-id | full-id". Keep both parts
 // so that this complete identity report can be recorded without saved-thread discovery.
 #[tauri::command]
@@ -3210,7 +3237,12 @@ async fn record_codex_session(
             let ids = if let Some(root) = ssh_root(&roots, &root_id)? {
                 ssh_provider_session_ids(&root, "codex")?
             } else {
-                codex_thread_ids(&app.state::<CodexServer>(), &root_path(&roots, &root_id)?)?
+                let mut ids =
+                    codex_thread_ids(&app.state::<CodexServer>(), &root_path(&roots, &root_id)?)?;
+                if !ids.iter().any(|id| id.starts_with(prefix)) {
+                    ids.extend(codex_rollout_ids(&app));
+                }
+                ids
             };
             let mut matching = ids.iter().filter(|id| id.starts_with(prefix));
             let id = matching
@@ -4875,7 +4907,10 @@ async fn spawn_session(
                     saved.then_some(id)
                 }
                 "claude" => Some(known.unwrap_or(parent)),
-                "codex" => known,
+                // Codex names a thread before its first message but writes nothing to fork until then.
+                "codex" => known.filter(|thread| {
+                    host.is_some() || codex_thread_resumable(&codex_server, thread).unwrap_or(true)
+                }),
                 _ => None,
             }
             .ok_or_else(|| "This session has no conversation to fork yet.".to_owned())
