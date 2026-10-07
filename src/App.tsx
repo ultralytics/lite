@@ -547,7 +547,7 @@ function AppContextMenu({
               <Pencil />
               Rename
             </ContextMenuItem>
-            {session.agent === "claude" || session.agent === "codex" ? (
+            {!session.mode && !session.worktree && (session.agent === "claude" || session.agent === "codex") ? (
               <ContextMenuItem onClick={() => onForkSession(session)}>
                 <GitFork />
                 Fork
@@ -2483,18 +2483,19 @@ function App() {
     void launch(session, false, undefined, fork);
   }
 
-  // A fork continues a copy of the conversation in the same folder, leaving any worktree to the original.
+  // A fork continues a copy of the conversation in the same folder under its own folder grant, so
+  // closing either tab leaves the other's access in place.
   function forkSession(session: Session) {
     createSession(
       {
         ...session,
         id: crypto.randomUUID(),
         createdAt: undefined,
+        rootId: crypto.randomUUID(),
         name: `${session.name} (fork)`,
         renamed: true,
         running: false,
         providerSessionId: undefined,
-        worktree: undefined,
       },
       session.id,
     );
