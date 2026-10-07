@@ -2494,7 +2494,7 @@ function App() {
     const source = await invoke<string>("fork_source", {
       sessionId: session.id,
       agent: session.agent,
-      remote: Boolean(session.host),
+      rootId: session.rootId,
     }).catch((reason) => void setError(String(reason)));
     if (!source) return;
     createSession(

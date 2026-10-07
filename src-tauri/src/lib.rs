@@ -3287,9 +3287,10 @@ async fn fork_source(
     app: AppHandle,
     session_id: String,
     agent: String,
-    remote: bool,
+    root_id: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let remote = ssh_root(&app.state::<Roots>(), &root_id)?;
         let known = app
             .state::<ProviderSessions>()
             .0
@@ -3297,15 +3298,22 @@ async fn fork_source(
             .map_err(|error| error.to_string())?
             .get(&session_id)
             .cloned();
-        let saved = match agent.as_str() {
-            "claude" if !remote => {
+        let saved = match (agent.as_str(), remote) {
+            ("claude", None) => {
                 let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&session_id));
                 saved.then_some(id)
             }
-            "claude" => Some(known.unwrap_or(session_id)),
-            "codex" => known.filter(|thread| {
-                remote
-                    || codex_thread_resumable(&app.state::<CodexServer>(), thread).unwrap_or(true)
+            ("claude", Some(root)) => Some(known.unwrap_or(session_id)).filter(|id| {
+                matches!(
+                    ssh_native_session_state(&root, "claude", id),
+                    Ok(RemoteSessionState::Ready)
+                )
+            }),
+            ("codex", None) => known.filter(|thread| {
+                codex_thread_resumable(&app.state::<CodexServer>(), thread).unwrap_or(true)
+            }),
+            ("codex", Some(root)) => known.filter(|thread| {
+                ssh_provider_session_ids(&root, "codex").is_ok_and(|ids| ids.contains(thread))
             }),
             _ => return Err("This session's CLI cannot fork a conversation.".into()),
         };
