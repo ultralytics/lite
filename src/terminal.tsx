@@ -5,6 +5,7 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ILink, type ITheme, Terminal } from "@xterm/xterm";
 import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react";
@@ -254,6 +255,9 @@ export function TerminalView({
       setSearchResult(result);
     });
     terminal.loadAddon(new WebLinksAddon(openLink));
+    // Shells count emoji as two cells; xterm's default Unicode 6 widths count one and misplace the cursor.
+    terminal.loadAddon(new Unicode11Addon());
+    terminal.unicode.activeVersion = "11";
     terminal.registerLinkProvider({
       provideLinks: (y, callback) => callback(fileLinks(terminal, y, (file) => openFileRef.current(file))),
     });

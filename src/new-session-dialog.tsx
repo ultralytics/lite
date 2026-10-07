@@ -520,10 +520,10 @@ export function NewSessionDialog({
   // folder is never looked up once per keystroke. The probe is read-only and needs no grant.
   const probePath = source === "local" ? path.trim() : source === "github" ? (selected?.local ?? "") : "";
   useEffect(() => {
+    setFolder("checking");
+    setWorktree("");
     if (!isOpen || !probePath) {
       setRepo(null);
-      setFolder("checking");
-      setWorktree("");
       return;
     }
     setRepo(undefined);
@@ -844,8 +844,6 @@ export function NewSessionDialog({
   // A picked folder fills the field, which keeps the focus so the arrow keys and Enter still work there.
   function pickFolder(place: string) {
     setPath(place);
-    setFolder("checking");
-    setRepo(undefined);
     folderRef.current?.focus({ preventScroll: true });
   }
 
@@ -1305,12 +1303,7 @@ export function NewSessionDialog({
                             folder === "missing" || folder === "other" ? "project-folder-status" : undefined
                           }
                           onKeyDown={remote ? undefined : moveSelection}
-                          onChange={(event) => {
-                            setPath(event.target.value);
-                            setFolder("checking");
-                            setRepo(undefined);
-                            setWorktree("");
-                          }}
+                          onChange={(event) => setPath(event.target.value)}
                         />
                         {folder === "directory" ? (
                           <Check
