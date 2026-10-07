@@ -547,7 +547,7 @@ function AppContextMenu({
               <Pencil />
               Rename
             </ContextMenuItem>
-            {!session.mode && !session.worktree && (session.agent === "claude" || session.agent === "codex") ? (
+            {!session.mode && !session.worktree && session.agent !== "shell" ? (
               <ContextMenuItem onClick={() => onForkSession(session)}>
                 <GitFork />
                 Fork

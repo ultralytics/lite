@@ -3280,9 +3280,8 @@ fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool,
     })
 }
 
-// The saved conversation a fork of this tab copies, asked before the fork's tab exists so one that
-// cannot start never appears. Codex names a thread before its first message but writes nothing until
-// then; a remote tab's conversation is taken as saved, as its resume does.
+// The saved conversation a fork of this tab copies, checked before the fork's tab exists. Codex names
+// a thread before its first message but saves nothing to fork until then.
 #[tauri::command]
 async fn fork_source(
     app: AppHandle,
@@ -3298,7 +3297,7 @@ async fn fork_source(
             .map_err(|error| error.to_string())?
             .get(&session_id)
             .cloned();
-        match agent.as_str() {
+        let saved = match agent.as_str() {
             "claude" if !remote => {
                 let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&session_id));
                 saved.then_some(id)
@@ -3308,9 +3307,9 @@ async fn fork_source(
                 remote
                     || codex_thread_resumable(&app.state::<CodexServer>(), thread).unwrap_or(true)
             }),
-            _ => None,
-        }
-        .ok_or_else(|| "This session has no conversation to fork yet.".to_owned())
+            _ => return Err("This session's CLI cannot fork a conversation.".into()),
+        };
+        saved.ok_or_else(|| "This session has no conversation to fork yet.".into())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -3839,8 +3838,6 @@ fn agent_builder(agent: &str) -> Result<CommandBuilder, String> {
     Ok(CommandBuilder::new(path))
 }
 
-// Which conversation a launch opens: a new one, the one it resumes, or a copy of the saved one it forks.
-// Only Claude Code and Codex can fork.
 fn session_arguments(launch: &SessionCommand<'_>) -> Result<Vec<String>, String> {
     let SessionCommand {
         agent,
@@ -3850,34 +3847,31 @@ fn session_arguments(launch: &SessionCommand<'_>) -> Result<Vec<String>, String>
         fork,
         ..
     } = *launch;
-    match (agent, fork) {
-        // The fork takes the tab's id, as a new conversation does, so it resumes like any other.
-        ("claude", Some(parent)) => Ok(vec![
-            "--resume".into(),
-            parent.into(),
-            "--fork-session".into(),
-            "--session-id".into(),
-            provider_session_id.unwrap_or(session_id).into(),
-        ]),
-        ("claude", None) => Ok(vec![
+    // A fork copies a saved conversation and then starts as a new one would.
+    let fork = match (agent, fork) {
+        ("claude", Some(parent)) => vec!["--resume".into(), parent.into(), "--fork-session".into()],
+        ("codex", Some(parent)) => vec!["fork".into(), parent.into()],
+        _ => Vec::new(),
+    };
+    match agent {
+        "claude" => Ok(vec![
             if resume { "--resume" } else { "--session-id" }.into(),
             provider_session_id.unwrap_or(session_id).into(),
         ]),
-        ("codex", Some(parent)) => Ok(vec!["fork".into(), parent.into()]),
-        ("codex", None) => Ok(provider_session_id
-            .map(|id| vec!["resume".into(), id.into()])
-            .unwrap_or_default()),
-        (_, Some(_)) => Err("This session cannot be forked".into()),
-        ("gemini" | "qwen", None) => Ok(vec![
+        "gemini" | "qwen" => Ok(vec![
             if resume { "--resume" } else { "--session-id" }.into(),
             session_id.into(),
         ]),
-        ("kimi", None) => Ok(provider_session_id
+        "codex" => Ok(provider_session_id
+            .map(|id| vec!["resume".into(), id.into()])
+            .unwrap_or_default()),
+        "kimi" => Ok(provider_session_id
             .map(|id| vec!["--session".into(), id.into()])
             .unwrap_or_default()),
-        ("shell", None) => Ok(Vec::new()),
+        "shell" => Ok(Vec::new()),
         _ => Err("Unknown session type".into()),
     }
+    .map(|arguments| [fork, arguments].concat())
 }
 
 // Flags the user typed for a session, split as a shell would. A flag that takes control of which
@@ -4207,7 +4201,6 @@ struct SessionCommand<'a> {
     resume: bool,
     session_id: &'a str,
     provider_session_id: Option<&'a str>,
-    // The saved conversation this launch starts as a copy of.
     fork: Option<&'a str>,
 }
 
@@ -4218,9 +4211,13 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
     let reasoning_effort = launch.reasoning_effort;
     let session_id = launch.session_id;
     let mut command = match agent {
-        // Kimi only resumes an exact id: `--continue` would make two tabs in one directory share
-        // its latest session and leave neither able to discover which session it is showing.
-        "claude" | "gemini" | "kimi" | "qwen" => agent_builder(agent)?,
+        "claude" | "gemini" | "kimi" | "qwen" => {
+            let mut command = agent_builder(agent)?;
+            // Kimi only resumes an exact id: `--continue` would make two tabs in one directory share
+            // its latest session and leave neither able to discover which session it is showing.
+            command.args(session_arguments(launch)?);
+            command
+        }
         "codex" => {
             let mut command = agent_builder(agent)?;
             // Codex otherwise suppresses notifications while its terminal is focused and its automatic
@@ -4307,6 +4304,7 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                     ]);
                 }
             }
+            command.args(session_arguments(launch)?);
             command
         }
         "shell" => {
@@ -4319,7 +4317,6 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
         }
         _ => return Err("Unknown session type".into()),
     };
-    command.args(session_arguments(launch)?);
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
@@ -4808,15 +4805,17 @@ fn ssh_session_command(
                 );
             }
             args.extend(CODEX_NOTIFICATION_ARGS.map(str::to_owned));
-        }
-        args.extend(session_arguments(launch)?);
-        if launch.agent == "claude" {
-            args.extend([
-                "--settings".into(),
-                r#"{"preferredNotifChannel":"iterm2"}"#.into(),
-            ]);
-            if let Some(prompt) = initial_prompt {
-                args.push(prompt.into());
+            args.extend(session_arguments(launch)?);
+        } else {
+            args.extend(session_arguments(launch)?);
+            if launch.agent == "claude" {
+                args.extend([
+                    "--settings".into(),
+                    r#"{"preferredNotifChannel":"iterm2"}"#.into(),
+                ]);
+                if let Some(prompt) = initial_prompt {
+                    args.push(prompt.into());
+                }
             }
         }
         args.extend_from_slice(launch.flags);
@@ -4863,8 +4862,7 @@ struct SessionLaunch {
     initial_prompt: Option<String>,
     theme: Option<String>,
     resume: bool,
-    // The saved conversation, from `fork_source`, that this new session starts as a copy of; the tab it
-    // came from keeps writing its own.
+    // The conversation `fork_source` found for this new session to copy.
     fork: Option<String>,
     cols: u16,
     rows: u16,
