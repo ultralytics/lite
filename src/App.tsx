@@ -3609,9 +3609,12 @@ function App() {
                       ? "Comparing this build with the tree it was built from…"
                       : "Checking GitHub for the latest release…"
                     : null}
-                  {updateStatus === "available"
-                    ? `Lite ${availableVersion} is ready. Updating stops running sessions; their tabs resume after restart.`
-                    : null}
+                  {updateStatus === "available" ? (
+                    <>
+                      Lite <Badge variant="success">{availableVersion}</Badge> is ready. Updating stops running
+                      sessions; their tabs resume after restart.
+                    </>
+                  ) : null}
                   {updateStatus === "rebuild"
                     ? `This build is ${commit} and main is now ${availableVersion}. Rebuilding fast-forwards from origin/main in a shell tab, then replaces this build.`
                     : null}
