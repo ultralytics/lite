@@ -3151,45 +3151,22 @@ fn codex_usage(
     })
 }
 
-fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>, String> {
-    let responses = codex_requests(
-        server,
-        &[(
-            3,
-            "thread/list",
-            serde_json::json!({"cwd": path_text(cwd), "limit": 100, "modelProviders": []}),
-        )],
-    )?;
-    Ok(responses
-        .get(&3)
-        .and_then(|response| response.get("data"))
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|thread| thread.get("id").and_then(serde_json::Value::as_str))
-        .map(str::to_owned)
-        .collect())
-}
-
-// Codex lists a thread only once it holds a message of its own, which a fork has not yet; the rollout
-// it saved on forking already names the full id, as the SSH discovery reads it.
-fn codex_rollout_ids(app: &AppHandle) -> HashSet<String> {
+// Codex's own thread list omits a fork until it holds a message of its own, but the rollout it writes
+// on forking already names the full id, as the SSH discovery reads it.
+fn codex_thread_ids(app: &AppHandle) -> HashSet<String> {
     let mut ids = HashSet::new();
-    let Ok(home) = codex_home(app) else {
-        return ids;
-    };
-    let mut directories = vec![home.join("sessions")];
+    let mut directories = codex_home(app)
+        .map(|home| vec![home.join("sessions")])
+        .unwrap_or_default();
     while let Some(directory) = directories.pop() {
         for entry in fs::read_dir(directory).into_iter().flatten().flatten() {
             let path = entry.path();
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            if path.is_dir() {
                 directories.push(path);
             } else if let Some(id) = path
                 .file_stem()
                 .and_then(|stem| stem.to_str())
-                .filter(|stem| stem.starts_with("rollout-"))
                 .and_then(|stem| stem.get(stem.len().saturating_sub(36)..))
-                .filter(|id| uuid::Uuid::parse_str(id).is_ok())
             {
                 ids.insert(id.to_owned());
             }
@@ -3237,12 +3214,7 @@ async fn record_codex_session(
             let ids = if let Some(root) = ssh_root(&roots, &root_id)? {
                 ssh_provider_session_ids(&root, "codex")?
             } else {
-                let mut ids =
-                    codex_thread_ids(&app.state::<CodexServer>(), &root_path(&roots, &root_id)?)?;
-                if !ids.iter().any(|id| id.starts_with(prefix)) {
-                    ids.extend(codex_rollout_ids(&app));
-                }
-                ids
+                codex_thread_ids(&app)
             };
             let mut matching = ids.iter().filter(|id| id.starts_with(prefix));
             let id = matching
@@ -3814,22 +3786,12 @@ fn session_arguments(
     resume: bool,
     session_id: &str,
     provider_session_id: Option<&str>,
-    fork: Option<&str>,
 ) -> Result<Vec<String>, String> {
     match agent {
-        "claude" => {
-            let own = provider_session_id.unwrap_or(session_id).into();
-            Ok(match fork {
-                Some(parent) => vec![
-                    "--resume".into(),
-                    parent.into(),
-                    "--fork-session".into(),
-                    "--session-id".into(),
-                    own,
-                ],
-                None => vec![if resume { "--resume" } else { "--session-id" }.into(), own],
-            })
-        }
+        "claude" => Ok(vec![
+            if resume { "--resume" } else { "--session-id" }.into(),
+            provider_session_id.unwrap_or(session_id).into(),
+        ]),
         "gemini" | "qwen" => Ok(vec![
             if resume { "--resume" } else { "--session-id" }.into(),
             session_id.into(),
@@ -3932,12 +3894,10 @@ fn check_session_flags(agent: String, flags: String) -> Result<(), String> {
     session_flags(&agent, Some(&flags)).map(drop)
 }
 
-fn codex_session_arguments(provider_session_id: Option<&str>, fork: Option<&str>) -> Vec<String> {
-    match (fork, provider_session_id) {
-        (Some(parent), _) => vec!["fork".into(), parent.into()],
-        (None, Some(id)) => vec!["resume".into(), id.into()],
-        (None, None) => Vec::new(),
-    }
+fn codex_resume_arguments(provider_session_id: Option<&str>) -> Vec<String> {
+    provider_session_id
+        .map(|id| vec!["resume".into(), id.into()])
+        .unwrap_or_default()
 }
 
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
@@ -4177,7 +4137,6 @@ struct SessionCommand<'a> {
     resume: bool,
     session_id: &'a str,
     provider_session_id: Option<&'a str>,
-    fork: Option<&'a str>,
 }
 
 fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<CommandBuilder, String> {
@@ -4198,7 +4157,6 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                 resume,
                 session_id,
                 provider_session_id,
-                launch.fork,
             )?);
             command
         }
@@ -4288,7 +4246,7 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                     ]);
                 }
             }
-            command.args(codex_session_arguments(provider_session_id, launch.fork));
+            command.args(codex_resume_arguments(provider_session_id));
             command
         }
         "shell" => {
@@ -4789,17 +4747,13 @@ fn ssh_session_command(
                 );
             }
             args.extend(CODEX_NOTIFICATION_ARGS.map(str::to_owned));
-            args.extend(codex_session_arguments(
-                launch.provider_session_id,
-                launch.fork,
-            ));
+            args.extend(codex_resume_arguments(launch.provider_session_id));
         } else {
             args.extend(session_arguments(
                 launch.agent,
                 launch.resume,
                 launch.session_id,
                 launch.provider_session_id,
-                launch.fork,
             )?);
             if launch.agent == "claude" {
                 args.extend([
@@ -4891,31 +4845,35 @@ async fn spawn_session(
         cols,
         rows,
     } = launch;
-    let flags = session_flags(&agent, flags.as_deref())?;
-    // A fork names the conversation it copies, so the tab it came from keeps writing its own.
-    let fork = fork
-        .map(|parent| {
-            let known = provider_sessions
-                .0
-                .lock()
-                .map_err(|error| error.to_string())?
-                .get(&parent)
-                .cloned();
-            match agent.as_str() {
-                "claude" if host.is_none() => {
-                    let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&parent));
-                    saved.then_some(id)
-                }
-                "claude" => Some(known.unwrap_or(parent)),
-                // Codex names a thread before its first message but writes nothing to fork until then.
-                "codex" => known.filter(|thread| {
-                    host.is_some() || codex_thread_resumable(&codex_server, thread).unwrap_or(true)
-                }),
-                _ => None,
+    let mut flags = session_flags(&agent, flags.as_deref())?;
+    // A fork copies the conversation of the tab it came from, which keeps writing its own. Its arguments
+    // go ahead of the user's flags, which every launch appends last.
+    if let Some(parent) = fork {
+        let known = provider_sessions
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(&parent)
+            .cloned();
+        let parent = match agent.as_str() {
+            "claude" if host.is_none() => {
+                let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&parent));
+                saved.then_some(id)
             }
-            .ok_or_else(|| "This session has no conversation to fork yet.".to_owned())
-        })
-        .transpose()?;
+            "claude" => Some(known.unwrap_or(parent)),
+            // Codex names a thread before its first message but writes nothing to fork until then.
+            "codex" => known.filter(|thread| {
+                host.is_some() || codex_thread_resumable(&codex_server, thread).unwrap_or(true)
+            }),
+            _ => None,
+        }
+        .ok_or("This session has no conversation to fork yet.")?;
+        let arguments = match agent.as_str() {
+            "claude" => vec!["--resume".into(), parent, "--fork-session".into()],
+            _ => vec!["fork".into(), parent],
+        };
+        flags.splice(0..0, arguments);
+    }
     let root = roots
         .0
         .lock()
@@ -5125,7 +5083,6 @@ async fn spawn_session(
         resume,
         session_id: &session_id,
         provider_session_id: provider_session_id.as_deref(),
-        fork: fork.as_deref(),
     };
     let mut command = if let Some(root) = ssh.as_ref() {
         ssh_session_command(root, &launch, initial_prompt.as_deref())?

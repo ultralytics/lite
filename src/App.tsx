@@ -2315,7 +2315,7 @@ function App() {
           initialPrompt: initialPrompt ?? null,
           theme: themeRef.current,
           resume,
-          fork: fork ?? null,
+          fork,
           cols: 100,
           rows: 30,
         },
