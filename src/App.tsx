@@ -2163,11 +2163,16 @@ function App() {
       if (title) {
         const session = sessionsRef.current.find((item) => item.id === sessionId);
         const [identity, ...name] = title.split(" | ");
-        if (session?.agent === "codex" && /^[\da-f-]{20,36}(?:\.\.\.)?$/i.test(identity)) {
-          void invoke("record_codex_session", { sessionId, runId, rootId: session.rootId, title }).catch((reason) =>
-            setError(String(reason)),
-          );
-          if (name.length && !name[0].startsWith(identity.replace("...", ""))) markTitle(sessionId, name.join(" | "));
+        if (session?.agent === "codex") {
+          // Before identity arrives, Codex can emit only its status; keep the session name.
+          if (/^[\da-f-]{20,36}(?:\.\.\.)?$/i.test(identity)) {
+            void invoke("record_codex_session", { sessionId, runId, rootId: session.rootId, title }).catch((reason) =>
+              setError(String(reason)),
+            );
+            // The trailing status refreshes identity on turn start, completion and interruption.
+            name.pop();
+            if (name.length && !name[0].startsWith(identity.replace("...", ""))) markTitle(sessionId, name.join(" | "));
+          }
         } else markTitle(sessionId, title);
       }
       if (path) markDirectory(sessionId, path);

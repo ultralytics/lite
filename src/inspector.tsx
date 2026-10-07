@@ -873,6 +873,8 @@ function FileTree({
 }
 
 const RENDERED_FILE = /\.(?:html?|mdx?|svg)$/i;
+// The last view picked, so refreshing the panel or opening another rendered file keeps it.
+let fileView: "source" | "preview" = "source";
 
 function usePreviewViewer<T extends HTMLElement>(onBack: () => void) {
   const viewer = useRef<T>(null);
@@ -988,7 +990,7 @@ function FileViewer({
   onDraftChange: (contents: string) => void;
   onSave: () => Promise<void>;
 }) {
-  const [view, setView] = useState<"source" | "preview">("source");
+  const [view, setView] = useState(fileView);
   const [discardOpen, setDiscardOpen] = useState(false);
   const dirty = draft !== source;
   const renderable = RENDERED_FILE.test(entry.path);
@@ -1004,8 +1006,11 @@ function FileViewer({
   return (
     <Tabs
       ref={viewer}
-      value={view}
-      onValueChange={(value) => setView(value as "source" | "preview")}
+      value={renderable ? view : "source"}
+      onValueChange={(value) => {
+        fileView = value as typeof fileView;
+        setView(fileView);
+      }}
       aria-label={entry.name}
       tabIndex={-1}
       className="flex min-h-0 flex-1 flex-col gap-0 outline-none"

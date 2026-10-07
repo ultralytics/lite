@@ -53,7 +53,7 @@ const CODEX_NOTIFICATION_ARGS: [&str; 7] = [
     "-c",
     r#"tui.notification_condition="always""#,
     "-c",
-    r#"tui.terminal_title=["session-id","thread"]"#,
+    r#"tui.terminal_title=["session-id","thread","status"]"#,
 ];
 const SUPPORTED_KEYS: [&str; 8] = [
     "claude",
@@ -1530,8 +1530,7 @@ fn ssh_provider_session_ids(root: &SshRoot, agent: &str) -> Result<HashSet<Strin
     let (variable, fallback) = provider_home_parts(home_agent).ok_or("Unknown session type")?;
     let script = match agent {
         "codex" => format!(
-            "home=${{{variable}:-$HOME/{fallback}}}; test -d \"$home/sessions\" || exit 0; find \"$home/sessions\" -type f -name 'rollout-*.jsonl' -exec sh -c 'pattern=$1; shift; for file do IFS= read -r line < \"$file\"; case $line in *\"$pattern\"*) printf \"%s\\n\" \"$file\";; esac; done' sh {} {{}} + | sed -n {}",
-            posix_quote(&cwd),
+            "home=${{{variable}:-$HOME/{fallback}}}; test -d \"$home/sessions\" || exit 0; find \"$home/sessions\" -type f -name 'rollout-*.jsonl' | sed -n {}",
             posix_quote(r"s/.*-\([0-9a-fA-F-]\{36\}\)\.jsonl$/\1/p"),
         ),
         "kimi" | "kimi-current" => {
@@ -3151,28 +3150,57 @@ fn codex_usage(
     })
 }
 
-fn codex_thread_ids(server: &CodexServer, cwd: &Path) -> Result<HashSet<String>, String> {
-    let responses = codex_requests(
-        server,
-        &[(
-            3,
-            "thread/list",
-            serde_json::json!({"cwd": path_text(cwd), "limit": 100, "modelProviders": []}),
-        )],
-    )?;
-    Ok(responses
-        .get(&3)
-        .and_then(|response| response.get("data"))
-        .and_then(serde_json::Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|thread| thread.get("id").and_then(serde_json::Value::as_str))
-        .map(str::to_owned)
-        .collect())
+fn codex_thread_ids(server: &CodexServer, prefix: &str) -> Result<HashSet<String>, String> {
+    // A UUIDv7 embeds its creation time. Older history cannot contain this thread,
+    // so an ephemeral thread need not scan every saved conversation on each status change.
+    let created_at = uuid::Uuid::parse_str(&format!("{:0<32}", prefix.replace('-', "")))
+        .ok()
+        .filter(|id| id.get_version_num() == 7)
+        .and_then(|id| id.get_timestamp())
+        .map(|timestamp| timestamp.to_unix().0);
+    let mut ids = HashSet::new();
+    let mut cursor = serde_json::Value::Null;
+    loop {
+        let responses = codex_requests(
+            server,
+            &[(
+                3,
+                "thread/list",
+                serde_json::json!({"cursor": cursor, "limit": 100, "modelProviders": [], "sortKey": "created_at", "sortDirection": "desc"}),
+            )],
+        )?;
+        let page = responses
+            .get(&3)
+            .and_then(|response| response.get("data"))
+            .and_then(serde_json::Value::as_array);
+        ids.extend(
+            page.into_iter()
+                .flatten()
+                .filter_map(|thread| thread.get("id").and_then(serde_json::Value::as_str))
+                .filter(|id| id.starts_with(prefix))
+                .map(str::to_owned),
+        );
+        cursor = responses
+            .get(&3)
+            .and_then(|response| response.get("nextCursor"))
+            .cloned()
+            .unwrap_or_default();
+        let oldest = page
+            .and_then(|page| page.last())
+            .and_then(|thread| thread.get("createdAt"))
+            .and_then(serde_json::Value::as_u64);
+        if cursor.is_null()
+            || created_at
+                .zip(oldest)
+                .is_some_and(|(created, oldest)| oldest < created)
+        {
+            return Ok(ids);
+        }
+    }
 }
 
-// Before saving a new thread, Codex reports "shortened-id | full-id". Keep both parts
-// so that this complete identity report can be recorded without saved-thread discovery.
+// A terminal title identifies the visible thread, which can be ephemeral (/btw) or
+// an unsaved fork. Only persisted threads can replace the session's resume target.
 #[tauri::command]
 async fn record_codex_session(
     app: AppHandle,
@@ -3182,7 +3210,9 @@ async fn record_codex_session(
     title: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let (identity, name) = title.split_once(" | ").unwrap_or((&title, ""));
+        let identity = title
+            .split_once(" | ")
+            .map_or(title.as_str(), |(identity, _)| identity);
         let prefix = identity.strip_suffix("...").unwrap_or(identity);
         if !(20..=36).contains(&prefix.len())
             || !prefix
@@ -3201,21 +3231,17 @@ async fn record_codex_session(
         {
             return Ok(());
         }
-        let id = if name.starts_with(prefix)
-            && let Ok(id) = uuid::Uuid::parse_str(name)
-        {
-            id.to_string()
-        } else {
+        let id = {
             let roots = app.state::<Roots>();
             let ids = if let Some(root) = ssh_root(&roots, &root_id)? {
                 ssh_provider_session_ids(&root, "codex")?
             } else {
-                codex_thread_ids(&app.state::<CodexServer>(), &root_path(&roots, &root_id)?)?
+                codex_thread_ids(&app.state::<CodexServer>(), prefix)?
             };
             let mut matching = ids.iter().filter(|id| id.starts_with(prefix));
-            let id = matching
-                .next()
-                .ok_or("Codex has not saved the reported conversation")?;
+            let Some(id) = matching.next() else {
+                return Ok(());
+            };
             if matching.next().is_some() {
                 return Err("Codex reported an ambiguous conversation ID".into());
             }
