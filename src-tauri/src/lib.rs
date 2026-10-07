@@ -3258,6 +3258,34 @@ fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool,
     })
 }
 
+// The saved conversation a tab holds. Codex names a thread before its first message but writes
+// nothing until then; a remote tab's conversation is taken as saved, as its resume does.
+fn saved_conversation(
+    app: &AppHandle,
+    agent: &str,
+    remote: bool,
+    tab: &str,
+) -> Result<Option<String>, String> {
+    let known = app
+        .state::<ProviderSessions>()
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(tab)
+        .cloned();
+    Ok(match agent {
+        "claude" if !remote => {
+            let (id, saved) = claude_launch_id(app, known.as_deref().unwrap_or(tab));
+            saved.then_some(id)
+        }
+        "claude" => Some(known.unwrap_or_else(|| tab.to_owned())),
+        "codex" => known.filter(|thread| {
+            remote || codex_thread_resumable(&app.state::<CodexServer>(), thread).unwrap_or(true)
+        }),
+        _ => None,
+    })
+}
+
 fn stop_codex_server(server: &CodexServer) {
     let Ok(mut server) = server.0.lock() else {
         return;
@@ -3781,25 +3809,43 @@ fn agent_builder(agent: &str) -> Result<CommandBuilder, String> {
     Ok(CommandBuilder::new(path))
 }
 
-fn session_arguments(
-    agent: &str,
-    resume: bool,
-    session_id: &str,
-    provider_session_id: Option<&str>,
-) -> Result<Vec<String>, String> {
-    match agent {
-        "claude" => Ok(vec![
+// Which conversation a launch opens: a new one, the one it resumes, or a copy of the saved one it forks.
+// Only Claude Code and Codex can fork.
+fn session_arguments(launch: &SessionCommand<'_>) -> Result<Vec<String>, String> {
+    let SessionCommand {
+        agent,
+        resume,
+        session_id,
+        provider_session_id,
+        fork,
+        ..
+    } = *launch;
+    match (agent, fork) {
+        // The fork takes the tab's id, as a new conversation does, so it resumes like any other.
+        ("claude", Some(parent)) => Ok(vec![
+            "--resume".into(),
+            parent.into(),
+            "--fork-session".into(),
+            "--session-id".into(),
+            provider_session_id.unwrap_or(session_id).into(),
+        ]),
+        ("claude", None) => Ok(vec![
             if resume { "--resume" } else { "--session-id" }.into(),
             provider_session_id.unwrap_or(session_id).into(),
         ]),
-        "gemini" | "qwen" => Ok(vec![
+        ("codex", Some(parent)) => Ok(vec!["fork".into(), parent.into()]),
+        ("codex", None) => Ok(provider_session_id
+            .map(|id| vec!["resume".into(), id.into()])
+            .unwrap_or_default()),
+        (_, Some(_)) => Err("This session cannot be forked".into()),
+        ("gemini" | "qwen", None) => Ok(vec![
             if resume { "--resume" } else { "--session-id" }.into(),
             session_id.into(),
         ]),
-        "kimi" => Ok(provider_session_id
+        ("kimi", None) => Ok(provider_session_id
             .map(|id| vec!["--session".into(), id.into()])
             .unwrap_or_default()),
-        "shell" => Ok(Vec::new()),
+        ("shell", None) => Ok(Vec::new()),
         _ => Err("Unknown session type".into()),
     }
 }
@@ -3892,12 +3938,6 @@ fn session_flags(agent: &str, flags: Option<&str>) -> Result<Vec<String>, String
 #[tauri::command]
 fn check_session_flags(agent: String, flags: String) -> Result<(), String> {
     session_flags(&agent, Some(&flags)).map(drop)
-}
-
-fn codex_resume_arguments(provider_session_id: Option<&str>) -> Vec<String> {
-    provider_session_id
-        .map(|id| vec!["resume".into(), id.into()])
-        .unwrap_or_default()
 }
 
 fn codex_home(app: &AppHandle) -> Result<PathBuf, String> {
@@ -4137,6 +4177,8 @@ struct SessionCommand<'a> {
     resume: bool,
     session_id: &'a str,
     provider_session_id: Option<&'a str>,
+    // The saved conversation this launch starts as a copy of.
+    fork: Option<&'a str>,
 }
 
 fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<CommandBuilder, String> {
@@ -4144,22 +4186,11 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
     let provider = launch.provider;
     let model = launch.model;
     let reasoning_effort = launch.reasoning_effort;
-    let resume = launch.resume;
     let session_id = launch.session_id;
-    let provider_session_id = launch.provider_session_id;
     let mut command = match agent {
-        "claude" | "gemini" | "kimi" | "qwen" => {
-            let mut command = agent_builder(agent)?;
-            // Kimi only resumes an exact id: `--continue` would make two tabs in one directory share
-            // its latest session and leave neither able to discover which session it is showing.
-            command.args(session_arguments(
-                agent,
-                resume,
-                session_id,
-                provider_session_id,
-            )?);
-            command
-        }
+        // Kimi only resumes an exact id: `--continue` would make two tabs in one directory share
+        // its latest session and leave neither able to discover which session it is showing.
+        "claude" | "gemini" | "kimi" | "qwen" => agent_builder(agent)?,
         "codex" => {
             let mut command = agent_builder(agent)?;
             // Codex otherwise suppresses notifications while its terminal is focused and its automatic
@@ -4246,7 +4277,6 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
                     ]);
                 }
             }
-            command.args(codex_resume_arguments(provider_session_id));
             command
         }
         "shell" => {
@@ -4259,6 +4289,7 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
         }
         _ => return Err("Unknown session type".into()),
     };
+    command.args(session_arguments(launch)?);
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
@@ -4747,22 +4778,15 @@ fn ssh_session_command(
                 );
             }
             args.extend(CODEX_NOTIFICATION_ARGS.map(str::to_owned));
-            args.extend(codex_resume_arguments(launch.provider_session_id));
-        } else {
-            args.extend(session_arguments(
-                launch.agent,
-                launch.resume,
-                launch.session_id,
-                launch.provider_session_id,
-            )?);
-            if launch.agent == "claude" {
-                args.extend([
-                    "--settings".into(),
-                    r#"{"preferredNotifChannel":"iterm2"}"#.into(),
-                ]);
-                if let Some(prompt) = initial_prompt {
-                    args.push(prompt.into());
-                }
+        }
+        args.extend(session_arguments(launch)?);
+        if launch.agent == "claude" {
+            args.extend([
+                "--settings".into(),
+                r#"{"preferredNotifChannel":"iterm2"}"#.into(),
+            ]);
+            if let Some(prompt) = initial_prompt {
+                args.push(prompt.into());
             }
         }
         args.extend_from_slice(launch.flags);
@@ -4845,35 +4869,14 @@ async fn spawn_session(
         cols,
         rows,
     } = launch;
-    let mut flags = session_flags(&agent, flags.as_deref())?;
-    // A fork copies the conversation of the tab it came from, which keeps writing its own. Its arguments
-    // go ahead of the user's flags, which every launch appends last.
-    if let Some(parent) = fork {
-        let known = provider_sessions
-            .0
-            .lock()
-            .map_err(|error| error.to_string())?
-            .get(&parent)
-            .cloned();
-        let parent = match agent.as_str() {
-            "claude" if host.is_none() => {
-                let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&parent));
-                saved.then_some(id)
-            }
-            "claude" => Some(known.unwrap_or(parent)),
-            // Codex names a thread before its first message but writes nothing to fork until then.
-            "codex" => known.filter(|thread| {
-                host.is_some() || codex_thread_resumable(&codex_server, thread).unwrap_or(true)
-            }),
-            _ => None,
-        }
-        .ok_or("This session has no conversation to fork yet.")?;
-        let arguments = match agent.as_str() {
-            "claude" => vec!["--resume".into(), parent, "--fork-session".into()],
-            _ => vec!["fork".into(), parent],
-        };
-        flags.splice(0..0, arguments);
-    }
+    let flags = session_flags(&agent, flags.as_deref())?;
+    // A fork copies the conversation of the tab it came from, which keeps writing its own.
+    let fork = fork
+        .map(|tab| {
+            saved_conversation(&app, &agent, host.is_some(), &tab)?
+                .ok_or_else(|| "This session has no conversation to fork yet.".to_owned())
+        })
+        .transpose()?;
     let root = roots
         .0
         .lock()
@@ -5083,6 +5086,7 @@ async fn spawn_session(
         resume,
         session_id: &session_id,
         provider_session_id: provider_session_id.as_deref(),
+        fork: fork.as_deref(),
     };
     let mut command = if let Some(root) = ssh.as_ref() {
         ssh_session_command(root, &launch, initial_prompt.as_deref())?
