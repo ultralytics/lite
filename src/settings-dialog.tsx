@@ -8,11 +8,13 @@ import {
   Info,
   Keyboard,
   KeyRound,
+  LifeBuoy,
   Moon,
   Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
+  Scale,
   SlidersHorizontal,
   Sun,
   Trash2,
@@ -325,7 +327,7 @@ export function SettingsDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:h-[38rem] sm:max-w-3xl">
+      <DialogContent className="sm:h-[min(45rem,calc(100dvh-2rem))] sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription className="sr-only">
@@ -650,6 +652,32 @@ export function SettingsDialog({
                     onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite" })}
                   >
                     View repository
+                    <ExternalLink />
+                  </Button>
+                </Setting>
+                <Setting
+                  media={<LifeBuoy />}
+                  title="Support"
+                  description="Report a bug, request a feature, or ask a question"
+                >
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void invoke("open_url", { url: "https://github.com/ultralytics/lite/issues" })}
+                  >
+                    View issues
+                    <ExternalLink />
+                  </Button>
+                </Setting>
+                <Setting media={<Scale />} title="Legal" description="Ultralytics terms of service">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      void invoke("open_url", { url: "https://www.ultralytics.com/legal/terms-of-service" })
+                    }
+                  >
+                    View terms
                     <ExternalLink />
                   </Button>
                 </Setting>
