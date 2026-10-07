@@ -3309,9 +3309,12 @@ async fn fork_source(
                     Ok(RemoteSessionState::Ready)
                 )
             }),
-            ("codex", None) => known.filter(|thread| {
-                codex_thread_resumable(&app.state::<CodexServer>(), thread).unwrap_or(true)
-            }),
+            ("codex", None) => match known {
+                Some(thread) if codex_thread_resumable(&app.state::<CodexServer>(), &thread)? => {
+                    Some(thread)
+                }
+                _ => None,
+            },
             ("codex", Some(root)) => known.filter(|thread| {
                 ssh_provider_session_ids(&root, "codex").is_ok_and(|ids| ids.contains(thread))
             }),
