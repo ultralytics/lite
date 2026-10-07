@@ -44,6 +44,16 @@ const agentLabels: Record<Agent, string> = {
   shell: "Shell",
 };
 
+// Only these CLIs can launch a new session as a copy of a saved one; `fork_source` in Rust refuses the rest.
+const forkable: Record<Agent, boolean> = {
+  claude: true,
+  codex: true,
+  gemini: false,
+  kimi: false,
+  qwen: false,
+  shell: false,
+};
+
 const providerLabels: Record<ModelProvider, string> = {
   openai: "OpenAI",
   deepseek: "DeepSeek",
@@ -54,6 +64,10 @@ const providerLabels: Record<ModelProvider, string> = {
 
 export function agentLabel(agent: Agent): string {
   return agentLabels[agent];
+}
+
+export function canFork(agent: Agent): boolean {
+  return forkable[agent];
 }
 
 export function providerLabel(provider: ModelProvider): string {
