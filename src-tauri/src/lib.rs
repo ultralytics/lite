@@ -1195,22 +1195,20 @@ fn ssh_scope_guard(root: &str, variable: &str, message: &str) -> String {
     )
 }
 
+// Opening and saving a file follow its path wherever it leads, because agents report files in sibling
+// worktrees and scratch folders that the session's terminal already reaches. Browsing and deleting stay
+// inside the selected folder.
+fn ssh_file_script(path: &str, command: &str) -> String {
+    format!(
+        "path=$(realpath -- {}) || exit; {command}",
+        posix_quote(path)
+    )
+}
+
 fn scoped_ssh_script(root: &SshRoot, path: &str, command: &str) -> Result<String, String> {
     let path = remote_path(root, path)?;
     let scope = ssh_scope_guard(&root.path, "path", "Path is outside the selected folder");
-    Ok(format!(
-        "path=$(realpath -- {}) || exit; {scope}{command}",
-        posix_quote(&path)
-    ))
-}
-
-fn scoped_path(root: &Path, path: &str) -> Result<PathBuf, String> {
-    let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
-    if path.starts_with(root) {
-        Ok(path)
-    } else {
-        Err("Path is outside the selected folder".into())
-    }
+    Ok(ssh_file_script(&path, &format!("{scope}{command}")))
 }
 
 // Deletion scopes the selected entry through its canonical parent rather than canonicalizing the
@@ -5612,7 +5610,10 @@ async fn list_directory(
     let root = root_path(&roots, &root_id)?;
     let hide_hidden = settings.hide_hidden.load(Ordering::Relaxed);
     tauri::async_runtime::spawn_blocking(move || {
-        let path = scoped_path(&root, &path)?;
+        let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
+        if !path.starts_with(&root) {
+            return Err("Path is outside the selected folder".into());
+        }
         let after =
             after.map(|cursor| directory_key(&cursor.name, &cursor.path, cursor.is_directory));
         let mut page = BTreeMap::new();
@@ -5652,8 +5653,7 @@ async fn read_text_file(
             let separator = format!("\0{marker}\0");
             let output = ssh_output(
                 &root,
-                &scoped_ssh_script(
-                    &root,
+                &ssh_file_script(
                     &path,
                     &format!(
                         "head -c {} -- \"$path\" || exit; printf '\\0%s\\0' {}; parent=${{path%/*}}; repository=$(git -C \"$parent\" rev-parse --show-toplevel 2>/dev/null) || {{ printf '0\\0'; exit 0; }}; case \"$path\" in \"$repository\"/*) pathspec=${{path#\"$repository\"/}};; *) printf '0\\0'; exit 0;; esac; if ! git -C \"$repository\" --literal-pathspecs ls-files --error-unmatch -- \"$pathspec\" >/dev/null 2>&1; then git -C \"$repository\" --literal-pathspecs check-ignore -q -- \"$pathspec\"; ignored=$?; if test \"$ignored\" = 1; then printf '1\\0'; else printf '0\\0'; fi; exit 0; fi; {SSH_GIT_BASE} object=$base:$pathspec; if ! git -C \"$repository\" cat-file -e \"$object\" 2>/dev/null; then printf '1\\0'; exit 0; fi; baseline=$(mktemp) || {{ printf '0\\0'; exit 0; }}; code=$(mktemp) || {{ rm -f -- \"$baseline\"; printf '0\\0'; exit 0; }}; trap 'rm -f -- \"$baseline\" \"$code\"' EXIT; {{ git -C \"$repository\" cat-file --filters \"--path=$pathspec\" \"$object\"; printf '%s' $? > \"$code\"; }} | head -c {} > \"$baseline\"; result=$(cat \"$code\"); size=$(wc -c < \"$baseline\"); if test \"$result\" = 0 && test \"$size\" -le {MAX_FILE_BYTES}; then printf '1\\0'; cat -- \"$baseline\"; else printf '0\\0'; fi; rm -f -- \"$baseline\" \"$code\"; trap - EXIT",
@@ -5661,7 +5661,7 @@ async fn read_text_file(
                         posix_quote(&marker),
                         MAX_FILE_BYTES + 1,
                     ),
-                )?,
+                ),
             )?;
             let separator = separator.as_bytes();
             let split = output
@@ -5684,9 +5684,8 @@ async fn read_text_file(
         .await
         .map_err(|error| error.to_string())??
     } else {
-        let root = root_path(&roots, &root_id)?;
-        let path = scoped_path(&root, &path)?;
         tauri::async_runtime::spawn_blocking(move || {
+            let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
             let mut bytes = Vec::new();
             fs::File::open(&path)
                 .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
@@ -5789,11 +5788,7 @@ async fn read_image_file(
 ) -> Result<tauri::ipc::Response, String> {
     let bytes = if let Some(root) = ssh_root(&roots, &root_id)? {
         tauri::async_runtime::spawn_blocking(move || {
-            let script = scoped_ssh_script(
-                &root,
-                &path,
-                &format!("head -c {} -- \"$path\"", MAX_IMAGE_BYTES + 1),
-            )?;
+            let script = format!("head -c {} -- {}", MAX_IMAGE_BYTES + 1, posix_quote(&path));
             let mut bytes = Vec::new();
             ssh_stream(&root, &script, None, |chunk| {
                 if bytes.len() + chunk.len() > MAX_IMAGE_BYTES as usize {
@@ -5807,8 +5802,6 @@ async fn read_image_file(
         .await
         .map_err(|error| error.to_string())??
     } else {
-        let root = root_path(&roots, &root_id)?;
-        let path = scoped_path(&root, &path)?;
         tauri::async_runtime::spawn_blocking(move || {
             let mut bytes = Vec::new();
             fs::File::open(path)
@@ -5838,11 +5831,10 @@ async fn write_text_file(
     }
     if let Some(root) = ssh_root(&roots, &root_id)? {
         return tauri::async_runtime::spawn_blocking(move || {
-            let script = scoped_ssh_script(
-                &root,
+            let script = ssh_file_script(
                 &path,
                 &format!("set -e; test -f \"$path\" || {{ printf '%s\\n' 'Only files can be edited' >&2; exit 1; }}; parent=${{path%/*}}; test -n \"$parent\" || parent=/; tmp=$(mktemp \"$parent\"/.lite.XXXXXX); trap 'rm -f -- \"$tmp\" \"$input\"' EXIT; input=$(mktemp \"$parent\"/.lite.XXXXXX); cat > \"$input\"; tail -c +{} \"$input\" > \"$tmp\"; head -c {} \"$input\" | cmp -s - \"$path\" || {{ printf '%s\\n' 'The file changed on disk. Copy your draft before reopening it to compare changes.' >&2; exit 1; }}; chmod --reference=\"$path\" \"$tmp\"; mv -- \"$tmp\" \"$path\"", original.len() + 1, original.len()),
-            )?;
+            );
             let mut input = original.into_bytes();
             input.extend_from_slice(contents.as_bytes());
             ssh_stream(&root, &script, Some(&input), |_| Ok(()))
@@ -5850,9 +5842,8 @@ async fn write_text_file(
         .await
         .map_err(|error| error.to_string())?;
     }
-    let root = root_path(&roots, &root_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let path = scoped_path(&root, &path)?;
+        let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
         if !path.is_file() {
             return Err("Only files can be edited".into());
         }
