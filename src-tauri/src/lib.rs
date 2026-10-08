@@ -5636,8 +5636,8 @@ async fn read_text_file(
         .await
         .map_err(|error| error.to_string())??
     } else {
-        let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
         tauri::async_runtime::spawn_blocking(move || {
+            let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
             let mut bytes = Vec::new();
             fs::File::open(&path)
                 .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
@@ -5757,8 +5757,8 @@ async fn read_image_file(
         .await
         .map_err(|error| error.to_string())??
     } else {
-        let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
         tauri::async_runtime::spawn_blocking(move || {
+            let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
             let mut bytes = Vec::new();
             fs::File::open(path)
                 .and_then(|file| file.take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes))
