@@ -5740,10 +5740,7 @@ async fn read_image_file(
 ) -> Result<tauri::ipc::Response, String> {
     let bytes = if let Some(root) = ssh_root(&roots, &root_id)? {
         tauri::async_runtime::spawn_blocking(move || {
-            let script = ssh_file_script(
-                &path,
-                &format!("head -c {} -- \"$path\"", MAX_IMAGE_BYTES + 1),
-            );
+            let script = format!("head -c {} -- {}", MAX_IMAGE_BYTES + 1, posix_quote(&path));
             let mut bytes = Vec::new();
             ssh_stream(&root, &script, None, |chunk| {
                 if bytes.len() + chunk.len() > MAX_IMAGE_BYTES as usize {
@@ -5758,7 +5755,6 @@ async fn read_image_file(
         .map_err(|error| error.to_string())??
     } else {
         tauri::async_runtime::spawn_blocking(move || {
-            let path = fs::canonicalize(path).map_err(|error| error.to_string())?;
             let mut bytes = Vec::new();
             fs::File::open(path)
                 .and_then(|file| file.take(MAX_IMAGE_BYTES + 1).read_to_end(&mut bytes))
