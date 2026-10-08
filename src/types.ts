@@ -33,6 +33,9 @@ export interface Session {
   // The repository the session's folder sits in, recorded at creation: worktrees live outside the
   // main checkout, so this — not the path — is how sessions sharing a repository recognize each other.
   repo?: string;
+  // When the user put the session away: its process stops and its row moves to the Archived section,
+  // but everything closing would delete is kept, so opening it again resumes the conversation.
+  archivedAt?: number;
 }
 
 const agentLabels: Record<Agent, string> = {
