@@ -5,6 +5,7 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
+  Archive,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
@@ -485,6 +486,7 @@ function AppContextMenu({
   onRenameSession,
   onForkSession,
   onRestartSession,
+  onArchiveSession,
   onCloseSession,
   onRestartAll,
   onCloseAll,
@@ -497,6 +499,7 @@ function AppContextMenu({
   onRenameSession: (session: Session) => void;
   onForkSession: (session: Session) => void;
   onRestartSession: (session: Session) => void;
+  onArchiveSession: (session: Session) => void;
   onCloseSession: (session: Session) => void;
   onRestartAll: () => void;
   onCloseAll: () => void;
@@ -558,10 +561,18 @@ function AppContextMenu({
               Copy path
             </ContextMenuItem>
             <ContextMenuSeparator />
-            <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onRestartSession(session)}>
-              <RotateCcw />
-              Restart
-            </ContextMenuItem>
+            {session.archivedAt ? null : (
+              <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onRestartSession(session)}>
+                <RotateCcw />
+                Restart
+              </ContextMenuItem>
+            )}
+            {session.archivedAt || session.mode ? null : (
+              <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onArchiveSession(session)}>
+                <Archive />
+                Archive
+              </ContextMenuItem>
+            )}
             <ContextMenuItem
               variant="destructive"
               disabled={startingIds.has(session.id)}
@@ -675,7 +686,7 @@ function AppContextMenu({
             Collapse panel
           </ContextMenuItem>
         ) : null}
-        {sessionsGroup && sessions.length ? (
+        {sessionsGroup && sessions.some((item) => !item.archivedAt) ? (
           <>
             <ContextMenuSeparator />
             <ContextMenuItem disabled={startingIds.size > 0} onClick={onRestartAll}>
@@ -1217,28 +1228,44 @@ function SessionMark({ session }: { session: Session }) {
   );
 }
 
+// Archived sessions have nothing to restart, and sign-in and rebuild sessions are never stored to archive.
 function SessionActionButtons({
   name,
   starting = false,
   onRestart,
+  onArchive,
   onClose,
 }: {
   name: string;
   starting?: boolean;
-  onRestart: () => void;
+  onRestart?: () => void;
+  onArchive?: () => void;
   onClose: () => void;
 }) {
   return (
     <>
-      <ActionIconButton
-        size="icon-sm"
-        tooltip={starting ? "Restarting…" : "Restart"}
-        aria-label={starting ? `Restarting ${name}` : `Restart ${name}`}
-        disabled={starting}
-        onClick={onRestart}
-      >
-        <RotateCcw className={starting ? "animate-spin" : undefined} />
-      </ActionIconButton>
+      {onRestart ? (
+        <ActionIconButton
+          size="icon-sm"
+          tooltip={starting ? "Restarting…" : "Restart"}
+          aria-label={starting ? `Restarting ${name}` : `Restart ${name}`}
+          disabled={starting}
+          onClick={onRestart}
+        >
+          <RotateCcw className={starting ? "animate-spin" : undefined} />
+        </ActionIconButton>
+      ) : null}
+      {onArchive ? (
+        <ActionIconButton
+          size="icon-sm"
+          tooltip="Archive"
+          aria-label={`Archive ${name}`}
+          disabled={starting}
+          onClick={onArchive}
+        >
+          <Archive />
+        </ActionIconButton>
+      ) : null}
       <ActionIconButton
         size="icon-sm"
         className="hover:text-destructive"
@@ -1269,6 +1296,7 @@ function SessionRow({
   onReorder,
   onMove,
   onRestart,
+  onArchive,
   onClose,
 }: {
   session: Session;
@@ -1285,7 +1313,8 @@ function SessionRow({
   onRenamingChange: (renaming: boolean) => void;
   onReorder: (targetId: string, after: boolean) => void;
   onMove: (direction: -1 | 1) => void;
-  onRestart: () => void;
+  onRestart?: () => void;
+  onArchive?: () => void;
   onClose: () => void;
 }) {
   const drag = useRef<{ id: number; x: number; y: number; row: HTMLElement } | undefined>(undefined);
@@ -1327,6 +1356,7 @@ function SessionRow({
   return (
     <Item
       data-context-session={session.id}
+      data-archived={session.archivedAt ? "" : undefined}
       size="xs"
       onClick={onSelect}
       onClickCapture={(event) => {
@@ -1365,9 +1395,10 @@ function SessionRow({
         }
         event.preventDefault();
         const list = pointer.row.closest("[data-session-list]");
+        // Archived rows keep their own order, so a drag never lands among them.
         const rows = [
           ...((groupBounded ? pointer.row.parentElement : list)?.querySelectorAll<HTMLElement>(
-            "[data-context-session]",
+            "[data-context-session]:not([data-archived])",
           ) ?? []),
         ];
         const before = rows.find(
@@ -1428,7 +1459,7 @@ function SessionRow({
       }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`relative cursor-pointer flex-nowrap transition-[color,background-color,opacity] data-[shifted]:transition-transform data-[shifted]:duration-150 data-[shifted]:ease-out motion-reduce:data-[shifted]:transition-none after:pointer-events-none after:absolute after:inset-x-1 after:z-10 after:hidden after:h-0.5 after:rounded-full after:bg-primary data-[drop=before]:after:-top-0.5 data-[drop=before]:after:block data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:block active:opacity-70 ${reorderable ? "select-none active:cursor-grabbing" : ""} ${active ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground dark:border-transparent" : "hover:bg-sidebar-accent/60"}`}
+      className={`relative cursor-pointer flex-nowrap transition-[color,background-color,opacity] data-[shifted]:transition-transform data-[shifted]:duration-150 data-[shifted]:ease-out motion-reduce:data-[shifted]:transition-none after:pointer-events-none after:absolute after:inset-x-1 after:z-10 after:hidden after:h-0.5 after:rounded-full after:bg-primary data-[drop=before]:after:-top-0.5 data-[drop=before]:after:block data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:block active:opacity-70 ${reorderable ? "select-none active:cursor-grabbing" : ""} ${active ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground dark:border-transparent" : session.archivedAt ? "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge
@@ -1492,7 +1523,13 @@ function SessionRow({
         className="hidden shrink-0 gap-0.5 group-hover/item:flex group-focus-within/item:flex"
         onClick={(event) => event.stopPropagation()}
       >
-        <SessionActionButtons name={session.name} starting={starting} onRestart={onRestart} onClose={onClose} />
+        <SessionActionButtons
+          name={session.name}
+          starting={starting}
+          onRestart={onRestart}
+          onArchive={onArchive}
+          onClose={onClose}
+        />
       </ItemActions>
     </Item>
   );
@@ -1605,7 +1642,7 @@ function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [recentFolders, setRecentFolders] = useState(() => loadRecentFolders(sessions));
   const [sessionView, setSessionView] = useState(loadSessionView);
-  const [selectedId, setSelectedId] = useState(() => sessions[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState(() => sessions.find((session) => !session.archivedAt)?.id ?? "");
   const [sessionVisit, setSessionVisit] = useState(0);
   const [attention, setAttention] = useState<string[]>([]);
   const [newSessionOpen, setNewSessionOpen] = useState(false);
@@ -1654,7 +1691,8 @@ function App() {
   const [query, setQuery] = useState("");
   const sessionSearch = useRef<HTMLInputElement>(null);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  // The archive starts shut: it is where sessions go to stop asking for attention.
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set(["archived"]));
   const [renamingId, setRenamingId] = useState("");
   // Each side collapses to a rail of icons rather than to nothing, so the panel is still there to click
   // or drag back open. Dragging past the minimum is what collapses it; the handle never goes away.
@@ -1748,6 +1786,7 @@ function App() {
     [],
   );
   const selected = useMemo(() => sessions.find((session) => session.id === selectedId), [sessions, selectedId]);
+  const active = useMemo(() => sessions.filter((session) => !session.archivedAt), [sessions]);
   const selectedStarting = selected ? startingIds.has(selected.id) : false;
   // A session is found by what names it: the subject it was given and the folder it works in.
   const visible = useMemo(() => {
@@ -1759,12 +1798,24 @@ function App() {
   }, [sessions, query]);
   const attentionIds = useMemo(() => new Set(attention), [attention]);
   const sortedVisible = useMemo(() => {
-    return sortSessions(visible, sessionView.sort);
+    return sortSessions(
+      visible.filter((session) => !session.archivedAt),
+      sessionView.sort,
+    );
   }, [sessionView.sort, visible]);
   const visibleGroups = useMemo(
     () => groupSessions(sortedVisible, sessionView.grouping, attentionIds, working),
     [attentionIds, sessionView.grouping, sortedVisible, working],
   );
+  // The archive follows the groups whatever the grouping, most recently archived first. It is left out
+  // of what the number and cycling shortcuts count, since reaching an archived row brings it back.
+  const listedGroups = useMemo(() => {
+    const archived = visible.filter((session) => session.archivedAt);
+    archived.sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0));
+    return archived.length
+      ? [...visibleGroups, { name: "Archived", key: "archived", title: "", sessions: archived }]
+      : visibleGroups;
+  }, [visible, visibleGroups]);
   const selectedGroupKey = selected
     ? `${sessionView.grouping}:${sessionGroupKey(selected, sessionView.grouping, attentionIds, working)}`
     : "";
@@ -1780,14 +1831,14 @@ function App() {
   const displayed = visibleGroups.flatMap((group) =>
     query.trim() || !collapsedGroups.has(group.key) ? group.sessions : [],
   );
-  const sessionsById = new Map(sessions.map((session) => [session.id, session]));
+  const sessionsById = new Map(active.map((session) => [session.id, session]));
   recentSessions.current = recentSessions.current.filter((id) => sessionsById.has(id));
   const recentIds = new Set(recentSessions.current);
   const switcherSessions = recentSessions.current.flatMap((id) => sessionsById.get(id) ?? []);
-  for (const session of sessions) {
+  for (const session of active) {
     if (!recentIds.has(session.id)) switcherSessions.push(session);
   }
-  visibleRef.current = shut.sidebar ? sessions : displayed;
+  visibleRef.current = shut.sidebar ? active : displayed;
   sessionsRef.current = sessions;
   workingRef.current = working;
   themeRef.current = theme;
@@ -1795,6 +1846,11 @@ function App() {
   notificationsRef.current = notifications;
   closeRef.current = closeSession;
   openRef.current = (session) => {
+    // Opening an archived session is how it comes back: it rejoins the list and resumes like any other.
+    if (session.archivedAt)
+      setSessions((current) =>
+        current.map((item) => (item.id === session.id ? { ...item, archivedAt: undefined } : item)),
+      );
     setRecentFolders((folders) => rememberFolder(folders, session));
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
     clearAttention(session.id);
@@ -2507,6 +2563,7 @@ function App() {
         renamed: true,
         running: false,
         providerSessionId: undefined,
+        archivedAt: undefined,
       },
       source,
     );
@@ -2723,7 +2780,7 @@ function App() {
   }
 
   function restartAllSessions() {
-    for (const session of sessions) restartSession(session, session.id === selectedId);
+    for (const session of active) restartSession(session, session.id === selectedId);
   }
 
   // Runs one worktree cleanup operation after another: the caller gets its own result, the
@@ -2900,23 +2957,43 @@ function App() {
     closeSessionNow(session, false);
   }
 
+  // What a running session holds in this window, let go of when it is closed or archived.
+  function untrack(sessionId: string) {
+    clearAttention(sessionId);
+    runs.current.delete(sessionId);
+    forgetShellAgent(sessionId);
+    if (resumed.current === sessionId) resumed.current = "";
+    const timer = workTimers.current.get(sessionId);
+    if (timer) window.clearTimeout(timer);
+    workTimers.current.delete(sessionId);
+    setWorking((current) => without(current, sessionId));
+  }
+
+  // Archiving stops the session and frees its output, but keeps everything closing deletes — the
+  // provider's record, the folder grant, a worktree, linked issues — so opening it again resumes it.
+  function archiveSession(session: Session) {
+    if (!canCloseEditors(session.id) || startingIds.has(session.id) || closingIds.current.has(session.id)) return;
+    untrack(session.id);
+    setSessions((current) =>
+      current.map((item) => (item.id === session.id ? { ...item, running: false, archivedAt: Date.now() } : item)),
+    );
+    if (selectedId === session.id)
+      setSelectedId(sessions.find((item) => item.id !== session.id && !item.archivedAt)?.id ?? "");
+    clearOutput(session.id);
+    // A process that will not stop stays attached to its id, and opening the session reattaches to it.
+    void invoke("stop_session", { sessionId: session.id }).catch((reason) => setError(String(reason)));
+  }
+
   // Ordinary closing is reversible: the row leaves immediately and its PTY stops, while the provider
   // metadata and directory grant remain until the toast closes. A worktree's explicit keep/delete
   // choice instead runs cleanup as soon as the PTY stops, while the confirmation is still current.
   function closeSessionNow(session: Session, reversible = true) {
     if (startingIds.has(session.id)) return;
-    clearAttention(session.id);
     const index = sessions.findIndex((item) => item.id === session.id);
     const recentIndex = recentSessions.current.indexOf(session.id);
     const wasSelected = selectedId === session.id;
-    const nextSelectedId = sessions.find((item) => item.id !== session.id)?.id ?? "";
-    runs.current.delete(session.id);
-    forgetShellAgent(session.id);
-    if (resumed.current === session.id) resumed.current = "";
-    const timer = workTimers.current.get(session.id);
-    if (timer) window.clearTimeout(timer);
-    workTimers.current.delete(session.id);
-    setWorking((current) => without(current, session.id));
+    const nextSelectedId = sessions.find((item) => item.id !== session.id && !item.archivedAt)?.id ?? "";
+    untrack(session.id);
     setSessions((current) => current.filter((item) => item.id !== session.id));
     if (wasSelected) setSelectedId(nextSelectedId);
 
@@ -2965,6 +3042,8 @@ function App() {
       "Closed",
       stopped,
       () => {
+        // An archived session goes back to the archive as it was, with nothing to start.
+        if (session.archivedAt) return restore(false);
         const restored = { ...session, running: false };
         setStartingIds((current) => including(current, session.id));
         resumed.current = session.id;
@@ -3085,12 +3164,13 @@ function App() {
         startingIds={startingIds}
         onSelectSession={(session) => openRef.current(session)}
         onRenameSession={(session) => {
-          openRef.current(session);
+          if (!session.archivedAt) openRef.current(session);
           setRenamingId(session.id);
           if (shut.sidebar) glide(sidebarPanel.current, share(sidebarPanel.current, SIDES.sidebar.size));
         }}
         onForkSession={(session) => void forkSession(session)}
         onRestartSession={(session) => void restartSession(session)}
+        onArchiveSession={archiveSession}
         onCloseSession={closeSession}
         onRestartAll={restartAllSessions}
         onCloseAll={() => setClosingAll(true)}
@@ -3278,7 +3358,7 @@ function App() {
                       >
                         <Plus />
                       </ActionIconButton>
-                      {sessions.map((session) => (
+                      {active.map((session) => (
                         <Tooltip key={session.id}>
                           <TooltipTrigger
                             render={
@@ -3335,7 +3415,7 @@ function App() {
                         view={sessionView}
                         onChange={(view) => {
                           localStorage.setItem(SESSION_VIEW_KEY, JSON.stringify(view));
-                          if (view.grouping !== sessionView.grouping) setCollapsedGroups(new Set());
+                          if (view.grouping !== sessionView.grouping) setCollapsedGroups(new Set(["archived"]));
                           setSessionView(view);
                         }}
                       />
@@ -3358,12 +3438,12 @@ function App() {
                         {query && !visible.length ? (
                           <p className="px-2 py-1.5 text-xs text-muted-foreground">No session matches “{query}”.</p>
                         ) : null}
-                        {visibleGroups.map((group) => {
-                          const open =
-                            sessionView.grouping === "none" || Boolean(query.trim()) || !collapsedGroups.has(group.key);
+                        {listedGroups.map((group) => {
+                          const archive = group.key === "archived";
+                          const open = Boolean(query.trim()) || !collapsedGroups.has(group.key);
                           return (
-                            <section key={group.key}>
-                              {sessionView.grouping === "none" ? null : (
+                            <section key={group.key} className={archive ? "mt-2 border-t pt-2" : undefined}>
+                              {sessionView.grouping === "none" && !archive ? null : (
                                 <button
                                   type="button"
                                   className="flex h-7 w-full items-center gap-1.5 rounded-md px-1.5 text-left text-[10px] font-medium text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
@@ -3383,7 +3463,9 @@ function App() {
                                     aria-hidden="true"
                                     className={`size-3 transition-transform motion-reduce:transition-none ${open ? "rotate-90" : ""}`}
                                   />
-                                  {sessionView.grouping === "state" ? (
+                                  {archive ? (
+                                    <Archive aria-hidden="true" className="size-3" />
+                                  ) : sessionView.grouping === "state" ? (
                                     <span
                                       aria-hidden="true"
                                       className={`size-2 rounded-full ${SESSION_STATUS[group.key.slice("state:".length) as keyof typeof SESSION_STATUS].dot}`}
@@ -3409,7 +3491,7 @@ function App() {
                                       starting={startingIds.has(session.id)}
                                       working={working.has(session.id)}
                                       renaming={renamingId === session.id}
-                                      reorderable
+                                      reorderable={!archive}
                                       groupBounded={sessionView.grouping === "state"}
                                       onSelect={() => openRef.current(session)}
                                       onRename={(name) =>
@@ -3426,7 +3508,8 @@ function App() {
                                         const target = displayed[index + direction];
                                         if (target) reorderSession(session.id, target.id, direction > 0);
                                       }}
-                                      onRestart={() => void restartSession(session)}
+                                      onRestart={archive ? undefined : () => void restartSession(session)}
+                                      onArchive={archive || session.mode ? undefined : () => archiveSession(session)}
                                       onClose={() => closeSession(session)}
                                     />
                                   ))}
@@ -3536,6 +3619,7 @@ function App() {
                           name={selected.name}
                           starting={selectedStarting}
                           onRestart={() => void restartSession(selected)}
+                          onArchive={selected.mode ? undefined : () => archiveSession(selected)}
                           onClose={() => closeSession(selected)}
                         />
                       </fieldset>
@@ -3798,7 +3882,8 @@ function App() {
                 <DialogTitle>Close all sessions?</DialogTitle>
                 <DialogDescription>
                   This stops every running session and removes all tabs. Providers keep their own conversation history.
-                  {sessions.some((session) => session.worktree)
+                  {active.length < sessions.length ? " Archived sessions are kept." : null}
+                  {active.some((session) => session.worktree)
                     ? " Lite-created worktree folders and branches are kept."
                     : null}
                 </DialogDescription>
@@ -3814,7 +3899,7 @@ function App() {
                     if (!canCloseEditors()) return;
                     attentionRef.current = [];
                     setAttention([]);
-                    for (const session of sessions) {
+                    for (const session of active) {
                       if (session.worktree) keptWorktrees.current.add(session.id);
                     }
                     // A session whose cleanup failed but is restorable keeps its tab: the record
@@ -3827,7 +3912,7 @@ function App() {
                     const close = async () => {
                       await Promise.allSettled([...recoveries.current.values()]);
                       await Promise.all(
-                        sessions.map(async (session) => {
+                        active.map(async (session) => {
                           // A session that cannot be stopped is left alone, still live and still
                           // hearing its PTY; every promise settles, so the dialog always comes back.
                           const stopped = await invoke("stop_session", { sessionId: session.id }).then(
@@ -3851,7 +3936,7 @@ function App() {
                           setSessions((current) => current.filter((item) => item.id !== session.id));
                         }),
                       );
-                      setSelectedId(sessions.find((session) => failed.has(session.id))?.id ?? "");
+                      setSelectedId(active.find((session) => failed.has(session.id))?.id ?? "");
                       closingAllRef.current = false;
                       setClosingAllRunning(false);
                       setClosingAll(false);

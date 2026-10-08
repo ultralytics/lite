@@ -24,6 +24,7 @@ Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claud
 - 并排运行 Claude Code、Codex、Gemini CLI、Kimi Code、Qwen Code 和 shell 会话
 - 通过 Codex 使用 DeepSeek V4.1 Flash、Z.ai GLM-5.3、小米 MiMo-V2.6 或 OpenRouter，而无需更改默认的 Codex provider
 - 重启或关闭后有八秒钟可以撤销，之后 Lite 才会停止终端
+- 归档会话即可停止它并释放内存，之后在列表底部随时恢复
 - 关闭 Lite 或重启电脑后，会话标签自动恢复
 - 每个 provider 只需登录一次，之后复用其已有的本地凭据
 - 也可以在 Lite 中为每个 provider 保存 API key，完全跳过登录流程
