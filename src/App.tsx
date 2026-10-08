@@ -3508,7 +3508,7 @@ function App() {
                               )}
                               {open ? (
                                 <div className={archive ? "max-h-[40vh] space-y-0.5 overflow-y-auto" : "space-y-0.5"}>
-                                  {archive && !group.sessions.length ? (
+                                  {archive && !group.sessions.length && !query.trim() ? (
                                     <p className="px-2 py-1.5 text-xs text-muted-foreground">
                                       Drag a session here to archive it.
                                     </p>
