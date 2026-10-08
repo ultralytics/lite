@@ -2975,15 +2975,23 @@ function App() {
     const busy =
       startingIds.has(session.id) || recoveries.current.has(session.id) || closingIds.current.has(session.id);
     if (busy || !canCloseEditors(session.id)) return;
+    // Untracked first, so the exit the stop causes is not read as the session ending on its own. Nothing
+    // is put away until its process is: a session that will not stop is reattached where it was.
     untrack(session.id);
-    setSessions((current) =>
-      current.map((item) => (item.id === session.id ? { ...item, running: false, archivedAt: Date.now() } : item)),
+    void invoke("stop_session", { sessionId: session.id }).then(
+      () => {
+        setSessions((current) =>
+          current.map((item) => (item.id === session.id ? { ...item, running: false, archivedAt: Date.now() } : item)),
+        );
+        const next = sessionsRef.current.find((item) => item.id !== session.id && !item.archivedAt)?.id ?? "";
+        setSelectedId((current) => (current === session.id ? next : current));
+        clearOutput(session.id);
+      },
+      (reason) => {
+        setError(`Session could not be archived: ${String(reason)}`);
+        void launch(session, true);
+      },
     );
-    if (selectedId === session.id)
-      setSelectedId(sessions.find((item) => item.id !== session.id && !item.archivedAt)?.id ?? "");
-    clearOutput(session.id);
-    // A process that will not stop stays attached to its id, and opening the session reattaches to it.
-    void invoke("stop_session", { sessionId: session.id }).catch((reason) => setError(String(reason)));
   }
 
   // Ordinary closing is reversible: the row leaves immediately and its PTY stops, while the provider
