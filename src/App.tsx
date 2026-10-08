@@ -119,7 +119,7 @@ import {
   shortcutText,
 } from "@/shortcuts";
 import { applyTheme, contentZoomStyle, initialTheme, storedFontSize, type Theme, zoomedFontSize } from "@/theme";
-import { type Agent, canFork, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
+import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -547,7 +547,7 @@ function AppContextMenu({
               <Pencil />
               Rename
             </ContextMenuItem>
-            {!session.mode && !session.worktree && canFork(session.agent) ? (
+            {!session.mode && !session.worktree && (session.agent === "claude" || session.agent === "codex") ? (
               <ContextMenuItem onClick={() => onForkSession(session)}>
                 <GitFork />
                 Fork

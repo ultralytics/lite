@@ -3306,12 +3306,14 @@ async fn fork_source(
                 let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&session_id));
                 saved.then_some(id)
             }
-            ("claude" | "codex", Some(root)) => Some(known.unwrap_or(session_id)).filter(|id| {
+            ("claude" | "codex", Some(root)) => {
+                let id = known.unwrap_or(session_id);
                 matches!(
-                    ssh_native_session_state(&root, &agent, id),
-                    Ok(RemoteSessionState::Ready)
+                    ssh_native_session_state(&root, &agent, &id)?,
+                    RemoteSessionState::Ready
                 )
-            }),
+                .then_some(id)
+            }
             ("codex", None) => match known {
                 Some(thread) if codex_thread_resumable(&app.state::<CodexServer>(), &thread)? => {
                     Some(thread)
