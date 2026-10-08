@@ -1394,7 +1394,17 @@ function SessionRow({
           });
         }
         event.preventDefault();
+        pointer.row.style.transform = `translate3d(0, ${event.clientY - pointer.y}px, 0)`;
         const list = pointer.row.closest("[data-session-list]");
+        // The archive takes a drop anywhere on it, collapsed or empty, and archives the session.
+        const archive = onArchive && list?.querySelector<HTMLElement>("[data-archive-drop]");
+        if (archive && event.clientY >= archive.getBoundingClientRect().top) {
+          if (drop.current?.row === archive) return;
+          clearDrop();
+          archive.dataset.drop = "archive";
+          drop.current = { row: archive, after: false };
+          return;
+        }
         // Archived rows keep their own order, so a drag never lands among them.
         const rows = [
           ...((groupBounded ? pointer.row.parentElement : list)?.querySelectorAll<HTMLElement>(
@@ -1407,7 +1417,6 @@ function SessionRow({
         const last = rows[rows.length - 1];
         let row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
         let after = !before;
-        pointer.row.style.transform = `translate3d(0, ${event.clientY - pointer.y}px, 0)`;
         if (!row) return clearDrop();
         if (row.parentElement !== pointer.row.parentElement) {
           const targetRows = [...(row.parentElement?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
@@ -1445,8 +1454,10 @@ function SessionRow({
         pointer.row.releasePointerCapture(pointer.id);
         drag.current = undefined;
         const targetId = drop.current?.row.dataset.contextSession;
+        const archiving = drop.current?.row.dataset.drop === "archive";
         const after = drop.current?.after;
         clearDrag(pointer.row);
+        if (dragging.current && archiving) onArchive?.();
         if (dragging.current && targetId && after !== undefined) onReorder(targetId, after);
         window.setTimeout(() => {
           dragging.current = false;
@@ -1812,9 +1823,7 @@ function App() {
   const listedGroups = useMemo(() => {
     const archived = visible.filter((session) => session.archivedAt);
     archived.sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0));
-    return archived.length
-      ? [...visibleGroups, { name: "Archived", key: "archived", title: "", sessions: archived }]
-      : visibleGroups;
+    return [...visibleGroups, { name: "Archived", key: "archived", title: "", sessions: archived }];
   }, [visible, visibleGroups]);
   const selectedGroupKey = selected
     ? `${sessionView.grouping}:${sessionGroupKey(selected, sessionView.grouping, attentionIds, working)}`
@@ -3441,7 +3450,7 @@ function App() {
                     </div>
                     <ScrollArea className="min-h-0 flex-1">
                       <div
-                        className="space-y-0.5 px-2 pb-2"
+                        className="flex min-h-full flex-col space-y-0.5 px-2 pb-2"
                         data-session-list
                         style={contentZoomStyle(sidebarFontSize)}
                       >
@@ -3452,7 +3461,15 @@ function App() {
                           const archive = group.key === "archived";
                           const open = Boolean(query.trim()) || !collapsedGroups.has(group.key);
                           return (
-                            <section key={group.key} className={archive ? "mt-2 border-t pt-2" : undefined}>
+                            <section
+                              key={group.key}
+                              data-archive-drop={archive ? "" : undefined}
+                              className={
+                                archive
+                                  ? "sticky bottom-0 mt-auto border-t bg-sidebar pt-2 data-[drop=archive]:z-30 data-[drop=archive]:bg-sidebar-accent"
+                                  : undefined
+                              }
+                            >
                               {sessionView.grouping === "none" && !archive ? null : (
                                 <button
                                   type="button"
@@ -3490,7 +3507,12 @@ function App() {
                                 </button>
                               )}
                               {open ? (
-                                <div className="space-y-0.5">
+                                <div className={archive ? "max-h-[40vh] space-y-0.5 overflow-y-auto" : "space-y-0.5"}>
+                                  {archive && !group.sessions.length ? (
+                                    <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                                      Drag a session here to archive it.
+                                    </p>
+                                  ) : null}
                                   {group.sessions.map((session) => (
                                     <SessionRow
                                       key={session.id}
