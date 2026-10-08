@@ -2972,7 +2972,9 @@ function App() {
   // Archiving stops the session and frees its output, but keeps everything closing deletes — the
   // provider's record, the folder grant, a worktree, linked issues — so opening it again resumes it.
   function archiveSession(session: Session) {
-    if (!canCloseEditors(session.id) || startingIds.has(session.id) || closingIds.current.has(session.id)) return;
+    const busy =
+      startingIds.has(session.id) || recoveries.current.has(session.id) || closingIds.current.has(session.id);
+    if (busy || !canCloseEditors(session.id)) return;
     untrack(session.id);
     setSessions((current) =>
       current.map((item) => (item.id === session.id ? { ...item, running: false, archivedAt: Date.now() } : item)),
