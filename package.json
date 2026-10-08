@@ -23,7 +23,7 @@
   "dependencies": {
     "@base-ui/react": "^1.8.0",
     "@codemirror/commands": "^6.11.1",
-    "@codemirror/language": "^6.12.4",
+    "@codemirror/language": "^6.13.1",
     "@codemirror/language-data": "^6.5.2",
     "@codemirror/merge": "^6.12.2",
     "@codemirror/search": "^6.7.2",
@@ -47,7 +47,7 @@
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-markdown": "^10.1.0",
-    "react-resizable-panels": "^4.14.2",
+    "react-resizable-panels": "^4.14.3",
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
