@@ -1938,11 +1938,12 @@ checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "lite"
-version = "0.0.76"
+version = "0.0.77"
 dependencies = [
  "atomicwrites",
  "block2",
  "dbus",
+ "gtk",
  "objc2",
  "objc2-app-kit",
  "objc2-core-foundation",
@@ -1963,6 +1964,7 @@ dependencies = [
  "toml_edit 0.25.17+spec-1.1.0",
  "tungstenite",
  "uuid",
+ "webkit2gtk",
  "windows",
 ]
 

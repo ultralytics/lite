@@ -7639,6 +7639,57 @@ fn write_clipboard(text: String) -> Result<(), String> {
         .ok_or("Could not write to the clipboard".into())
 }
 
+// Native editing preserves selection, Undo, and xterm's bracketed-paste handling.
+#[tauri::command]
+async fn paste_clipboard(window: tauri::WebviewWindow) -> Result<bool, String> {
+    let (sender, mut receiver) = tauri::async_runtime::channel(1);
+    window
+        .with_webview(move |webview| {
+            #[cfg(target_os = "macos")]
+            let result = {
+                // SAFETY: Tauri supplies a live WKWebView on the main thread.
+                unsafe {
+                    let view = webview.inner().cast::<objc2::runtime::AnyObject>();
+                    let _: () = objc2::msg_send![view, paste: std::ptr::null::<objc2::runtime::AnyObject>()];
+                }
+                Ok(false)
+            };
+            #[cfg(target_os = "linux")]
+            let result = {
+                use gtk::prelude::WidgetExt;
+                use webkit2gtk::WebViewExt;
+                let view = webview.inner();
+                let clipboard = view.clipboard(&gtk::gdk::SELECTION_CLIPBOARD);
+                // WebKitGTK can omit image data from paste events (WebKit bug 325114).
+                // Ask GTK for the formats only; the CLI reads the image itself.
+                let image = !clipboard.wait_is_text_available() && clipboard.wait_is_image_available();
+                if !image {
+                    view.execute_editing_command("Paste");
+                }
+                Ok(image)
+            };
+            #[cfg(target_os = "windows")]
+            // SAFETY: Tauri supplies the live WebView2 controller on its owning thread.
+            let result = unsafe {
+                webview.controller().CoreWebView2().and_then(|view| {
+                    view.CallDevToolsProtocolMethod(
+                        windows::core::w!("Input.dispatchKeyEvent"),
+                        windows::core::w!(r#"{"type":"keyDown","commands":["Paste"]}"#),
+                        None,
+                    )
+                })
+            }
+            .map(|_| false)
+            .map_err(|error| error.to_string());
+            let _ = sender.try_send(result);
+        })
+        .map_err(|error| error.to_string())?;
+    receiver
+        .recv()
+        .await
+        .ok_or("The webview closed before pasting")?
+}
+
 // Tauri fills the About panel from the bundle config, which reaches it with only a name and version,
 // so the panel read as bare. macOS only: it is the one platform Tauri gives an application menu, and
 // setting one on Windows or Linux would put a native menu bar on a window that draws its own chrome.
@@ -7714,6 +7765,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             #[cfg(target_os = "macos")]
             write_clipboard,
+            paste_clipboard,
             set_attention_badge,
             quote_dropped_paths,
             check_session_flags,

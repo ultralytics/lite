@@ -1,5 +1,6 @@
 // Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
 
+import type { ContextMenuRootActions } from "@base-ui/react/context-menu";
 import { getVersion } from "@tauri-apps/api/app";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
@@ -50,6 +51,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { flushSync } from "react-dom";
 
 import { ProviderIcon, UltralyticsLogomark } from "@/brand-icons";
 import { Badge } from "@/components/ui/badge";
@@ -353,6 +355,7 @@ type AppMenuContext = {
   expandPanel: HTMLButtonElement | null;
   expandSessions: HTMLButtonElement | null;
   newSession: HTMLButtonElement | null;
+  paste: HTMLButtonElement | null;
   refresh: HTMLButtonElement | null;
   revert: HTMLButtonElement | null;
   selectedText: string;
@@ -376,6 +379,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   expandPanel: null,
   expandSessions: null,
   newSession: null,
+  paste: null,
   refresh: null,
   revert: null,
   selectedText: "",
@@ -421,11 +425,12 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     collapseSessions: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-sessions]") ?? null,
     directory,
     deleteEntry: fileRow?.querySelector<HTMLButtonElement>("[data-context-delete-entry]") ?? null,
-    editable,
+    editable: editable?.classList.contains("xterm-helper-textarea") ? null : editable,
     expandFiles: files?.querySelector<HTMLButtonElement>("[data-context-expand-files]") ?? null,
     expandPanel: surface?.querySelector<HTMLButtonElement>("[data-context-expand-panel]") ?? null,
     expandSessions: surface?.querySelector<HTMLButtonElement>("[data-context-expand-sessions]") ?? null,
     newSession: surface?.querySelector<HTMLButtonElement>("[data-context-new-session]") ?? null,
+    paste: zoom?.querySelector<HTMLButtonElement>("[data-context-paste]") ?? null,
     refresh: surface?.querySelector<HTMLButtonElement>("[data-context-refresh]") ?? null,
     revert: null,
     selectedText,
@@ -464,17 +469,11 @@ function edit(context: AppMenuContext, command: "cut" | "paste" | "selectAll") {
   const element = context.editable;
   if (!element) return;
   element.focus();
-  if (document.execCommand(command)) return;
-  if (command !== "paste") return;
-  void navigator.clipboard
-    .readText()
-    .then((text) => {
-      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-        element.setRangeText(text, element.selectionStart ?? 0, element.selectionEnd ?? 0, "end");
-        element.dispatchEvent(new InputEvent("input", { bubbles: true, data: text, inputType: "insertFromPaste" }));
-      } else document.execCommand("insertText", false, text);
-    })
-    .catch((error) => toast.add({ title: "Could not paste", description: String(error), type: "error" }));
+  if (command !== "paste") document.execCommand(command);
+  else
+    void invoke("paste_clipboard").catch((error) =>
+      toast.add({ title: "Could not paste", description: String(error), type: "error" }),
+    );
 }
 
 function AppContextMenu({
@@ -506,6 +505,7 @@ function AppContextMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [context, setContext] = useState(EMPTY_MENU_CONTEXT);
+  const menuActions = useRef<ContextMenuRootActions | null>(null);
   const shortcut = IS_MAC ? "⌘" : "Ctrl+";
   const readonly =
     context.editable instanceof HTMLInputElement || context.editable instanceof HTMLTextAreaElement
@@ -518,10 +518,11 @@ function AppContextMenu({
     context.expandFiles || context.expandPanel || context.expandSessions,
     context.newSession || context.refresh,
   ].some(Boolean);
-  const editGroup = Boolean(context.editable || context.selectedText);
+  const editGroup = Boolean(context.editable || context.selectedText || context.paste);
   const sessionsGroup = Boolean(session || context.newSession);
   return (
     <ContextMenu
+      actionsRef={menuActions}
       open={open}
       onOpenChange={(next, details) => {
         if (!next) return setOpen(false);
@@ -531,7 +532,7 @@ function AppContextMenu({
       }}
     >
       <ContextMenuTrigger render={children} />
-      <ContextMenuContent className="w-44">
+      <ContextMenuContent className="w-44" finalFocus={() => context.editable ?? true}>
         {context.revert ? (
           <ContextMenuItem onClick={() => context.revert?.click()}>
             <RotateCcw />
@@ -701,22 +702,40 @@ function AppContextMenu({
         ) : null}
         {(linkGroup || surfaceGroup || sessionsGroup || context.zoomIn) && editGroup ? <ContextMenuSeparator /> : null}
         {context.editable ? (
+          <ContextMenuItem disabled={!context.selectedText || readonly} onClick={() => edit(context, "cut")}>
+            <Scissors />
+            Cut
+            <ContextMenuShortcut>{shortcut}X</ContextMenuShortcut>
+          </ContextMenuItem>
+        ) : null}
+        {context.editable || context.selectedText ? (
+          <ContextMenuItem disabled={!context.selectedText} onClick={() => writeClipboard(context.selectedText)}>
+            <Copy />
+            Copy
+            <ContextMenuShortcut>{shortcut}C</ContextMenuShortcut>
+          </ContextMenuItem>
+        ) : null}
+        {context.editable || context.paste ? (
+          <ContextMenuItem
+            disabled={readonly}
+            onClick={(event) => {
+              event.preventBaseUIHandler();
+              // Release the menu's focus trap before the native paste targets an editor.
+              flushSync(() => {
+                setOpen(false);
+                menuActions.current?.unmount();
+              });
+              if (context.editable) edit(context, "paste");
+              else context.paste?.click();
+            }}
+          >
+            <ClipboardPaste />
+            Paste
+            <ContextMenuShortcut>{shortcut}V</ContextMenuShortcut>
+          </ContextMenuItem>
+        ) : null}
+        {context.editable ? (
           <>
-            <ContextMenuItem disabled={!context.selectedText || readonly} onClick={() => edit(context, "cut")}>
-              <Scissors />
-              Cut
-              <ContextMenuShortcut>{shortcut}X</ContextMenuShortcut>
-            </ContextMenuItem>
-            <ContextMenuItem disabled={!context.selectedText} onClick={() => writeClipboard(context.selectedText)}>
-              <Copy />
-              Copy
-              <ContextMenuShortcut>{shortcut}C</ContextMenuShortcut>
-            </ContextMenuItem>
-            <ContextMenuItem disabled={readonly} onClick={() => edit(context, "paste")}>
-              <ClipboardPaste />
-              Paste
-              <ContextMenuShortcut>{shortcut}V</ContextMenuShortcut>
-            </ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem onClick={() => edit(context, "selectAll")}>
               <TextSelect />
@@ -724,12 +743,6 @@ function AppContextMenu({
               <ContextMenuShortcut>{shortcut}A</ContextMenuShortcut>
             </ContextMenuItem>
           </>
-        ) : context.selectedText ? (
-          <ContextMenuItem onClick={() => writeClipboard(context.selectedText)}>
-            <Copy />
-            Copy
-            <ContextMenuShortcut>{shortcut}C</ContextMenuShortcut>
-          </ContextMenuItem>
         ) : null}
       </ContextMenuContent>
     </ContextMenu>
