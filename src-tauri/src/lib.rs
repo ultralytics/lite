@@ -4438,6 +4438,41 @@ async fn agent_availability(
     })
 }
 
+// What a CLI prints for `--version`, which also shows that it starts.
+fn agent_version(agent: &str) -> Result<String, String> {
+    let executable = agent_executable(agent).ok_or("Unknown session type")?;
+    let path = resolve_executable(executable)
+        .ok_or_else(|| format!("Could not find {executable} in your PATH"))?;
+    let mut command = Command::new(path);
+    command.arg("--version");
+    if let Some(path) = user_path() {
+        command.env("PATH", path);
+    }
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if error.is_empty() {
+            format!("{executable} exited with {}", output.status)
+        } else {
+            error
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+// Only these characters count, so a version is safe to hand an install script.
+fn version_number(output: &str) -> Option<String> {
+    let allowed =
+        |character: char| character.is_ascii_alphanumeric() || ['.', '-', '+'].contains(&character);
+    output.split_whitespace().find_map(|word| {
+        let word = word.trim_matches(|character| !allowed(character));
+        (word.contains('.')
+            && word.starts_with(|character: char| character.is_ascii_digit())
+            && word.chars().all(allowed))
+        .then(|| word.to_owned())
+    })
+}
+
 // Resolves to no version when the install was cancelled, which is not a failure to report.
 #[tauri::command]
 async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, String> {
@@ -4460,132 +4495,160 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                     parts.get(room + 1)?.to_os_string(),
                 ))
             });
-        let mut command = if let Some((brew, cask, name)) = homebrew {
-            let mut command = Command::new(brew);
-            command.arg("upgrade");
-            if cask {
-                command.arg("--cask");
-            }
-            command.arg(name);
-            command
-        } else if agent == "kimi" || agent == "claude" {
-            let url = if agent == "kimi" {
-                "https://code.kimi.com/kimi-code/install"
+        // Installs the given version, or the latest without one. False means it was cancelled.
+        let install = |version: Option<&str>| -> Result<bool, String> {
+            let mut command = if let Some((brew, cask, name)) = &homebrew {
+                let mut command = Command::new(brew);
+                command.arg("upgrade");
+                if *cask {
+                    command.arg("--cask");
+                }
+                command.arg(name);
+                command
+            } else if agent == "kimi" || agent == "claude" {
+                let url = if agent == "kimi" {
+                    "https://code.kimi.com/kimi-code/install"
+                } else {
+                    "https://claude.ai/install"
+                };
+                // Claude's script takes its version as an argument and Kimi's from the environment.
+                let argument = if agent == "claude" {
+                    version.unwrap_or_default()
+                } else {
+                    ""
+                };
+                #[cfg(windows)]
+                let mut command = {
+                    let powershell = resolve_executable("powershell")
+                        .ok_or("Could not find PowerShell in your PATH")?;
+                    let mut command = Command::new(powershell);
+                    command
+                        .args(["-NoProfile", "-Command"])
+                        .arg(if argument.is_empty() {
+                            format!("irm {url}.ps1 | iex")
+                        } else {
+                            format!("& ([scriptblock]::Create((irm {url}.ps1))) '{argument}'")
+                        });
+                    command
+                };
+                // A pipe reports only bash's status, and bash given nothing succeeds, so the script
+                // is downloaded first and a failed download fails the install.
+                #[cfg(unix)]
+                let mut command = {
+                    let mut command = Command::new("/bin/sh");
+                    command.arg("-c").arg(format!(
+                        "script=$(curl -fsSL {url}.sh) && printf '%s\\n' \"$script\" | bash -s -- {argument}"
+                    ));
+                    command
+                };
+                if agent == "kimi"
+                    && let Some(version) = version
+                {
+                    command.env("KIMI_VERSION", version);
+                }
+                command
             } else {
-                "https://claude.ai/install"
+                let package = match agent.as_str() {
+                    "codex" => "@openai/codex",
+                    "gemini" => "@google/gemini-cli",
+                    "qwen" => "@qwen-code/qwen-code",
+                    _ => return Err("This session type cannot be installed automatically".into()),
+                };
+                let npm = resolve_executable("npm").ok_or("Install Node.js and npm first")?;
+                let mut command = Command::new(npm);
+                command.args([
+                    "install",
+                    "-g",
+                    &format!("{package}@{}", version.unwrap_or("latest")),
+                ]);
+                command
             };
-            #[cfg(windows)]
-            {
-                let powershell = resolve_executable("powershell")
-                    .ok_or("Could not find PowerShell in your PATH")?;
-                let mut command = Command::new(powershell);
-                command
-                    .args(["-NoProfile", "-Command"])
-                    .arg(format!("irm {url}.ps1 | iex"));
-                command
+            if let Some(path) = user_path() {
+                command.env("PATH", path);
             }
-            // A pipe reports only bash's status, and bash given nothing succeeds, so the script is
-            // downloaded first and a failed download fails the install.
+            // No one can answer a prompt, so an installer that asks (sudo, a confirmation) fails
+            // instead of waiting forever.
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped());
+            // A pipeline installer keeps stderr open through every process it spawned, so a cancel
+            // has to reach the whole group before this read can end.
             #[cfg(unix)]
             {
-                let mut command = Command::new("/bin/sh");
-                command.arg("-c").arg(format!(
-                    "script=$(curl -fsSL {url}.sh) && printf '%s\\n' \"$script\" | bash"
-                ));
-                command
+                use std::os::unix::process::CommandExt;
+                command.process_group(0);
             }
-        } else {
-            let package = match agent.as_str() {
-                "codex" => "@openai/codex@latest",
-                "gemini" => "@google/gemini-cli@latest",
-                "qwen" => "@qwen-code/qwen-code@latest",
-                _ => return Err("This session type cannot be installed automatically".into()),
+            let mut child = command
+                .spawn()
+                .map_err(|error| format!("Could not run the installer: {error}"))?;
+            let mut stderr = child
+                .stderr
+                .take()
+                .ok_or("Could not read installer errors")?;
+            let installer = app.state::<Installer>();
+            let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+            if matches!(*slot, InstallSlot::Cancelled) {
+                stop_installer(child);
+                return Ok(false);
+            }
+            *slot = InstallSlot::Running(child);
+            drop(slot);
+            let mut detail = Vec::with_capacity(16_384);
+            let mut buffer = [0_u8; 4096];
+            while let Ok(count) = stderr.read(&mut buffer) {
+                if count == 0 {
+                    break;
+                }
+                detail.extend_from_slice(&buffer[..count]);
+                if detail.len() > 16_384 {
+                    detail.drain(..detail.len() - 16_384);
+                }
+            }
+            let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+            let InstallSlot::Running(mut child) = std::mem::take(&mut *slot) else {
+                return Ok(false);
             };
-            let npm = resolve_executable("npm").ok_or("Install Node.js and npm first")?;
-            let mut command = Command::new(npm);
-            command.args(["install", "-g", package]);
-            command
+            drop(slot);
+            let status = child
+                .wait()
+                .map_err(|error| format!("Could not finish the installer: {error}"))?;
+            if status.success() {
+                return Ok(true);
+            }
+            let detail = String::from_utf8_lossy(&detail);
+            let detail = detail.trim();
+            Err(if detail.is_empty() {
+                format!("The {agent} installer exited with {status}")
+            } else {
+                detail.to_owned()
+            })
         };
-        if let Some(path) = user_path() {
-            command.env("PATH", path);
-        }
-        // No one can answer a prompt, so an installer that asks (sudo, a confirmation) fails instead
-        // of waiting forever.
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped());
-        // A pipeline installer keeps stderr open through every process it spawned, so a cancel has
-        // to reach the whole group before this read can end.
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("Could not run the installer: {error}"))?;
-        let mut stderr = child
-            .stderr
-            .take()
-            .ok_or("Could not read installer errors")?;
-        let installer = app.state::<Installer>();
-        let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
-        if matches!(*slot, InstallSlot::Cancelled) {
-            stop_installer(child);
+        // A release can publish without the files it needs to start, so the version that runs now
+        // is kept to put back. Homebrew installs only its newest release, so it keeps none.
+        let previous = homebrew
+            .is_none()
+            .then(|| agent_version(&agent).ok())
+            .flatten()
+            .and_then(|output| version_number(&output));
+        if !install(None)? {
             return Ok(None);
         }
-        *slot = InstallSlot::Running(child);
-        drop(slot);
-        let mut detail = Vec::with_capacity(16_384);
-        let mut buffer = [0_u8; 4096];
-        while let Ok(count) = stderr.read(&mut buffer) {
-            if count == 0 {
-                break;
-            }
-            detail.extend_from_slice(&buffer[..count]);
-            if detail.len() > 16_384 {
-                detail.drain(..detail.len() - 16_384);
-            }
-        }
-        let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
-        let InstallSlot::Running(mut child) = std::mem::take(&mut *slot) else {
-            return Ok(None);
+        refresh_user_path();
+        let error = match agent_version(&agent) {
+            Ok(version) => return Ok(Some(version)),
+            Err(error) => error,
         };
-        drop(slot);
-        let status = child
-            .wait()
-            .map_err(|error| format!("Could not finish the installer: {error}"))?;
-        if status.success() {
-            refresh_user_path();
-            let executable = agent_executable(&agent).ok_or("Unknown session type")?;
-            let path = resolve_executable(executable)
-                .ok_or_else(|| format!("Installed {agent}, but could not find it in your PATH"))?;
-            let mut probe = Command::new(path);
-            probe.arg("--version").stderr(Stdio::null());
-            if let Some(path) = user_path() {
-                probe.env("PATH", path);
-            }
-            let output = probe
-                .output()
-                .map_err(|error| format!("Installed {agent}, but could not run it: {error}"))?;
-            return output
-                .status
-                .success()
-                .then(|| Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()))
-                .ok_or_else(|| {
-                    format!(
-                        "Installed {agent}, but it cannot run with the current system requirements"
-                    )
-                });
-        }
-        let detail = String::from_utf8_lossy(&detail);
-        let detail = detail.trim();
-        Err(if detail.is_empty() {
-            format!("The {agent} installer exited with {status}")
-        } else {
-            detail.to_owned()
-        })
+        let Some(previous) = previous else {
+            return Err(format!("Installed {agent}, but it cannot run: {error}"));
+        };
+        Err(
+            if install(Some(&previous)).is_ok_and(|done| done) && agent_version(&agent).is_ok() {
+                format!("The new {agent} could not start, so Lite reinstalled {previous}")
+            } else {
+                format!("The new {agent} could not start, and reinstalling {previous} failed")
+            },
+        )
     })
     .await
     .map_err(|error| format!("Could not finish the install: {error}"))?;
@@ -4610,9 +4673,9 @@ fn cancel_install(installer: State<'_, Installer>) -> Result<(), String> {
 async fn agent_update_available(agent: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let executable = agent_executable(&agent).ok_or("Unknown session type")?;
-        let Some(executable) = resolve_executable(executable) else {
+        if resolve_executable(executable).is_none() {
             return Ok(false);
-        };
+        }
         let (latest_url, version_field) = match agent.as_str() {
             "claude" => (
                 "https://downloads.claude.ai/claude-code-releases/latest",
@@ -4630,26 +4693,7 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
             ),
             _ => return Err("Unknown session type".into()),
         };
-        let version = |output: &str| {
-            output.split_whitespace().find_map(|word| {
-                let word = word.trim_matches(|character: char| {
-                    !character.is_ascii_alphanumeric() && !['.', '-', '+'].contains(&character)
-                });
-                (word.contains('.')
-                    && word.starts_with(|character: char| character.is_ascii_digit()))
-                .then(|| word.to_owned())
-            })
-        };
-        let mut command = Command::new(executable);
-        command.arg("--version");
-        if let Some(path) = user_path() {
-            command.env("PATH", path);
-        }
-        let output = command.output().map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
-        }
-        let current = version(&String::from_utf8_lossy(&output.stdout))
+        let current = version_number(&agent_version(&agent)?)
             .ok_or("Could not read the installed version")?;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let response = reqwest::blocking::Client::builder()
@@ -4667,7 +4711,7 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
                 .ok()
                 .and_then(|value| value.get("version")?.as_str().map(str::to_owned))
         } else {
-            version(&response)
+            version_number(&response)
         }
         .ok_or("Could not read the latest version")?;
         Ok(current != latest)
