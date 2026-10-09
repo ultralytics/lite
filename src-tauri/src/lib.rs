@@ -4450,7 +4450,12 @@ fn agent_version(agent: &str) -> Result<String, String> {
     }
     let output = command.output().map_err(|error| error.to_string())?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+        let error = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(if error.is_empty() {
+            format!("{executable} exited with {}", output.status)
+        } else {
+            error
+        });
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
