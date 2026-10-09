@@ -1241,15 +1241,13 @@ function FilesPanel({
     };
   }, [cached, openFile]);
 
-  // A path clicked in the terminal opens like one clicked in the tree, from the session's folder when
-  // relative, but never over unsaved edits.
+  // The native opener resolves terminal paths; the editor never replaces unsaved edits.
   useEffect(() => {
     if (!openRequest) return;
-    const path = /^[/\\]|^[A-Za-z]:/.test(openRequest.path) ? openRequest.path : `${root}/${openRequest.path}`;
     if (draft !== source || saving) toast.add({ title: "Save or discard the open file first", type: "error" });
-    else void openFile({ ...openRequest, path, name: folderName(path), isDirectory: false, isSymlink: false });
+    else void openFile({ ...openRequest, name: folderName(openRequest.path), isDirectory: false, isSymlink: false });
     onOpened();
-  }, [openRequest, root, draft, source, saving, openFile, onOpened]);
+  }, [openRequest, draft, source, saving, openFile, onOpened]);
 
   async function saveFile() {
     const editor = fileEditorsBySession.get(sessionId);

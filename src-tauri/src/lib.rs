@@ -4696,16 +4696,30 @@ async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), 
     open_external(url)
 }
 
-// Only explicit clicks reach this command; discovering terminal links never reads the filesystem.
+// Only clicks resolve paths. Files return to Lite's editor; directories and URLs open externally.
 #[tauri::command]
-async fn open_url(url: String, root_id: Option<String>, app: AppHandle) -> Result<(), String> {
+async fn open_url(
+    url: String,
+    root_id: Option<String>,
+    app: AppHandle,
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if url.starts_with("https://") || url.starts_with("http://") {
-            return open_external(&url);
+            return open_external(&url).map(|_| None);
         }
         // The registered root owns whether this terminal is local or remote.
-        let root_id = root_id.ok_or("Local file links require a local terminal")?;
-        root_path(&app.state::<Roots>(), &root_id)?;
+        let root_id = root_id.ok_or("File links require a workspace")?;
+        if let Some(root) = ssh_root(&app.state::<Roots>(), &root_id)? {
+            if url.starts_with("file:") || url.starts_with("~/") {
+                return Err("Use an absolute path for files on an SSH host".into());
+            }
+            return Ok(Some(if url.starts_with('/') {
+                url
+            } else {
+                format!("{}/{url}", root.path.trim_end_matches('/'))
+            }));
+        }
+        let root = root_path(&app.state::<Roots>(), &root_id)?;
         let path = if url.starts_with("file:") {
             let parsed = reqwest::Url::parse(&url).map_err(|error| error.to_string())?;
             if parsed.host_str().is_some_and(|host| host != "localhost") {
@@ -4720,14 +4734,14 @@ async fn open_url(url: String, root_id: Option<String>, app: AppHandle) -> Resul
                 .map_err(|error| error.to_string())?
                 .join(relative)
         } else {
-            PathBuf::from(&url)
+            root.join(&url)
         };
-        if !path.is_absolute() {
-            return Err("Only web links and absolute local paths can be opened".into());
-        }
         let path =
             fs::canonicalize(path).map_err(|error| format!("Could not open the path: {error}"))?;
-        if !path.is_file() && !path.is_dir() {
+        if path.is_file() {
+            return Ok(Some(path_text(&path)));
+        }
+        if !path.is_dir() {
             return Err("The link must name a file or directory".into());
         }
         // Pass paths directly to the file manager on Windows, never through cmd.exe.
@@ -4735,10 +4749,10 @@ async fn open_url(url: String, root_id: Option<String>, app: AppHandle) -> Resul
         return Command::new("explorer.exe")
             .arg(path_text(&path))
             .spawn()
-            .map(|_| ())
+            .map(|_| None)
             .map_err(|error| format!("Could not open the path: {error}"));
         #[cfg(not(target_os = "windows"))]
-        open_external(&path_text(&path))
+        open_external(&path_text(&path)).map(|_| None)
     })
     .await
     .map_err(|error| error.to_string())?
