@@ -259,7 +259,7 @@ export function TerminalView({
       lineHeight: 1.25,
       minimumContrastRatio: 4.5,
       overviewRuler: { width: 6 },
-      linkHandler: { activate: (event, url) => openLink(event, url) },
+      linkHandler: { activate: (event, url) => openLink(event, url), allowNonHttpProtocols: true },
       scrollback: 5000,
       theme: themes[themeRef.current],
     });
