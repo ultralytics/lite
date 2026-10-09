@@ -14,6 +14,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { ActionIconButton } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { toast } from "@/components/ui/toast";
 import {
   connectTerminalOutput,
   notifyTerminalOutput,
@@ -113,14 +114,17 @@ const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$/;
 
-// A file path with an extension and an optional :line that does not start inside a longer word, a URL, or
-// a ~/ path. An extension never follows another dot, as the end of a range such as main...HEAD does.
+// Paths need a separator or :line so names such as Node.js stay prose. Quoting permits spaces;
+// unquoted paths stop at prose punctuation. Never start inside a URL or a longer path.
 const FILE_PATH =
-  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])((?:[A-Za-z]:[\\/]|[\\/])?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]*(?<!\.)\.[A-Za-z]\w*)(?::(\d+))?/gu;
+  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])(?:(['"`])([^'"`\r\n]+)\1|((?:file:\/\/[^\s'"`<>()[\]]+|(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{1,2})?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]+[\\/]?)))(?::(\d+)(?::\d+)?)?/gu;
 
-// Links the file paths on the row at 1-based `y`, read across the rows the terminal wrapped it onto. Only a
-// path with a folder or a :line links, so a name such as Node.js stays prose. A leading @ marks a mention.
-function fileLinks(terminal: Terminal, y: number, open: (file: Pick<FileEntry, "path" | "line">) => void): ILink[] {
+// Read the full wrapped line and map UTF-16 offsets back to terminal cells, including wide characters.
+function fileLinks(
+  terminal: Terminal,
+  y: number,
+  open: (event: MouseEvent, path: string, line?: number) => void,
+): ILink[] {
   const buffer = terminal.buffer.active;
   let first = y - 1;
   while (first > 0 && buffer.getLine(first)?.isWrapped) first--;
@@ -134,16 +138,28 @@ function fileLinks(terminal: Terminal, y: number, open: (file: Pick<FileEntry, "
       text += chars;
       for (let i = 0; i < chars.length; i++) cells.push({ x: x + 1, y: row + 1 });
     }
-  return Array.from(text.matchAll(FILE_PATH))
-    .filter(
-      ({ 0: link, 1: path, 2: line, index }) =>
-        (line || /[^\\/][\\/]/.test(path)) && cells[index].y <= y && cells[index + link.length - 1].y >= y,
-    )
-    .map(({ 0: link, 1: path, 2: line, index }) => ({
-      range: { start: cells[index], end: cells[index + link.length - 1] },
-      text: link,
-      activate: () => open({ path: path.replace(/^@/, ""), line: line ? Number(line) : undefined }),
-    }));
+  return Array.from(text.matchAll(FILE_PATH)).flatMap(
+    ({ 0: link, 1: quote, 2: quoted, 3: plain, 4: suffix, index }) => {
+      const value = quoted ?? plain.replace(/\.+$/, "");
+      const [path, embeddedLine] = value.split(/:(\d+)(?::\d+)?$/);
+      const line = suffix ?? embeddedLine;
+      if (
+        (!/[\\/]/.test(path) && !(line && /(?<!\.)\.[A-Za-z]\w*$/.test(path))) ||
+        /^(?!file:)[a-z][a-z\d+.-]*:\/\//i.test(path)
+      )
+        return [];
+      const start = index + (quote ? 1 : 0);
+      const end = suffix ? index + link.length - 1 : start + value.length - 1;
+      if (!path || cells[start].y > y || cells[end].y < y) return [];
+      return [
+        {
+          range: { start: cells[start], end: cells[end] },
+          text: text.slice(start, end + 1),
+          activate: (event: MouseEvent) => open(event, path.replace(/^@/, ""), line ? Number(line) : undefined),
+        },
+      ];
+    },
+  );
 }
 
 const FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
@@ -226,11 +242,13 @@ export function TerminalView({
     if (!container) return;
     setScrolledUp(false);
 
-    const openLink = (event: MouseEvent, url: string) => {
+    const openLink = (event: MouseEvent, url: string, line?: number) => {
       event.preventDefault();
-      void invoke("open_url", { url, rootId: rootIdRef.current }).catch((reason) =>
-        console.error("Lite could not open the link:", reason),
-      );
+      void invoke<string | null>("open_url", { url, rootId: rootIdRef.current })
+        .then((path) => {
+          if (path) openFileRef.current({ path, line });
+        })
+        .catch((reason) => toast.add({ title: "Could not open the link", description: String(reason), type: "error" }));
     };
     const terminal = new Terminal({
       // The official search addon uses xterm decorations to count and mark every match.
@@ -241,7 +259,7 @@ export function TerminalView({
       lineHeight: 1.25,
       minimumContrastRatio: 4.5,
       overviewRuler: { width: 6 },
-      linkHandler: { activate: openLink },
+      linkHandler: { activate: (event, url) => openLink(event, url) },
       scrollback: 5000,
       theme: themes[themeRef.current],
     });
@@ -259,7 +277,7 @@ export function TerminalView({
     terminal.loadAddon(new Unicode11Addon());
     terminal.unicode.activeVersion = "11";
     terminal.registerLinkProvider({
-      provideLinks: (y, callback) => callback(fileLinks(terminal, y, (file) => openFileRef.current(file))),
+      provideLinks: (y, callback) => callback(fileLinks(terminal, y, openLink)),
     });
     terminal.open(container);
     const scroll = terminal.onScroll((viewportY) => setScrolledUp(viewportY < terminal.buffer.active.baseY));
