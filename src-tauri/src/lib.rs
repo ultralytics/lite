@@ -4438,11 +4438,39 @@ async fn agent_availability(
     })
 }
 
+// What a CLI prints for `--version`, which also shows that it starts.
+fn agent_version(agent: &str) -> Result<String, String> {
+    let executable = agent_executable(agent).ok_or("Unknown session type")?;
+    let path = resolve_executable(executable)
+        .ok_or_else(|| format!("Could not find {executable} in your PATH"))?;
+    let mut command = Command::new(path);
+    command.arg("--version");
+    if let Some(path) = user_path() {
+        command.env("PATH", path);
+    }
+    let output = command.output().map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn version_number(output: &str) -> Option<String> {
+    output.split_whitespace().find_map(|word| {
+        let word = word.trim_matches(|character: char| {
+            !character.is_ascii_alphanumeric() && !['.', '-', '+'].contains(&character)
+        });
+        (word.contains('.') && word.starts_with(|character: char| character.is_ascii_digit()))
+            .then(|| word.to_owned())
+    })
+}
+
 // Resolves to no version when the install was cancelled, which is not a failure to report.
 #[tauri::command]
 async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, String> {
     let handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let mut restore = None;
         // An update goes through whoever owns the installed CLI: npm or an install script refuses to
         // replace a Homebrew link, or leaves it shadowing the new copy, so Homebrew upgrades its own.
         let homebrew = agent_executable(&agent)
@@ -4496,14 +4524,25 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
             }
         } else {
             let package = match agent.as_str() {
-                "codex" => "@openai/codex@latest",
-                "gemini" => "@google/gemini-cli@latest",
-                "qwen" => "@qwen-code/qwen-code@latest",
+                "codex" => "@openai/codex",
+                "gemini" => "@google/gemini-cli",
+                "qwen" => "@qwen-code/qwen-code",
                 _ => return Err("This session type cannot be installed automatically".into()),
             };
             let npm = resolve_executable("npm").ok_or("Install Node.js and npm first")?;
+            // A release can publish without the files it needs to start, so the version that runs now
+            // is kept to put back.
+            restore = agent_version(&agent)
+                .ok()
+                .and_then(|output| version_number(&output))
+                .map(|version| {
+                    let package = format!("{package}@{version}");
+                    let mut command = Command::new(&npm);
+                    command.args(["install", "-g", &package]);
+                    (command, package)
+                });
             let mut command = Command::new(npm);
-            command.args(["install", "-g", package]);
+            command.args(["install", "-g", &format!("{package}@latest")]);
             command
         };
         if let Some(path) = user_path() {
@@ -4558,26 +4597,28 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
             .map_err(|error| format!("Could not finish the installer: {error}"))?;
         if status.success() {
             refresh_user_path();
-            let executable = agent_executable(&agent).ok_or("Unknown session type")?;
-            let path = resolve_executable(executable)
-                .ok_or_else(|| format!("Installed {agent}, but could not find it in your PATH"))?;
-            let mut probe = Command::new(path);
-            probe.arg("--version").stderr(Stdio::null());
-            if let Some(path) = user_path() {
-                probe.env("PATH", path);
-            }
-            let output = probe
-                .output()
-                .map_err(|error| format!("Installed {agent}, but could not run it: {error}"))?;
-            return output
-                .status
-                .success()
-                .then(|| Some(String::from_utf8_lossy(&output.stdout).trim().to_owned()))
-                .ok_or_else(|| {
-                    format!(
-                        "Installed {agent}, but it cannot run with the current system requirements"
-                    )
-                });
+            return match (agent_version(&agent), restore) {
+                (Ok(version), _) => Ok(Some(version)),
+                (Err(_), Some((mut command, package))) => {
+                    if let Some(path) = user_path() {
+                        command.env("PATH", path);
+                    }
+                    let restored = command
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()
+                        .is_ok_and(|status| status.success());
+                    Err(if restored {
+                        format!("The new {agent} could not start, so Lite reinstalled {package}")
+                    } else {
+                        format!(
+                            "The new {agent} could not start, and reinstalling {package} failed"
+                        )
+                    })
+                }
+                (Err(error), None) => Err(format!("Installed {agent}, but it cannot run: {error}")),
+            };
         }
         let detail = String::from_utf8_lossy(&detail);
         let detail = detail.trim();
@@ -4610,9 +4651,9 @@ fn cancel_install(installer: State<'_, Installer>) -> Result<(), String> {
 async fn agent_update_available(agent: String) -> Result<bool, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let executable = agent_executable(&agent).ok_or("Unknown session type")?;
-        let Some(executable) = resolve_executable(executable) else {
+        if resolve_executable(executable).is_none() {
             return Ok(false);
-        };
+        }
         let (latest_url, version_field) = match agent.as_str() {
             "claude" => (
                 "https://downloads.claude.ai/claude-code-releases/latest",
@@ -4630,26 +4671,7 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
             ),
             _ => return Err("Unknown session type".into()),
         };
-        let version = |output: &str| {
-            output.split_whitespace().find_map(|word| {
-                let word = word.trim_matches(|character: char| {
-                    !character.is_ascii_alphanumeric() && !['.', '-', '+'].contains(&character)
-                });
-                (word.contains('.')
-                    && word.starts_with(|character: char| character.is_ascii_digit()))
-                .then(|| word.to_owned())
-            })
-        };
-        let mut command = Command::new(executable);
-        command.arg("--version");
-        if let Some(path) = user_path() {
-            command.env("PATH", path);
-        }
-        let output = command.output().map_err(|error| error.to_string())?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_owned());
-        }
-        let current = version(&String::from_utf8_lossy(&output.stdout))
+        let current = version_number(&agent_version(&agent)?)
             .ok_or("Could not read the installed version")?;
         let _ = rustls::crypto::ring::default_provider().install_default();
         let response = reqwest::blocking::Client::builder()
@@ -4667,7 +4689,7 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
                 .ok()
                 .and_then(|value| value.get("version")?.as_str().map(str::to_owned))
         } else {
-            version(&response)
+            version_number(&response)
         }
         .ok_or("Could not read the latest version")?;
         Ok(current != latest)
