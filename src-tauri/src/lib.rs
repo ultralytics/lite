@@ -4613,7 +4613,8 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                         .stdout(Stdio::null())
                         .stderr(Stdio::null())
                         .status()
-                        .is_ok_and(|status| status.success());
+                        .is_ok_and(|status| status.success())
+                        && agent_version(&agent).is_ok();
                     Err(if restored {
                         format!("The new {agent} could not start, so Lite reinstalled {package}")
                     } else {
