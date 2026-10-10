@@ -4782,22 +4782,21 @@ async fn open_url(
         };
         let path =
             fs::canonicalize(path).map_err(|error| format!("Could not open the path: {error}"))?;
+        if !path.is_file() && !path.is_dir() {
+            return Err("The link must name a file or directory".into());
+        }
         // Only text the sidebar shows opens there; pages and other files open in their own app.
+        let mut bytes = Vec::new();
         if path.is_file()
             && !path.extension().is_some_and(|extension| {
                 extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
             })
-        {
-            let mut bytes = Vec::new();
-            if fs::File::open(&path)
+            && fs::File::open(&path)
                 .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
                 .is_ok()
-                && file_text(bytes).is_ok()
-            {
-                return Ok(Some(path_text(&path)));
-            }
-        } else if !path.is_dir() {
-            return Err("The link must name a file or directory".into());
+            && file_text(bytes).is_ok()
+        {
+            return Ok(Some(path_text(&path)));
         }
         // Pass paths directly to Explorer on Windows, never through cmd.exe.
         #[cfg(target_os = "windows")]
