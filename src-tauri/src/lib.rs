@@ -4782,7 +4782,7 @@ async fn open_url(
         };
         let path =
             fs::canonicalize(path).map_err(|error| format!("Could not open the path: {error}"))?;
-        // The sidebar edits only text it can show; pages render in the browser and the rest open in their own app.
+        // Only text the sidebar shows opens there; pages and other files open in their own app.
         if path.is_file()
             && !path.extension().is_some_and(|extension| {
                 extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
