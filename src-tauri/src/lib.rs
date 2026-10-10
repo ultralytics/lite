@@ -4782,13 +4782,24 @@ async fn open_url(
         };
         let path =
             fs::canonicalize(path).map_err(|error| format!("Could not open the path: {error}"))?;
-        if path.is_file() {
-            return Ok(Some(path_text(&path)));
-        }
-        if !path.is_dir() {
+        // The sidebar edits only text it can show; pages render in the browser and the rest open in their own app.
+        if path.is_file()
+            && !path.extension().is_some_and(|extension| {
+                extension.eq_ignore_ascii_case("html") || extension.eq_ignore_ascii_case("htm")
+            })
+        {
+            let mut bytes = Vec::new();
+            if fs::File::open(&path)
+                .and_then(|file| file.take(MAX_FILE_BYTES + 1).read_to_end(&mut bytes))
+                .is_ok()
+                && file_text(bytes).is_ok()
+            {
+                return Ok(Some(path_text(&path)));
+            }
+        } else if !path.is_dir() {
             return Err("The link must name a file or directory".into());
         }
-        // Pass paths directly to the file manager on Windows, never through cmd.exe.
+        // Pass paths directly to Explorer on Windows, never through cmd.exe.
         #[cfg(target_os = "windows")]
         return Command::new("explorer.exe")
             .arg(path_text(&path))
@@ -5823,21 +5834,21 @@ async fn read_text_file(
         .await
         .map_err(|error| error.to_string())??
     };
+    Ok(TextFile {
+        contents: file_text(bytes)?,
+        baseline: baseline.and_then(|bytes| file_text(bytes).ok()),
+    })
+}
+
+// The sidebar shows a file only as UTF-8 text within MAX_FILE_BYTES.
+fn file_text(bytes: Vec<u8>) -> Result<String, String> {
     if bytes.len() > MAX_FILE_BYTES as usize {
         return Err("File is larger than 500 KB".into());
     }
     if bytes.contains(&0) {
         return Err("Binary files cannot be previewed".into());
     }
-    let contents = String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text")?;
-    let baseline = baseline.and_then(|bytes| {
-        if bytes.contains(&0) {
-            None
-        } else {
-            String::from_utf8(bytes).ok()
-        }
-    });
-    Ok(TextFile { contents, baseline })
+    String::from_utf8(bytes).map_err(|_| "File is not UTF-8 text".into())
 }
 
 #[tauri::command]
@@ -8176,15 +8187,15 @@ mod tests {
         (channel, received)
     }
 
-    // Floods a reader with far more output than the page could ever owe.
-    fn flood(
-        channel: Channel<InvokeResponseBody>,
-    ) -> (
+    type Flood = (
         Arc<Mutex<Channel<InvokeResponseBody>>>,
         Arc<Backlog>,
         Arc<AtomicBool>,
         thread::JoinHandle<()>,
-    ) {
+    );
+
+    // Floods a reader with far more output than the page could ever owe.
+    fn flood(channel: Channel<InvokeResponseBody>) -> Flood {
         let output = Arc::new(Mutex::new(channel));
         let backlog = Arc::new(Backlog::default());
         let alive = Arc::new(AtomicBool::new(true));
