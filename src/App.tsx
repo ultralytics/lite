@@ -753,9 +753,9 @@ function AppContextMenu({
 // Long enough that the gaps between an agent's own writes do not flicker the dot.
 const QUIET_MS = 1200;
 
-// Four states the sidebar dot tells apart: the terminal is gone, it is up and quiet, it is producing
-// output, or it needs the user. Color carries the state when motion is suppressed, and animation only
-// reinforces it.
+// Four states the sidebar dot tells apart: the terminal is gone, it is up and idle, it is working a
+// turn (or producing output, for a program that cannot say), or it needs the user. Color carries the
+// state when motion is suppressed, and animation only reinforces it.
 const SESSION_STATUS = {
   disconnected: { dot: "bg-muted-foreground/40", label: "Disconnected" },
   idle: { dot: "bg-success", label: "Connected, idle" },
@@ -1767,6 +1767,7 @@ function App() {
   // same repository's git locks and turn a valid close into a failed cleanup.
   const cleanupQueue = useRef<Promise<unknown>>(Promise.resolve());
   const sessionsRef = useRef(sessions);
+  const shellAgentsRef = useRef(shellAgents);
   const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
   const pendingCleanups = useRef(new Set<() => Promise<void>>());
@@ -1862,6 +1863,7 @@ function App() {
   }
   visibleRef.current = shut.sidebar ? active : displayed;
   sessionsRef.current = sessions;
+  shellAgentsRef.current = shellAgents;
   workingRef.current = working;
   themeRef.current = theme;
   selectedRef.current = selected;
@@ -2239,7 +2241,7 @@ function App() {
     // byte as a JSON number and hand back an array to copy again, on the busiest path there is.
     receiveOutput.current = (sessionId, runId, data) => {
       if (runs.current.get(sessionId) !== runId) return;
-      const { title, path, activity, activityChanged, backgroundActivity, notification, rebuildFinished } =
+      const { title, path, activity, activityChanged, backgroundActivity, turn, notification, rebuildFinished } =
         appendOutput(sessionId, data);
       if (rebuildFinished)
         setSessions((current) =>
@@ -2247,8 +2249,8 @@ function App() {
             session.id === sessionId && session.mode === "rebuild" ? { ...session, mode: undefined } : session,
           ),
         );
+      const session = sessionsRef.current.find((item) => item.id === sessionId);
       if (title) {
-        const session = sessionsRef.current.find((item) => item.id === sessionId);
         const [identity, ...name] = title.split(" | ");
         if (session?.agent === "codex") {
           // Before identity arrives, Codex can emit only its status; keep the session name.
@@ -2270,11 +2272,17 @@ function App() {
         (selectedRef.current?.id !== sessionId || !document.hasFocus()) &&
         markAttention(sessionId)
       ) {
-        const session = sessionsRef.current.find((item) => item.id === sessionId);
         if (notificationsRef.current && session)
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
-      if (activity !== false) markWorking(sessionId, backgroundActivity);
+      // These agents say in their title whether a turn is running, and a resize or a focus change makes
+      // them repaint without retitling, so for them the turn, not output, is work. A session whose title
+      // Lite has not seen since the page loaded keeps the state it was restored with.
+      const agent = shellAgentsRef.current.get(sessionId) ?? session?.agent;
+      if (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen") {
+        if (turn || backgroundActivity) markWorking(sessionId, true);
+        else if (turn === false) setWorking((current) => without(current, sessionId));
+      } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
     };
     void Promise.all([
