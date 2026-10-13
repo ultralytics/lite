@@ -1663,6 +1663,11 @@ function commandAgent(command: string): Agent | undefined {
     : undefined;
 }
 
+async function stopSession(sessionId: string) {
+  await invoke("stop_session", { sessionId });
+  resetOutputState(sessionId);
+}
+
 function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [recentFolders, setRecentFolders] = useState(() => loadRecentFolders(sessions));
@@ -2243,17 +2248,8 @@ function App() {
     // byte as a JSON number and hand back an array to copy again, on the busiest path there is.
     receiveOutput.current = (sessionId, runId, data) => {
       if (runs.current.get(sessionId) !== runId) return;
-      const {
-        title,
-        path,
-        activity,
-        activityChanged,
-        backgroundActivity,
-        turn,
-        programActivity,
-        notification,
-        rebuildFinished,
-      } = appendOutput(sessionId, data);
+      const { title, path, activity, activityChanged, backgroundActivity, status, notification, rebuildFinished } =
+        appendOutput(sessionId, data);
       if (rebuildFinished)
         setSessions((current) =>
           current.map((session) =>
@@ -2261,7 +2257,6 @@ function App() {
           ),
         );
       const session = sessionsRef.current.find((item) => item.id === sessionId);
-      const status = session?.agent === "shell" ? undefined : (programActivity ?? turn);
       if (title) {
         const [identity, ...name] = title.split(" | ");
         if (session?.agent === "codex") {
@@ -2288,7 +2283,7 @@ function App() {
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
       // Explicit program status owns activity; title signals and finally output cover older CLIs.
-      if (status !== undefined) {
+      if (session?.agent !== "shell" && status !== undefined) {
         if (status || backgroundActivity) markWorking(sessionId, true);
         else stopWorking(sessionId);
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
@@ -2298,6 +2293,7 @@ function App() {
       listen<{ sessionId: string; runId: string }>("pty-exit", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         runs.current.delete(payload.sessionId);
+        resetOutputState(payload.sessionId);
         forgetShellAgent(payload.sessionId);
         stopWorking(payload.sessionId);
         setSessions((current) =>
@@ -2392,7 +2388,6 @@ function App() {
           );
         }
       }
-      resetOutputState(session.id);
       const output = new Channel<ArrayBuffer>();
       output.onmessage = (data) => receiveOutput.current(session.id, runId, new Uint8Array(data));
       const providerSessionId = await invoke<string | null>("spawn_session", {
@@ -2491,7 +2486,7 @@ function App() {
         const live = sessionsRef.current.find((item) => item.id === session.id);
         if (!folder || !live?.running || closingIds.current.has(session.id) || closingAllRef.current) return;
         setStartingIds((current) => including(current, session.id));
-        await invoke("stop_session", { sessionId: session.id });
+        await stopSession(session.id);
         stopped = true;
         runs.current.delete(session.id);
         forgetShellAgent(session.id);
@@ -2736,7 +2731,7 @@ function App() {
           runs.current.delete(fresh.id);
           forgetShellAgent(fresh.id);
           try {
-            await invoke("stop_session", { sessionId: fresh.id });
+            await stopSession(fresh.id);
           } catch (reason) {
             replaceRecentSession(session.id, fresh.id);
             setStartingIds((current) => swapped(current, session.id, fresh.id));
@@ -2780,7 +2775,7 @@ function App() {
       resumed.current = fresh.id;
     }
     try {
-      await invoke("stop_session", { sessionId: session.id });
+      await stopSession(session.id);
     } catch (reason) {
       replaceRecentSession(fresh.id, session.id);
       const restored = { ...session, running: false };
@@ -3009,7 +3004,7 @@ function App() {
     // Untracked first, so the exit the stop causes is not read as the session ending on its own. Nothing
     // is put away until its process is: a session that will not stop is reattached where it was.
     untrack(session.id);
-    void invoke("stop_session", { sessionId: session.id }).then(
+    void stopSession(session.id).then(
       () => {
         setSessions((current) =>
           current.map((item) => (item.id === session.id ? { ...item, running: false, archivedAt: Date.now() } : item)),
@@ -3054,7 +3049,7 @@ function App() {
       });
       if (wasSelected) setSelectedId((current) => (current === nextSelectedId ? session.id : current));
     }
-    const stopped = invoke("stop_session", { sessionId: session.id }).then(
+    const stopped = stopSession(session.id).then(
       () => true,
       async (reason) => {
         const restored = { ...session, running: false };
@@ -3969,7 +3964,7 @@ function App() {
                         active.map(async (session) => {
                           // A session that cannot be stopped is left alone, still live and still
                           // hearing its PTY; every promise settles, so the dialog always comes back.
-                          const stopped = await invoke("stop_session", { sessionId: session.id }).then(
+                          const stopped = await stopSession(session.id).then(
                             () => true,
                             () => false,
                           );

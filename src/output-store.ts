@@ -200,8 +200,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     activity,
     activityChanged,
     backgroundActivity: buffer.backgroundActivity,
-    turn: buffer.turn,
-    programActivity: buffer.programs?.size ? [...buffer.programs.values()].includes("working") : undefined,
+    status: buffer.programs?.size ? [...buffer.programs.values()].includes("working") : buffer.turn,
     notification,
     rebuildFinished,
   };

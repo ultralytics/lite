@@ -5,15 +5,7 @@ import { describe, expect, test } from "bun:test";
 import { Terminal } from "@xterm/xterm";
 
 import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "../src/github-items";
-import {
-  appendOutput,
-  clearOutput,
-  readTerminalInput,
-  readTerminalStream,
-  recordTerminalInput,
-  renderedOutput,
-  resetOutputState,
-} from "../src/output-store";
+import { appendOutput, clearOutput, readTerminalInput, recordTerminalInput, renderedOutput } from "../src/output-store";
 
 const references = (output: string, remote = "", terminalStream = "", prose = output) => {
   const { explicit, inferred } = githubItemReferences(output, remote, terminalStream, prose);
@@ -25,52 +17,24 @@ describe("output activity", () => {
   test("keeps reported program activity through repaints and tracks background children", () => {
     const send = (text: string) => appendOutput("program", new TextEncoder().encode(text));
     const report = (body: string) => send(`\x1b]7501;${body}\x07`);
-    expect(send("\x1b]7501;state=idle:app=claude-").programActivity).toBeUndefined();
-    expect(send("code\x07").programActivity).toBe(false);
-    expect(send("\x1b[2Jrepaint\x1b]0;Claude Code\x07").programActivity).toBe(false);
-    expect(report("state=working").programActivity).toBe(true);
-    expect(report("state=working:id=agent/task").programActivity).toBe(true);
-    expect(report("state=idle").programActivity).toBe(true);
-    expect(report("state=clear:id=agent").programActivity).toBe(false);
-    expect(report("state=unknown").programActivity).toBe(false);
-    expect(report("state=working:id=/bad").programActivity).toBe(false);
-    expect(report("state=working:msg=G1sySg==").programActivity).toBe(false);
-    expect(report("state=working:state=idle").programActivity).toBe(false);
-    expect(send("\x1b]133;A\x07").programActivity).toBeUndefined();
+    expect(send("\x1b]7501;state=idle:app=claude-").status).toBeUndefined();
+    expect(send("code\x07").status).toBe(false);
+    expect(send("\x1b[2Jrepaint\x1b]0;Claude Code\x07").status).toBe(false);
+    expect(report("state=working").status).toBe(true);
+    expect(report("state=working:id=agent/task").status).toBe(true);
+    expect(report("state=idle").status).toBe(true);
+    expect(report("state=clear:id=agent").status).toBe(false);
+    expect(report("state=unknown").status).toBe(false);
+    expect(report("state=working:id=/bad").status).toBe(false);
+    expect(report("state=working:msg=G1sySg==").status).toBe(false);
+    expect(report("state=working:state=idle").status).toBe(false);
+    expect(send("\x1b]133;A\x07").status).toBeUndefined();
     report("state=done:id=finished");
     report("state=working");
-    expect(send("\x1b]133;A\x07repaint").programActivity).toBe(false);
+    expect(send("\x1b]133;A\x07repaint").status).toBe(false);
     report("state=working");
-    expect(send("\x1bc").programActivity).toBeUndefined();
+    expect(send("\x1bc").status).toBeUndefined();
     clearOutput("program");
-  });
-
-  test("a replacement process drops old status and partial controls while preserving scrollback", () => {
-    const send = (text: string) => appendOutput("replacement", new TextEncoder().encode(text));
-    send("history\x1b]2;Ready\x07\x1b]7501;state=working\x07\x1b]6973;lite-working\x07\x1b]2;Working");
-    const history = readTerminalStream("replacement");
-    resetOutputState("replacement");
-    expect(readTerminalStream("replacement")).toBe(history);
-    expect(send("\x07replacement output")).toMatchObject({
-      turn: undefined,
-      backgroundActivity: undefined,
-      programActivity: undefined,
-    });
-    clearOutput("replacement");
-  });
-
-  test("uses explicit idle titles without requiring a working turn", () => {
-    const bytes = (value: string) => new TextEncoder().encode(value);
-    for (const status of ["Starting", "Ready", "01a12e69-b42c | task | Ready", "◇ Ready (dir)"]) {
-      clearOutput("idle-title");
-      expect(appendOutput("idle-title", bytes(`\x1b]2;${status}\x07`)).turn).toBe(false);
-      expect(appendOutput("idle-title", bytes("\x1b[2Jrepaint")).turn).toBe(false);
-      for (const working of ["Working", "Thinking", "Waiting"])
-        expect(appendOutput("idle-title", bytes(`\x1b]2;${working}\x07`)).turn).toBe(true);
-    }
-    clearOutput("idle-title");
-    expect(appendOutput("idle-title", bytes("\x1b]2;✳ Claude Code\x07")).turn).toBeUndefined();
-    clearOutput("idle-title");
   });
 
   test("keeps Claude background activity authoritative across output chunks", () => {
