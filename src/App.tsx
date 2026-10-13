@@ -105,7 +105,6 @@ import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
   appendOutput,
   clearOutput,
-  endProgram,
   holdSessionWrites,
   resetOutputState,
   subscribeOutput,
@@ -1769,7 +1768,6 @@ function App() {
   // same repository's git locks and turn a valid close into a failed cleanup.
   const cleanupQueue = useRef<Promise<unknown>>(Promise.resolve());
   const sessionsRef = useRef(sessions);
-  const shellAgentsRef = useRef(shellAgents);
   const attentionRef = useRef<string[]>([]);
   const workTimers = useRef(new Map<string, number>());
   const pendingCleanups = useRef(new Set<() => Promise<void>>());
@@ -1865,7 +1863,6 @@ function App() {
   }
   visibleRef.current = shut.sidebar ? active : displayed;
   sessionsRef.current = sessions;
-  shellAgentsRef.current = shellAgents;
   workingRef.current = working;
   themeRef.current = theme;
   selectedRef.current = selected;
@@ -2156,9 +2153,7 @@ function App() {
     setWorking((current) => without(current, sessionId));
   }, []);
 
-  // Output arrives as a stream of chunks, so this touches React state only on the two edges of a
-  // burst. Claude's explicit background activity holds the working edge until its last descendant
-  // stops; ordinary output still becomes idle after one quiet spell.
+  // Explicit activity holds working until it ends; ordinary output becomes idle after one quiet spell.
   const markWorking = useCallback(
     (sessionId: string, sustained = false) => {
       const timers = workTimers.current;
@@ -2266,7 +2261,7 @@ function App() {
           ),
         );
       const session = sessionsRef.current.find((item) => item.id === sessionId);
-      const agent = shellAgentsRef.current.get(sessionId) ?? session?.agent;
+      const agent = session?.agent;
       const program = agent !== "shell" ? programActivity : undefined;
       if (title) {
         const [identity, ...name] = title.split(" | ");
@@ -2315,10 +2310,6 @@ function App() {
       }),
       listen<{ sessionId: string; runId: string; agent: Agent | null }>("shell-agent", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
-        if (!payload.agent) {
-          endProgram(payload.sessionId);
-          stopWorking(payload.sessionId);
-        }
         setShellAgents((current) => {
           const agent = payload.agent ?? undefined;
           if (agent === current.get(payload.sessionId)) return current;
@@ -3627,7 +3618,6 @@ function App() {
                               onPrompt={(text) => {
                                 const agent = session.agent === "shell" ? commandAgent(text) : undefined;
                                 if (agent && !session.host) {
-                                  endProgram(session.id);
                                   void invoke("watch_shell_agent", { sessionId: session.id, agent }).catch((reason) =>
                                     console.error(`Lite could not follow the agent in session ${session.id}:`, reason),
                                   );

@@ -8,7 +8,6 @@ import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "../sr
 import {
   appendOutput,
   clearOutput,
-  endProgram,
   readTerminalInput,
   readTerminalStream,
   recordTerminalInput,
@@ -49,8 +48,6 @@ describe("output activity", () => {
   test("a replacement process drops old status and partial controls while preserving scrollback", () => {
     const send = (text: string) => appendOutput("replacement", new TextEncoder().encode(text));
     send("history\x1b]2;Ready\x07\x1b]7501;state=working\x07\x1b]6973;lite-working\x07\x1b]2;Working");
-    endProgram("replacement");
-    expect(send("\x07")).toMatchObject({ turn: true, backgroundActivity: undefined, programActivity: undefined });
     const history = readTerminalStream("replacement");
     resetOutputState("replacement");
     expect(readTerminalStream("replacement")).toBe(history);

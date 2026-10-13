@@ -338,15 +338,6 @@ export function clearOutput(sessionId: string) {
   writes.delete(sessionId);
 }
 
-// Completion attention lives in App; an exited program no longer owns the shell's activity.
-export function endProgram(sessionId: string) {
-  const buffer = buffers.get(sessionId);
-  if (!buffer) return;
-  buffer.turn = undefined;
-  buffer.backgroundActivity = undefined;
-  buffer.programs = undefined;
-}
-
 // A replacement process keeps the scrollback, but owns a new control stream and activity state.
 export function resetOutputState(sessionId: string) {
   const previous = buffers.get(sessionId);
