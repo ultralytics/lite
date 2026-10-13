@@ -2148,26 +2148,31 @@ function App() {
     };
   }, [commit, askRelease]);
 
+  const stopWorking = useCallback((sessionId: string) => {
+    const timer = workTimers.current.get(sessionId);
+    if (timer) window.clearTimeout(timer);
+    workTimers.current.delete(sessionId);
+    setWorking((current) => without(current, sessionId));
+  }, []);
+
   // Output arrives as a stream of chunks, so this touches React state only on the two edges of a
   // burst. Claude's explicit background activity holds the working edge until its last descendant
   // stops; ordinary output still becomes idle after one quiet spell.
-  const markWorking = useCallback((sessionId: string, sustained = false) => {
-    const timers = workTimers.current;
-    const pending = timers.get(sessionId);
-    if (pending) window.clearTimeout(pending);
-    else setWorking((current) => including(current, sessionId));
-    if (sustained) {
+  const markWorking = useCallback(
+    (sessionId: string, sustained = false) => {
+      const timers = workTimers.current;
+      const pending = timers.get(sessionId);
+      if (pending) window.clearTimeout(pending);
+      else setWorking((current) => including(current, sessionId));
       timers.delete(sessionId);
-      return;
-    }
-    timers.set(
-      sessionId,
-      window.setTimeout(() => {
-        timers.delete(sessionId);
-        setWorking((current) => without(current, sessionId));
-      }, QUIET_MS),
-    );
-  }, []);
+      if (!sustained)
+        timers.set(
+          sessionId,
+          window.setTimeout(() => stopWorking(sessionId), QUIET_MS),
+        );
+    },
+    [stopWorking],
+  );
 
   // A working session retitles itself several times a second, nearly always to what the tab already
   // says, so the list it would re-render is handed back untouched unless the subject really changed.
@@ -2292,7 +2297,7 @@ function App() {
         (turn !== undefined && (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen"))
       ) {
         if (programActivity ?? (turn || backgroundActivity)) markWorking(sessionId, true);
-        else setWorking((current) => without(current, sessionId));
+        else stopWorking(sessionId);
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
     };
@@ -2301,10 +2306,7 @@ function App() {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
         runs.current.delete(payload.sessionId);
         forgetShellAgent(payload.sessionId);
-        const timer = workTimers.current.get(payload.sessionId);
-        if (timer) window.clearTimeout(timer);
-        workTimers.current.delete(payload.sessionId);
-        setWorking((current) => without(current, payload.sessionId));
+        stopWorking(payload.sessionId);
         setSessions((current) =>
           current.map((session) => (session.id === payload.sessionId ? { ...session, running: false } : session)),
         );
@@ -2343,7 +2345,7 @@ function App() {
       for (const timer of timers.values()) window.clearTimeout(timer);
       timers.clear();
     };
-  }, [clearAttention, forgetShellAgent, markAttention, markDirectory, markWorking, markTitle]);
+  }, [clearAttention, forgetShellAgent, markAttention, markDirectory, markWorking, markTitle, stopWorking]);
 
   const changeNotifications = useCallback(async (enabled: boolean) => {
     const stored = localStorage.getItem(NOTIFICATIONS_KEY);
@@ -2798,10 +2800,7 @@ function App() {
       }
       return false;
     }
-    const timer = workTimers.current.get(session.id);
-    if (timer) window.clearTimeout(timer);
-    workTimers.current.delete(session.id);
-    setWorking((current) => without(current, session.id));
+    stopWorking(session.id);
     if (!(await launch(fresh, false))) {
       replaceRecentSession(fresh.id, session.id);
       await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
@@ -3005,10 +3004,7 @@ function App() {
     runs.current.delete(sessionId);
     forgetShellAgent(sessionId);
     if (resumed.current === sessionId) resumed.current = "";
-    const timer = workTimers.current.get(sessionId);
-    if (timer) window.clearTimeout(timer);
-    workTimers.current.delete(sessionId);
-    setWorking((current) => without(current, sessionId));
+    stopWorking(sessionId);
   }
 
   // Archiving stops the session and frees its output, but keeps everything closing deletes — the
