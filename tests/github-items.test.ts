@@ -25,7 +25,8 @@ describe("output activity", () => {
     expect(report("state=idle").status).toBe(true);
     expect(report("state=clear:id=agent").status).toBe(false);
     expect(report("state=unknown").status).toBe(false);
-    for (const id of ["/bad", "build step", "a!b", "über", "a\nb"]) expect(report(`state=working:id=${id}`).status).toBe(false);
+    for (const id of ["/bad", "build step", "a!b", "über", "a\nb"])
+      expect(report(`state=working:id=${id}`).status).toBe(false);
     expect(report("state=working:msg=G1sySg==").status).toBe(false);
     expect(report("state=working:title=Q:title=QQ==").status).toBe(false);
     expect(report("state=working:state=idle").status).toBe(false);
