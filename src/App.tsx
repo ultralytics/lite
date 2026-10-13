@@ -2248,8 +2248,17 @@ function App() {
     // byte as a JSON number and hand back an array to copy again, on the busiest path there is.
     receiveOutput.current = (sessionId, runId, data) => {
       if (runs.current.get(sessionId) !== runId) return;
-      const { title, path, activity, activityChanged, backgroundActivity, status, notification, rebuildFinished } =
-        appendOutput(sessionId, data);
+      const {
+        title,
+        path,
+        activity,
+        activityChanged,
+        backgroundActivity,
+        turn,
+        status,
+        notification,
+        rebuildFinished,
+      } = appendOutput(sessionId, data);
       if (rebuildFinished)
         setSessions((current) =>
           current.map((session) =>
@@ -2282,9 +2291,10 @@ function App() {
         if (notificationsRef.current && session)
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
-      // Explicit program status owns activity; title signals and finally output cover older CLIs.
-      if (session?.agent !== "shell" && status !== undefined) {
-        if (status || backgroundActivity) markWorking(sessionId, true);
+      // Codex counts idle background terminals as program work; its title identifies an idle turn.
+      const active = status && (session?.agent !== "codex" || turn !== false);
+      if (session?.agent !== "shell" && active !== undefined) {
+        if (active || backgroundActivity) markWorking(sessionId, true);
         else stopWorking(sessionId);
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
