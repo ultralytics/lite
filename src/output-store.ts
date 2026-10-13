@@ -139,13 +139,15 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
       const fields = new Map<string, string>();
       // Validate every pair before applying last-value-wins or touching stored records.
       try {
-        for (const [, key, value] of match[2].matchAll(/(?:^|:)\s*([a-z]+)\s*=\s*([A-Za-z0-9_.,+/=-]*)\s*(?=:|$)/g)) {
-          if (key.length > 16 || (key === "app" && value.length > 32)) throw new Error();
+        for (const pair of match[2].split(":")) {
+          const [, key, value] = pair.match(/^\s*([a-z]+)\s*=\s*(.*?)\s*$/s) ?? [];
           if (
             key === "id" &&
             (!/^[A-Za-z0-9_.+-]{1,32}(\/[A-Za-z0-9_.+-]{1,32}){0,7}$/.test(value) || value.length > 128)
           )
             throw new Error();
+          if (!key || !/^[A-Za-z0-9_.,+/=-]*$/.test(value)) continue;
+          if (key.length > 16 || (key === "app" && value.length > 32)) throw new Error();
           const limit = key === "msg" ? 2048 : key === "title" ? 192 : 0;
           if (limit) {
             if (value.length > Math.ceil(limit / 3) * 4) throw new Error();
