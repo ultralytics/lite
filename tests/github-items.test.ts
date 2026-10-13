@@ -27,6 +27,7 @@ describe("output activity", () => {
     expect(report("state=unknown").status).toBe(false);
     expect(report("state=working:id=/bad").status).toBe(false);
     expect(report("state=working:msg=G1sySg==").status).toBe(false);
+    expect(report("state=working:title=Q:title=QQ==").status).toBe(false);
     expect(report("state=working:state=idle").status).toBe(false);
     expect(send("\x1b]133;A\x07").status).toBeUndefined();
     report("state=done:id=finished");

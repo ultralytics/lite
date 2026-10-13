@@ -136,34 +136,32 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
         continue;
       }
       if (new TextEncoder().encode(match[0]).length > MAX_TAIL) continue;
-      const fields = new Map(
-        [...match[2].matchAll(/(?:^|:)\s*([a-z]+)\s*=\s*([A-Za-z0-9_.,+/=-]*)\s*(?=:|$)/g)].map((pair) => [
-          pair[1],
-          pair[2],
-        ]),
-      );
-      const state = fields.get("state");
-      const id = fields.get("id") ?? "";
-      if (!state || !["idle", "working", "done", "blocked", "error", "clear"].includes(state)) continue;
-      if (fields.has("id") && (!/^[A-Za-z0-9_.+-]{1,32}(\/[A-Za-z0-9_.+-]{1,32}){0,7}$/.test(id) || id.length > 128))
-        continue;
-      if ([...fields.keys()].some((key) => key.length > 16) || (fields.get("app")?.length ?? 0) > 32) continue;
-      // Text is not displayed, but malformed or control-bearing text invalidates the whole report.
+      const fields = new Map<string, string>();
+      // Validate every pair before applying last-value-wins or touching stored records.
       try {
-        for (const [key, limit] of [
-          ["msg", 2048],
-          ["title", 192],
-        ] as const) {
-          const encoded = fields.get(key) ?? "";
-          if (encoded.length > Math.ceil(limit / 3) * 4) throw new Error();
-          const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
-          const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-          // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC 7501 forbids decoded controls
-          if (bytes.length > limit || /[\x00-\x1f\x7f-\x9f]/.test(value)) throw new Error();
+        for (const [, key, value] of match[2].matchAll(/(?:^|:)\s*([a-z]+)\s*=\s*([A-Za-z0-9_.,+/=-]*)\s*(?=:|$)/g)) {
+          if (key.length > 16 || (key === "app" && value.length > 32)) throw new Error();
+          if (
+            key === "id" &&
+            (!/^[A-Za-z0-9_.+-]{1,32}(\/[A-Za-z0-9_.+-]{1,32}){0,7}$/.test(value) || value.length > 128)
+          )
+            throw new Error();
+          const limit = key === "msg" ? 2048 : key === "title" ? 192 : 0;
+          if (limit) {
+            if (value.length > Math.ceil(limit / 3) * 4) throw new Error();
+            const bytes = Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+            const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+            // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC 7501 forbids decoded controls
+            if (bytes.length > limit || /[\x00-\x1f\x7f-\x9f]/.test(decoded)) throw new Error();
+          }
+          fields.set(key, value);
         }
       } catch {
         continue;
       }
+      const state = fields.get("state");
+      const id = fields.get("id") ?? "";
+      if (!state || !["idle", "working", "done", "blocked", "error", "clear"].includes(state)) continue;
       buffer.programs ??= new Map();
       const programs = buffer.programs;
       if (state === "clear") {
