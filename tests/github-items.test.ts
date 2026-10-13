@@ -5,7 +5,15 @@ import { describe, expect, test } from "bun:test";
 import { Terminal } from "@xterm/xterm";
 
 import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "../src/github-items";
-import { appendOutput, clearOutput, readTerminalInput, recordTerminalInput, renderedOutput } from "../src/output-store";
+import {
+  appendOutput,
+  clearOutput,
+  readTerminalInput,
+  readTerminalStream,
+  recordTerminalInput,
+  renderedOutput,
+  resetOutputState,
+} from "../src/output-store";
 
 const references = (output: string, remote = "", terminalStream = "", prose = output) => {
   const { explicit, inferred } = githubItemReferences(output, remote, terminalStream, prose);
@@ -14,6 +22,40 @@ const references = (output: string, remote = "", terminalStream = "", prose = ou
 const explicit = (output: string) => references(output).explicit;
 
 describe("output activity", () => {
+  test("keeps reported program activity through repaints and tracks background children", () => {
+    const send = (text: string) => appendOutput("program", new TextEncoder().encode(text));
+    const report = (body: string) => send(`\x1b]7501;${body}\x07`);
+    expect(send("\x1b]7501;state=idle:app=claude-").programActivity).toBeUndefined();
+    expect(send("code\x07").programActivity).toBe(false);
+    expect(send("\x1b[2Jrepaint\x1b]0;Claude Code\x07").programActivity).toBe(false);
+    expect(report("state=working").programActivity).toBe(true);
+    expect(report("state=working:id=agent/task").programActivity).toBe(true);
+    expect(report("state=idle").programActivity).toBe(true);
+    expect(report("state=clear:id=agent").programActivity).toBe(false);
+    expect(report("state=working:id=agent").programActivity).toBe(true);
+    expect(send("\x1b]133;A\x07").programActivity).toBe(false);
+    expect(report("state=unknown").programActivity).toBe(false);
+    expect(report("state=working:id=/bad").programActivity).toBe(false);
+    expect(report("state=working:msg=G1sySg==").programActivity).toBe(false);
+    expect(report("state=working:state=idle").programActivity).toBe(false);
+    expect(send("\x1bc").programActivity).toBeUndefined();
+    clearOutput("program");
+  });
+
+  test("a replacement process drops old status and partial controls while preserving scrollback", () => {
+    const send = (text: string) => appendOutput("replacement", new TextEncoder().encode(text));
+    send("history\x1b]2;Ready\x07\x1b]7501;state=working\x07\x1b]6973;lite-working\x07\x1b]2;Working");
+    const history = readTerminalStream("replacement");
+    resetOutputState("replacement");
+    expect(readTerminalStream("replacement")).toBe(history);
+    expect(send("\x07replacement output")).toMatchObject({
+      turn: undefined,
+      backgroundActivity: undefined,
+      programActivity: undefined,
+    });
+    clearOutput("replacement");
+  });
+
   test("uses Codex's first idle title without requiring a working turn", () => {
     const bytes = (value: string) => new TextEncoder().encode(value);
     for (const status of ["Starting", "Ready", "01a12e69-b42c | task | Ready"]) {

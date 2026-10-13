@@ -18,6 +18,7 @@ interface Buffer {
   themeReporting: boolean;
   backgroundActivity?: boolean;
   turn?: boolean;
+  programs?: Map<string, string>;
 }
 
 const buffers = new Map<string, Buffer>();
@@ -34,7 +35,7 @@ const notificationListeners = new Map<string, Set<() => void>>();
 // stays invisible and reaches the same owner. One pass reads both: every byte a session prints comes
 // through here, so a second pattern would be a second reading of all of it.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
-const METADATA = /\x1b\](0|2|7|6973);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const METADATA = /\x1b(?:\](0|2|7|133|6973|7501);([^\x07\x1b]*)(?:\x07|\x1b\\)|c)/g;
 // A bare bell is the portable fallback used by agent harnesses and shells. Remove completed OSC first
 // because their bell terminator is framing, not a notification of its own.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
@@ -50,8 +51,8 @@ const IDLE = /(?:^|\| )(?:Ready|Starting)$/;
 // hold an escape of its own, so the payload ends only at a terminator, and a lone escape is kept
 // because the bracket that makes it a title can be the first byte of the next chunk. That last part is
 // where this parts company with the rule terminal.tsx applies to what is typed, which deliberately does
-// not hold a lone escape back: there it is the Escape key, not the start of anything. Anything longer
-// than a title could be is no longer one, so the wait is given up rather than grown.
+// not hold a lone escape back: there it is the Escape key, not the start of anything. The protocol's
+// report limit also bounds how much of an unfinished sequence is kept.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const UNTERMINATED = /\x1b(?:\](?:(?!\x07|\x1b\\)[\s\S])*)?$/;
 // The folder a session says it is in, as a path. A shell that leaves a bare % in its own path, or
@@ -66,7 +67,7 @@ function reportedPath(url: string): string {
     return "";
   }
 }
-const MAX_TAIL = 512;
+const MAX_TAIL = 4096;
 // Modern TUIs request a report whenever the terminal switches between dark and light. This state is
 // read here, where every session's output arrives, so background sessions and trimmed buffers keep it.
 // biome-ignore lint/suspicious/noControlCharactersInRegex: these are terminal control sequences
@@ -87,23 +88,13 @@ export function syncTerminalTheme(theme: Theme) {
 
 // Returns the last title and directory the chunk set, empty when it set neither.
 export function appendOutput(sessionId: string, bytes: Uint8Array) {
-  const buffer = buffers.get(sessionId) ?? {
-    chunks: [],
-    size: 0,
-    decoder: new TextDecoder(),
-    tail: "",
-    controlTail: "",
-    themeReporting: false,
-    backgroundActivity: undefined,
-  };
+  const buffer = buffers.get(sessionId) ?? resetOutputState(sessionId);
   buffer.chunks.push(bytes);
   buffer.size += bytes.byteLength;
   while (buffer.size > MAX_OUTPUT_BYTES && buffer.chunks.length > 1) {
     const discarded = buffer.chunks.shift();
     if (discarded) buffer.size -= discarded.byteLength;
   }
-  buffers.set(sessionId, buffer);
-  for (const listener of listeners.get(sessionId) ?? []) listener(bytes);
   const decoded = buffer.decoder.decode(bytes, { stream: true });
   const controls = buffer.controlTail + decoded;
   const previous = buffer.controlTail.length;
@@ -132,7 +123,58 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   }
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
-    if (match[1] === "7") {
+    if (!match[1]) {
+      buffer.programs?.clear();
+      buffer.turn = undefined;
+    } else if (match[1] === "133") {
+      if (match[2].split(";")[0] === "A")
+        for (const [id, state] of buffer.programs ?? [])
+          if (state === "working" || state === "blocked") buffer.programs?.delete(id);
+    } else if (match[1] === "7501") {
+      if (match[2].trim() === "?") {
+        writeSession(sessionId, "\x1b]7501;?\x1b\\");
+        continue;
+      }
+      if (new TextEncoder().encode(match[0]).length > MAX_TAIL) continue;
+      const fields = new Map(
+        [...match[2].matchAll(/(?:^|:)\s*([a-z]+)\s*=\s*([A-Za-z0-9_.,+/=-]*)\s*(?=:|$)/g)].map((pair) => [
+          pair[1],
+          pair[2],
+        ]),
+      );
+      const state = fields.get("state");
+      const id = fields.get("id") ?? "";
+      if (!state || !["idle", "working", "done", "blocked", "error", "clear"].includes(state)) continue;
+      if (fields.has("id") && (!/^[A-Za-z0-9_.+-]{1,32}(\/[A-Za-z0-9_.+-]{1,32}){0,7}$/.test(id) || id.length > 128))
+        continue;
+      if ([...fields.keys()].some((key) => key.length > 16) || (fields.get("app")?.length ?? 0) > 32) continue;
+      // Text is not displayed, but malformed or control-bearing text invalidates the whole report.
+      try {
+        for (const [key, limit] of [
+          ["msg", 2048],
+          ["title", 192],
+        ] as const) {
+          const encoded = fields.get(key) ?? "";
+          if (encoded.length > Math.ceil(limit / 3) * 4) throw new Error();
+          const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+          const value = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+          // biome-ignore lint/suspicious/noControlCharactersInRegex: OSC 7501 forbids decoded controls
+          if (bytes.length > limit || /[\x00-\x1f\x7f-\x9f]/.test(value)) throw new Error();
+        }
+      } catch {
+        continue;
+      }
+      buffer.programs ??= new Map();
+      const programs = buffer.programs;
+      if (state === "clear") {
+        for (const key of programs.keys()) if (!id || key === id || key.startsWith(`${id}/`)) programs.delete(key);
+      } else {
+        notification ||= programs.get(id) !== state && ["done", "blocked", "error"].includes(state);
+        programs.delete(id);
+        if (programs.size >= 64) programs.delete([...programs.keys()][0]);
+        programs.set(id, state);
+      }
+    } else if (match[1] === "7") {
       if (match[2].startsWith("file://")) path = reportedPath(match[2]);
     } else if (match[1] === "6973") {
       if (match[2] === "lite-rebuild-finished") rebuildFinished = true;
@@ -151,6 +193,8 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   const tail = text.match(UNTERMINATED)?.[0] ?? "";
   if (activity === undefined && tail.startsWith("\x1b]6973;lite-")) activity = false;
   buffer.tail = tail.length > MAX_TAIL ? "" : tail;
+  // Answer capability queries before xterm can queue its device-attributes reply.
+  for (const listener of listeners.get(sessionId) ?? []) listener(bytes);
   return {
     title,
     path,
@@ -158,6 +202,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     activityChanged,
     backgroundActivity: buffer.backgroundActivity,
     turn: buffer.turn,
+    programActivity: buffer.programs?.size ? [...buffer.programs.values()].includes("working") : undefined,
     notification,
     rebuildFinished,
   };
@@ -290,6 +335,21 @@ export function clearOutput(sessionId: string) {
   terminalListeners.delete(sessionId);
   notificationListeners.delete(sessionId);
   writes.delete(sessionId);
+}
+
+// A replacement process keeps the scrollback, but owns a new control stream and activity state.
+export function resetOutputState(sessionId: string) {
+  const previous = buffers.get(sessionId);
+  const buffer: Buffer = {
+    chunks: previous?.chunks ?? [],
+    size: previous?.size ?? 0,
+    decoder: new TextDecoder(),
+    tail: "",
+    controlTail: "",
+    themeReporting: false,
+  };
+  buffers.set(sessionId, buffer);
+  return buffer;
 }
 
 // Everything written to a session goes out behind whatever was written before it. Each call across the

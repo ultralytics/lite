@@ -106,6 +106,7 @@ import {
   appendOutput,
   clearOutput,
   holdSessionWrites,
+  resetOutputState,
   subscribeOutput,
   syncTerminalTheme,
   writeSession,
@@ -2241,8 +2242,17 @@ function App() {
     // byte as a JSON number and hand back an array to copy again, on the busiest path there is.
     receiveOutput.current = (sessionId, runId, data) => {
       if (runs.current.get(sessionId) !== runId) return;
-      const { title, path, activity, activityChanged, backgroundActivity, turn, notification, rebuildFinished } =
-        appendOutput(sessionId, data);
+      const {
+        title,
+        path,
+        activity,
+        activityChanged,
+        backgroundActivity,
+        turn,
+        programActivity,
+        notification,
+        rebuildFinished,
+      } = appendOutput(sessionId, data);
       if (rebuildFinished)
         setSessions((current) =>
           current.map((session) =>
@@ -2265,21 +2275,23 @@ function App() {
         } else markTitle(sessionId, title);
       }
       if (path) markDirectory(sessionId, path);
-      if (activity === true) clearAttention(sessionId);
+      if ((programActivity ?? activity) === true) clearAttention(sessionId);
       if (
         notification &&
-        !backgroundActivity &&
+        !(programActivity ?? backgroundActivity) &&
         (selectedRef.current?.id !== sessionId || !document.hasFocus()) &&
         markAttention(sessionId)
       ) {
         if (notificationsRef.current && session)
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
-      // Trust title state only after the stream has demonstrated it reports turns. Disabled or static
-      // titles retain output activity, including the quiet timeout when background work ends.
+      // Explicit program status owns activity; title signals and finally output cover older CLIs.
       const agent = shellAgentsRef.current.get(sessionId) ?? session?.agent;
-      if (turn !== undefined && (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen")) {
-        if (turn || backgroundActivity) markWorking(sessionId, true);
+      if (
+        programActivity !== undefined ||
+        (turn !== undefined && (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen"))
+      ) {
+        if (programActivity ?? (turn || backgroundActivity)) markWorking(sessionId, true);
         else setWorking((current) => without(current, sessionId));
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
@@ -2385,6 +2397,7 @@ function App() {
           );
         }
       }
+      resetOutputState(session.id);
       const output = new Channel<ArrayBuffer>();
       output.onmessage = (data) => receiveOutput.current(session.id, runId, new Uint8Array(data));
       const providerSessionId = await invoke<string | null>("spawn_session", {
