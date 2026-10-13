@@ -127,8 +127,6 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
       buffer.programs?.clear();
     } else if (match[1] === "133") {
       if (match[2].split(";")[0] === "A") {
-        buffer.turn = undefined;
-        buffer.backgroundActivity = undefined;
         for (const [id, state] of buffer.programs ?? [])
           if (state !== "done" && state !== "error") buffer.programs?.delete(id);
       }

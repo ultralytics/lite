@@ -2261,8 +2261,7 @@ function App() {
           ),
         );
       const session = sessionsRef.current.find((item) => item.id === sessionId);
-      const agent = session?.agent;
-      const program = agent !== "shell" ? programActivity : undefined;
+      const status = session?.agent === "shell" ? undefined : (programActivity ?? turn);
       if (title) {
         const [identity, ...name] = title.split(" | ");
         if (session?.agent === "codex") {
@@ -2289,11 +2288,8 @@ function App() {
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
       // Explicit program status owns activity; title signals and finally output cover older CLIs.
-      if (
-        program !== undefined ||
-        (turn !== undefined && (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen"))
-      ) {
-        if ((program ?? turn) || backgroundActivity) markWorking(sessionId, true);
+      if (status !== undefined) {
+        if (status || backgroundActivity) markWorking(sessionId, true);
         else stopWorking(sessionId);
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
@@ -3617,11 +3613,10 @@ function App() {
                               onRecover={() => recoverSession(session)}
                               onPrompt={(text) => {
                                 const agent = session.agent === "shell" ? commandAgent(text) : undefined;
-                                if (agent && !session.host) {
+                                if (agent && !session.host)
                                   void invoke("watch_shell_agent", { sessionId: session.id, agent }).catch((reason) =>
                                     console.error(`Lite could not follow the agent in session ${session.id}:`, reason),
                                   );
-                                }
                                 setSessions((current) =>
                                   current.map((item) =>
                                     item.id === session.id &&
