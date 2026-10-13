@@ -14,6 +14,20 @@ const references = (output: string, remote = "", terminalStream = "", prose = ou
 const explicit = (output: string) => references(output).explicit;
 
 describe("output activity", () => {
+  test("uses Codex's first idle title without requiring a working turn", () => {
+    const bytes = (value: string) => new TextEncoder().encode(value);
+    for (const status of ["Starting", "Ready", "01a12e69-b42c | task | Ready"]) {
+      clearOutput("idle-title");
+      expect(appendOutput("idle-title", bytes(`\x1b]2;${status}\x07`)).turn).toBe(false);
+      expect(appendOutput("idle-title", bytes("\x1b[2Jrepaint")).turn).toBe(false);
+      for (const working of ["Working", "Thinking", "Waiting"])
+        expect(appendOutput("idle-title", bytes(`\x1b]2;${working}\x07`)).turn).toBe(true);
+    }
+    clearOutput("idle-title");
+    expect(appendOutput("idle-title", bytes("\x1b]2;✳ Claude Code\x07")).turn).toBeUndefined();
+    clearOutput("idle-title");
+  });
+
   test("keeps Claude background activity authoritative across output chunks", () => {
     const bytes = (value: string) => new TextEncoder().encode(value);
     expect(appendOutput("activity", bytes("\x1b]6973;lite-work"))).toMatchObject({

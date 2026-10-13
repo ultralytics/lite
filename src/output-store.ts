@@ -40,10 +40,11 @@ const METADATA = /\x1b\](0|2|7|6973);([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a control sequence is defined by them
 const OSC_OR_BELL = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|(\x07)/g;
 // A title that says a turn is running: Claude and Qwen lead it with a half circle, Gemini with ✦ or ⏲,
-// Codex with a braille spinner, or with its Working or Thinking status as Lite configures it. The turn
-// holds until the next title, which a resize or a focus change does not send. Until a working title
-// arrives, a static title (including Claude's idle glyph under tmux) does not establish this signal.
-const TURN = /^[\u25d0-\u25d3\u2800-\u28ff\u2726\u23f2]|\| (?:Working|Thinking)$/;
+// Codex with a braille spinner, or with its explicit status as Lite configures it. Ready and Starting
+// establish idle even before the first turn. Other static titles (including Claude's idle glyph under
+// tmux) do not establish this signal until a working title arrives.
+const TURN = /^[\u25d0-\u25d3\u2800-\u28ff\u2726\u23f2]|(?:^|\| )(?:Working|Thinking|Waiting)$/;
+const IDLE = /(?:^|\| )(?:Ready|Starting)$/;
 
 // The same sequence begun but not yet terminated, which the chunk that ends it completes. A title may
 // hold an escape of its own, so the payload ends only at a terminator, and a lone escape is kept
@@ -140,7 +141,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     } else {
       title = match[2];
       const working = TURN.test(title);
-      if (working || buffer.turn !== undefined) buffer.turn = working;
+      if (working || IDLE.test(title) || buffer.turn !== undefined) buffer.turn = working;
     }
   }
   const previousActivity = buffer.backgroundActivity;
