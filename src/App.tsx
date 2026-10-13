@@ -2291,8 +2291,8 @@ function App() {
         if (notificationsRef.current && session)
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
-      // Codex counts idle background terminals as program work; its title identifies an idle turn.
-      const active = status && (session?.agent !== "codex" || turn !== false);
+      // Codex titles exclude idle turns but cannot distinguish work from an approval prompt.
+      const active = session?.agent === "codex" ? (turn === false ? false : status) : (status ?? turn);
       if (session?.agent !== "shell" && active !== undefined) {
         if (active || backgroundActivity) markWorking(sessionId, true);
         else stopWorking(sessionId);
