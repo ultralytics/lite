@@ -8,6 +8,7 @@ import { githubItemReferences, likelyGitHubItems, mergeGitHubItems } from "../sr
 import {
   appendOutput,
   clearOutput,
+  endProgram,
   readTerminalInput,
   readTerminalStream,
   recordTerminalInput,
@@ -32,12 +33,12 @@ describe("output activity", () => {
     expect(report("state=working:id=agent/task").programActivity).toBe(true);
     expect(report("state=idle").programActivity).toBe(true);
     expect(report("state=clear:id=agent").programActivity).toBe(false);
-    expect(report("state=working:id=agent").programActivity).toBe(true);
-    expect(send("\x1b]133;A\x07").programActivity).toBe(false);
     expect(report("state=unknown").programActivity).toBe(false);
     expect(report("state=working:id=/bad").programActivity).toBe(false);
     expect(report("state=working:msg=G1sySg==").programActivity).toBe(false);
     expect(report("state=working:state=idle").programActivity).toBe(false);
+    expect(send("\x1b]133;A\x07").programActivity).toBeUndefined();
+    report("state=working");
     expect(send("\x1bc").programActivity).toBeUndefined();
     clearOutput("program");
   });
@@ -45,6 +46,8 @@ describe("output activity", () => {
   test("a replacement process drops old status and partial controls while preserving scrollback", () => {
     const send = (text: string) => appendOutput("replacement", new TextEncoder().encode(text));
     send("history\x1b]2;Ready\x07\x1b]7501;state=working\x07\x1b]6973;lite-working\x07\x1b]2;Working");
+    endProgram("replacement");
+    expect(send("\x07")).toMatchObject({ turn: true, backgroundActivity: undefined, programActivity: undefined });
     const history = readTerminalStream("replacement");
     resetOutputState("replacement");
     expect(readTerminalStream("replacement")).toBe(history);
@@ -56,9 +59,9 @@ describe("output activity", () => {
     clearOutput("replacement");
   });
 
-  test("uses Codex's first idle title without requiring a working turn", () => {
+  test("uses explicit idle titles without requiring a working turn", () => {
     const bytes = (value: string) => new TextEncoder().encode(value);
-    for (const status of ["Starting", "Ready", "01a12e69-b42c | task | Ready"]) {
+    for (const status of ["Starting", "Ready", "01a12e69-b42c | task | Ready", "◇ Ready (dir)"]) {
       clearOutput("idle-title");
       expect(appendOutput("idle-title", bytes(`\x1b]2;${status}\x07`)).turn).toBe(false);
       expect(appendOutput("idle-title", bytes("\x1b[2Jrepaint")).turn).toBe(false);

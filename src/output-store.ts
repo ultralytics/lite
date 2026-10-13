@@ -45,7 +45,7 @@ const OSC_OR_BELL = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|(\x07)/g;
 // establish idle even before the first turn. Other static titles (including Claude's idle glyph under
 // tmux) do not establish this signal until a working title arrives.
 const TURN = /^[\u25d0-\u25d3\u2800-\u28ff\u2726\u23f2]|(?:^|\| )(?:Working|Thinking|Waiting)$/;
-const IDLE = /(?:^|\| )(?:Ready|Starting)$/;
+const IDLE = /^\u25c7|(?:^|\| )(?:Ready|Starting)$/;
 
 // The same sequence begun but not yet terminated, which the chunk that ends it completes. A title may
 // hold an escape of its own, so the payload ends only at a terminator, and a lone escape is kept
@@ -124,12 +124,9 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
     if (!match[1]) {
-      buffer.programs?.clear();
-      buffer.turn = undefined;
+      endProgram(sessionId);
     } else if (match[1] === "133") {
-      if (match[2].split(";")[0] === "A")
-        for (const [id, state] of buffer.programs ?? [])
-          if (state === "working" || state === "blocked") buffer.programs?.delete(id);
+      if (match[2].split(";")[0] === "A") endProgram(sessionId);
     } else if (match[1] === "7501") {
       if (match[2].trim() === "?") {
         writeSession(sessionId, "\x1b]7501;?\x1b\\");
@@ -335,6 +332,15 @@ export function clearOutput(sessionId: string) {
   terminalListeners.delete(sessionId);
   notificationListeners.delete(sessionId);
   writes.delete(sessionId);
+}
+
+// Completion attention lives in App; an exited program no longer owns the shell's activity.
+export function endProgram(sessionId: string) {
+  const buffer = buffers.get(sessionId);
+  if (!buffer) return;
+  buffer.turn = undefined;
+  buffer.backgroundActivity = undefined;
+  buffer.programs = undefined;
 }
 
 // A replacement process keeps the scrollback, but owns a new control stream and activity state.

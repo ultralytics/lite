@@ -105,6 +105,7 @@ import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
   appendOutput,
   clearOutput,
+  endProgram,
   holdSessionWrites,
   resetOutputState,
   subscribeOutput,
@@ -2280,10 +2281,10 @@ function App() {
         } else markTitle(sessionId, title);
       }
       if (path) markDirectory(sessionId, path);
-      if ((programActivity ?? activity) === true) clearAttention(sessionId);
+      if ((programActivity || activity) === true) clearAttention(sessionId);
       if (
         notification &&
-        !(programActivity ?? backgroundActivity) &&
+        !(programActivity || backgroundActivity) &&
         (selectedRef.current?.id !== sessionId || !document.hasFocus()) &&
         markAttention(sessionId)
       ) {
@@ -2296,7 +2297,7 @@ function App() {
         programActivity !== undefined ||
         (turn !== undefined && (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen"))
       ) {
-        if (programActivity ?? (turn || backgroundActivity)) markWorking(sessionId, true);
+        if ((programActivity ?? turn) || backgroundActivity) markWorking(sessionId, true);
         else stopWorking(sessionId);
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
@@ -2313,6 +2314,10 @@ function App() {
       }),
       listen<{ sessionId: string; runId: string; agent: Agent | null }>("shell-agent", ({ payload }) => {
         if (runs.current.get(payload.sessionId) !== payload.runId) return;
+        if (!payload.agent) {
+          endProgram(payload.sessionId);
+          stopWorking(payload.sessionId);
+        }
         setShellAgents((current) => {
           const agent = payload.agent ?? undefined;
           if (agent === current.get(payload.sessionId)) return current;
