@@ -18,7 +18,7 @@ interface Buffer {
   themeReporting: boolean;
   backgroundActivity?: boolean;
   turn?: boolean;
-  programs?: Map<string, string>;
+  programs: Map<string, string>;
 }
 
 const buffers = new Map<string, Buffer>();
@@ -124,11 +124,11 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
     if (!match[1]) {
-      buffer.programs?.clear();
+      buffer.programs.clear();
     } else if (match[1] === "133") {
       if (match[2].split(";")[0] === "A") {
-        for (const [id, state] of buffer.programs ?? [])
-          if (state !== "done" && state !== "error") buffer.programs?.delete(id);
+        for (const [id, state] of buffer.programs)
+          if (state !== "done" && state !== "error") buffer.programs.delete(id);
       }
     } else if (match[1] === "7501") {
       if (match[2].trim() === "?") {
@@ -164,14 +164,13 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
       const state = fields.get("state");
       const id = fields.get("id") ?? "";
       if (!state || !["idle", "working", "done", "blocked", "error", "clear"].includes(state)) continue;
-      buffer.programs ??= new Map();
-      const programs = buffer.programs;
       if (state === "clear") {
-        for (const key of programs.keys()) if (!id || key === id || key.startsWith(`${id}/`)) programs.delete(key);
+        for (const key of buffer.programs.keys())
+          if (!id || key === id || key.startsWith(`${id}/`)) buffer.programs.delete(key);
       } else {
-        programs.delete(id);
-        if (programs.size >= 64) programs.delete([...programs.keys()][0]);
-        programs.set(id, state);
+        buffer.programs.delete(id);
+        if (buffer.programs.size >= 64) buffer.programs.delete([...buffer.programs.keys()][0]);
+        buffer.programs.set(id, state);
       }
     } else if (match[1] === "7") {
       if (match[2].startsWith("file://")) path = reportedPath(match[2]);
@@ -201,7 +200,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     activityChanged,
     backgroundActivity: buffer.backgroundActivity,
     turn: buffer.turn,
-    status: buffer.programs?.size ? [...buffer.programs.values()].includes("working") : undefined,
+    status: buffer.programs.size ? [...buffer.programs.values()].includes("working") : undefined,
     notification,
     rebuildFinished,
   };
@@ -346,6 +345,7 @@ export function resetOutputState(sessionId: string) {
     tail: "",
     controlTail: "",
     themeReporting: false,
+    programs: new Map(),
   };
   buffers.set(sessionId, buffer);
   return buffer;

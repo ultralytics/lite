@@ -1663,11 +1663,6 @@ function commandAgent(command: string): Agent | undefined {
     : undefined;
 }
 
-async function stopSession(sessionId: string) {
-  await invoke("stop_session", { sessionId });
-  resetOutputState(sessionId);
-}
-
 function App() {
   const [sessions, setSessions] = useState<Session[]>(loadSessions);
   const [recentFolders, setRecentFolders] = useState(() => loadRecentFolders(sessions));
@@ -2157,6 +2152,12 @@ function App() {
     workTimers.current.delete(sessionId);
     setWorking((current) => without(current, sessionId));
   }, []);
+
+  async function stopSession(sessionId: string) {
+    await invoke("stop_session", { sessionId });
+    resetOutputState(sessionId);
+    stopWorking(sessionId);
+  }
 
   // Explicit activity holds working until it ends; ordinary output becomes idle after one quiet spell.
   const markWorking = useCallback(
@@ -2798,7 +2799,6 @@ function App() {
       }
       return false;
     }
-    stopWorking(session.id);
     if (!(await launch(fresh, false))) {
       replaceRecentSession(fresh.id, session.id);
       await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
