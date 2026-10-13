@@ -126,7 +126,12 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
     if (!match[1]) {
       buffer.programs?.clear();
     } else if (match[1] === "133") {
-      if (match[2].split(";")[0] === "A") endProgram(sessionId);
+      if (match[2].split(";")[0] === "A") {
+        buffer.turn = undefined;
+        buffer.backgroundActivity = undefined;
+        for (const [id, state] of buffer.programs ?? [])
+          if (state !== "done" && state !== "error") buffer.programs?.delete(id);
+      }
     } else if (match[1] === "7501") {
       if (match[2].trim() === "?") {
         writeSession(sessionId, "\x1b]7501;?\x1b\\");

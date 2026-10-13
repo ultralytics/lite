@@ -38,6 +38,9 @@ describe("output activity", () => {
     expect(report("state=working:msg=G1sySg==").programActivity).toBe(false);
     expect(report("state=working:state=idle").programActivity).toBe(false);
     expect(send("\x1b]133;A\x07").programActivity).toBeUndefined();
+    report("state=done:id=finished");
+    report("state=working");
+    expect(send("\x1b]133;A\x07repaint").programActivity).toBe(false);
     report("state=working");
     expect(send("\x1bc").programActivity).toBeUndefined();
     clearOutput("program");
