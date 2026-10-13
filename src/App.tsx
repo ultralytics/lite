@@ -2275,13 +2275,12 @@ function App() {
         if (notificationsRef.current && session)
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
-      // These agents say in their title whether a turn is running, and a resize or a focus change makes
-      // them repaint without retitling, so for them the turn, not output, is work. A session whose title
-      // Lite has not seen since the page loaded keeps the state it was restored with.
+      // Trust title state only after the stream has demonstrated it reports turns. Disabled or static
+      // titles retain output activity, including the quiet timeout when background work ends.
       const agent = shellAgentsRef.current.get(sessionId) ?? session?.agent;
-      if (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen") {
+      if (turn !== undefined && (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen")) {
         if (turn || backgroundActivity) markWorking(sessionId, true);
-        else if (turn === false) setWorking((current) => without(current, sessionId));
+        else setWorking((current) => without(current, sessionId));
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
     };
