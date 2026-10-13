@@ -3002,7 +3002,6 @@ function App() {
     runs.current.delete(sessionId);
     forgetShellAgent(sessionId);
     if (resumed.current === sessionId) resumed.current = "";
-    stopWorking(sessionId);
   }
 
   // Archiving stops the session and frees its output, but keeps everything closing deletes — the
