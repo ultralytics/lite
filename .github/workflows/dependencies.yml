@@ -6,7 +6,7 @@ name: Dependencies
 
 on:
   schedule:
-    - cron: "0 6 * * *" # 06:00 UTC
+    - cron: "0 6 * * 1" # 06:00 UTC Mondays
   workflow_dispatch:
 
 concurrency:
