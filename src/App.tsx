@@ -2283,10 +2283,10 @@ function App() {
         } else markTitle(sessionId, title);
       }
       if (path) markDirectory(sessionId, path);
-      if ((program || activity) === true) clearAttention(sessionId);
+      if (activity === true) clearAttention(sessionId);
       if (
         notification &&
-        !(program || backgroundActivity) &&
+        !backgroundActivity &&
         (selectedRef.current?.id !== sessionId || !document.hasFocus()) &&
         markAttention(sessionId)
       ) {
@@ -3625,10 +3625,7 @@ function App() {
                               onOpenFile={setFileRequest}
                               onRecover={() => recoverSession(session)}
                               onPrompt={(text) => {
-                                const agent =
-                                  session.agent === "shell" && !shellAgentsRef.current.has(session.id)
-                                    ? commandAgent(text)
-                                    : undefined;
+                                const agent = session.agent === "shell" ? commandAgent(text) : undefined;
                                 if (agent && !session.host) {
                                   endProgram(session.id);
                                   void invoke("watch_shell_agent", { sessionId: session.id, agent }).catch((reason) =>

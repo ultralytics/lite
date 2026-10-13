@@ -124,7 +124,7 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
   METADATA.lastIndex = 0;
   for (let match = METADATA.exec(text); match; match = METADATA.exec(text)) {
     if (!match[1]) {
-      endProgram(sessionId);
+      buffer.programs?.clear();
     } else if (match[1] === "133") {
       if (match[2].split(";")[0] === "A") endProgram(sessionId);
     } else if (match[1] === "7501") {
@@ -166,7 +166,6 @@ export function appendOutput(sessionId: string, bytes: Uint8Array) {
       if (state === "clear") {
         for (const key of programs.keys()) if (!id || key === id || key.startsWith(`${id}/`)) programs.delete(key);
       } else {
-        notification ||= programs.get(id) !== state && ["done", "blocked", "error"].includes(state);
         programs.delete(id);
         if (programs.size >= 64) programs.delete([...programs.keys()][0]);
         programs.set(id, state);
