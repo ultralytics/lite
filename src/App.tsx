@@ -2266,6 +2266,8 @@ function App() {
           ),
         );
       const session = sessionsRef.current.find((item) => item.id === sessionId);
+      const agent = shellAgentsRef.current.get(sessionId) ?? session?.agent;
+      const program = agent !== "shell" ? programActivity : undefined;
       if (title) {
         const [identity, ...name] = title.split(" | ");
         if (session?.agent === "codex") {
@@ -2281,10 +2283,10 @@ function App() {
         } else markTitle(sessionId, title);
       }
       if (path) markDirectory(sessionId, path);
-      if ((programActivity || activity) === true) clearAttention(sessionId);
+      if ((program || activity) === true) clearAttention(sessionId);
       if (
         notification &&
-        !(programActivity || backgroundActivity) &&
+        !(program || backgroundActivity) &&
         (selectedRef.current?.id !== sessionId || !document.hasFocus()) &&
         markAttention(sessionId)
       ) {
@@ -2292,12 +2294,11 @@ function App() {
           void invoke("send_notification", { sessionName: session.name, sessionId: session.id }).catch(() => {});
       }
       // Explicit program status owns activity; title signals and finally output cover older CLIs.
-      const agent = shellAgentsRef.current.get(sessionId) ?? session?.agent;
       if (
-        programActivity !== undefined ||
+        program !== undefined ||
         (turn !== undefined && (agent === "claude" || agent === "codex" || agent === "gemini" || agent === "qwen"))
       ) {
-        if ((programActivity ?? turn) || backgroundActivity) markWorking(sessionId, true);
+        if ((program ?? turn) || backgroundActivity) markWorking(sessionId, true);
         else stopWorking(sessionId);
       } else if (activity !== false) markWorking(sessionId, backgroundActivity);
       else if (activityChanged) markWorking(sessionId);
