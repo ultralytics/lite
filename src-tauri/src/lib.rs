@@ -4820,6 +4820,41 @@ fn open_directory(root_id: String, roots: State<'_, Roots>) -> Result<(), String
     open_external(&path_text(&path))
 }
 
+// Shows a Files entry in the system file manager, selected where the system can select it. Linux has
+// no one file manager to ask, so there it opens the folder that holds the entry.
+#[tauri::command]
+async fn reveal_entry(
+    roots: State<'_, Roots>,
+    root_id: String,
+    path: String,
+) -> Result<(), String> {
+    let path = scoped_entry(&root_path(&roots, &root_id)?, &path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        return Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .status()
+            .map(|_| ())
+            .map_err(|error| format!("Could not show the file: {error}"));
+        // Explorer reads the path after the comma whole only when it is quoted, which Command would
+        // not do for a path without spaces, and a Windows path cannot hold a quote of its own.
+        #[cfg(target_os = "windows")]
+        return {
+            use std::os::windows::process::CommandExt;
+            Command::new("explorer.exe")
+                .raw_arg(format!("/select,\"{}\"", path_text(&path)))
+                .spawn()
+                .map(|_| ())
+                .map_err(|error| format!("Could not show the file: {error}"))
+        };
+        #[cfg(all(unix, not(target_os = "macos")))]
+        open_external(&path_text(path.parent().unwrap_or(&path)))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn open_external(url: &str) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut command = Command::new("open");
@@ -5419,6 +5454,53 @@ fn agent_descendants(system: &System, root: sysinfo::Pid, agent: &str) -> Vec<sy
             None
         })
         .collect()
+}
+
+// An agent can leave a command running after its turn ends, and a shell started that way prints
+// nothing. Every harness runs commands through a shell it starts itself, so a shell whose parent is
+// the agent is work still in progress. cmd.exe is left out because Windows MCP servers run through it.
+#[tauri::command]
+async fn agent_shells(sessions: State<'_, Sessions>, session_id: String) -> Result<bool, String> {
+    let root = sessions
+        .0
+        .lock()
+        .map_err(|error| error.to_string())?
+        .get(&session_id)
+        .and_then(|session| session.child.process_id());
+    let Some(root) = root else {
+        return Ok(false);
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = sysinfo::Pid::from_u32(root);
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::nothing()
+                .with_cmd(UpdateKind::OnlyIfNotSet)
+                .without_tasks(),
+        );
+        system.processes().values().any(|process| {
+            let name = process.name().to_string_lossy().to_ascii_lowercase();
+            matches!(
+                name.strip_suffix(".exe").unwrap_or(&name),
+                "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "nu" | "pwsh" | "powershell"
+            ) && process
+                .parent()
+                .and_then(|parent| system.process(parent))
+                .is_some_and(|parent| {
+                    ["claude", "codex", "gemini", "kimi", "qwen"]
+                        .iter()
+                        .any(|agent| is_agent_process(parent, agent))
+                        && std::iter::successors(Some(parent.pid()), |pid| {
+                            system.process(*pid)?.parent()
+                        })
+                        .any(|pid| pid == root)
+                })
+        })
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -7850,6 +7932,7 @@ pub fn run() {
             fork_source,
             write_session,
             watch_shell_agent,
+            agent_shells,
             resize_session,
             acknowledge_output,
             stop_session,
@@ -7885,6 +7968,7 @@ pub fn run() {
             open_setup_docs,
             open_url,
             open_directory,
+            reveal_entry,
             provider_auth,
             save_api_key,
             delete_api_key,
