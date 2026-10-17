@@ -1729,6 +1729,7 @@ function App() {
   // Work that was live when the previous process disappeared is resumed once in this process.
   const interrupted = useRef(new Set(working));
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
+  const shellAgentsRef = useRef(shellAgents);
   const [query, setQuery] = useState("");
   const sessionSearch = useRef<HTMLInputElement>(null);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
@@ -1879,6 +1880,7 @@ function App() {
   }
   visibleRef.current = shut.sidebar ? active : displayed;
   sessionsRef.current = sessions;
+  shellAgentsRef.current = shellAgents;
   workingRef.current = working;
   themeRef.current = theme;
   selectedRef.current = selected;
@@ -2165,7 +2167,7 @@ function App() {
   // Output arrives as a stream of chunks, so this touches React state only on the two edges of a
   // burst. Claude's explicit background activity holds the working edge until its last descendant
   // stops; ordinary output still becomes idle after one quiet spell, unless the agent still has a
-  // command running that prints nothing, which a quiet session asks after until it ends.
+  // command running that prints nothing, which a quiet local agent asks after until it ends.
   const markWorking = useCallback((sessionId: string, sustained = false) => {
     const timers = workTimers.current;
     const pending = timers.get(sessionId);
@@ -2177,7 +2179,9 @@ function App() {
     }
     const settle = () => {
       const timer = window.setTimeout(async () => {
-        const busy = await invoke<boolean>("agent_shells", { sessionId }).catch(() => false);
+        const session = sessionsRef.current.find((item) => item.id === sessionId);
+        const agent = !session?.host && (session?.agent !== "shell" || shellAgentsRef.current.has(sessionId));
+        const busy = agent && (await invoke<boolean>("agent_shells", { sessionId }).catch(() => false));
         // New output, an exit, or sustained activity took the session over while the answer was out.
         if (timers.get(sessionId) !== timer) return;
         if (busy) return settle();

@@ -5457,8 +5457,10 @@ fn agent_descendants(system: &System, root: sysinfo::Pid, agent: &str) -> Vec<sy
 }
 
 // An agent can leave a command running after its turn ends, and a shell started that way prints
-// nothing. Every harness runs commands through a shell it starts itself, so a shell whose parent is
-// the agent is work still in progress. cmd.exe is left out because Windows MCP servers run through it.
+// nothing. Every harness runs commands through a shell it starts itself with a command argument, so
+// such a shell whose parent is the agent is work still in progress; a shell running a script, as an
+// MCP server's launcher does, is not. cmd.exe is left out because Windows MCP servers run through it.
+// Windows reuses a process id without checking its children, so a parent chain can loop.
 #[tauri::command]
 async fn agent_shells(sessions: State<'_, Sessions>, session_id: String) -> Result<bool, String> {
     let root = sessions
@@ -5485,7 +5487,12 @@ async fn agent_shells(sessions: State<'_, Sessions>, session_id: String) -> Resu
             matches!(
                 name.strip_suffix(".exe").unwrap_or(&name),
                 "sh" | "bash" | "zsh" | "fish" | "dash" | "ksh" | "nu" | "pwsh" | "powershell"
-            ) && process
+            ) && process.cmd().iter().any(|argument| {
+                matches!(
+                    argument.to_string_lossy().to_ascii_lowercase().as_str(),
+                    "-c" | "-lc" | "-command" | "-encodedcommand"
+                )
+            }) && process
                 .parent()
                 .and_then(|parent| system.process(parent))
                 .is_some_and(|parent| {
@@ -5495,6 +5502,7 @@ async fn agent_shells(sessions: State<'_, Sessions>, session_id: String) -> Resu
                         && std::iter::successors(Some(parent.pid()), |pid| {
                             system.process(*pid)?.parent()
                         })
+                        .take(64)
                         .any(|pid| pid == root)
                 })
         })
