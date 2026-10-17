@@ -19,6 +19,7 @@ import {
   Copy,
   ExternalLink,
   Folder,
+  FolderOpen,
   GitBranch,
   GitFork,
   Link,
@@ -350,6 +351,7 @@ type AppMenuContext = {
   collapseSessions: HTMLButtonElement | null;
   directory: HTMLButtonElement | null;
   deleteEntry: HTMLButtonElement | null;
+  revealEntry: HTMLButtonElement | null;
   editable: Editable | null;
   expandFiles: HTMLButtonElement | null;
   expandPanel: HTMLButtonElement | null;
@@ -374,6 +376,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   collapseSessions: null,
   directory: null,
   deleteEntry: null,
+  revealEntry: null,
   editable: null,
   expandFiles: null,
   expandPanel: null,
@@ -391,6 +394,13 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   zoomOut: null,
   zoomReset: null,
 };
+
+// The name each system's developer tools give showing an entry where it lives; Linux opens its folder.
+const REVEAL_LABEL = IS_MAC
+  ? "Reveal in Finder"
+  : navigator.platform.startsWith("Win")
+    ? "Reveal in File Explorer"
+    : "Open containing folder";
 
 function inputSelection(element: HTMLInputElement | HTMLTextAreaElement): string {
   const start = element.selectionStart ?? 0;
@@ -425,6 +435,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     collapseSessions: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-sessions]") ?? null,
     directory,
     deleteEntry: fileRow?.querySelector<HTMLButtonElement>("[data-context-delete-entry]") ?? null,
+    revealEntry: fileRow?.querySelector<HTMLButtonElement>("[data-context-reveal-entry]") ?? null,
     editable: editable?.classList.contains("xterm-helper-textarea") ? null : editable,
     expandFiles: files?.querySelector<HTMLButtonElement>("[data-context-expand-files]") ?? null,
     expandPanel: surface?.querySelector<HTMLButtonElement>("[data-context-expand-panel]") ?? null,
@@ -627,6 +638,12 @@ function AppContextMenu({
           <ContextMenuItem onClick={() => writeClipboard(context.value)}>
             <Copy />
             {context.valueLabel}
+          </ContextMenuItem>
+        ) : null}
+        {context.revealEntry ? (
+          <ContextMenuItem onClick={() => context.revealEntry?.click()}>
+            <FolderOpen />
+            {REVEAL_LABEL}
           </ContextMenuItem>
         ) : null}
         {context.deleteEntry ? (
@@ -1712,6 +1729,7 @@ function App() {
   // Work that was live when the previous process disappeared is resumed once in this process.
   const interrupted = useRef(new Set(working));
   const [shellAgents, setShellAgents] = useState<Map<string, Agent>>(new Map());
+  const shellAgentsRef = useRef(shellAgents);
   const [query, setQuery] = useState("");
   const sessionSearch = useRef<HTMLInputElement>(null);
   const [sessionSwitcherOpen, setSessionSwitcherOpen] = useState(false);
@@ -1862,6 +1880,7 @@ function App() {
   }
   visibleRef.current = shut.sidebar ? active : displayed;
   sessionsRef.current = sessions;
+  shellAgentsRef.current = shellAgents;
   workingRef.current = working;
   themeRef.current = theme;
   selectedRef.current = selected;
@@ -2147,7 +2166,8 @@ function App() {
 
   // Output arrives as a stream of chunks, so this touches React state only on the two edges of a
   // burst. Claude's explicit background activity holds the working edge until its last descendant
-  // stops; ordinary output still becomes idle after one quiet spell.
+  // stops; ordinary output still becomes idle after one quiet spell, unless the agent still has a
+  // command running that prints nothing, which a quiet local agent asks after until it ends.
   const markWorking = useCallback((sessionId: string, sustained = false) => {
     const timers = workTimers.current;
     const pending = timers.get(sessionId);
@@ -2157,13 +2177,20 @@ function App() {
       timers.delete(sessionId);
       return;
     }
-    timers.set(
-      sessionId,
-      window.setTimeout(() => {
+    const settle = () => {
+      const timer = window.setTimeout(async () => {
+        const session = sessionsRef.current.find((item) => item.id === sessionId);
+        const agent = !session?.host && (session?.agent !== "shell" || shellAgentsRef.current.has(sessionId));
+        const busy = agent && (await invoke<boolean>("agent_shells", { sessionId }).catch(() => false));
+        // New output, an exit, or sustained activity took the session over while the answer was out.
+        if (timers.get(sessionId) !== timer) return;
+        if (busy) return settle();
         timers.delete(sessionId);
         setWorking((current) => without(current, sessionId));
-      }, QUIET_MS),
-    );
+      }, QUIET_MS);
+      timers.set(sessionId, timer);
+    };
+    settle();
   }, []);
 
   // A working session retitles itself several times a second, nearly always to what the tab already

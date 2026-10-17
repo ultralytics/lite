@@ -515,12 +515,14 @@ function Meter({ label, value, className }: { label: string; value: number; clas
 function FileTree({
   root,
   rootId,
+  remote,
   query,
   onOpen,
   onLoad,
 }: {
   root: string;
   rootId: string;
+  remote: boolean;
   query: string;
   onOpen: (entry: FileEntry) => void;
   onLoad: (tab: InspectorTab) => void;
@@ -760,6 +762,14 @@ function FileTree({
                     setDeleting(entry);
                   }}
                 />
+                {remote ? null : (
+                  <button
+                    type="button"
+                    hidden
+                    data-context-reveal-entry
+                    onClick={() => void invoke("reveal_entry", { rootId, path: entry.path })}
+                  />
+                )}
               </div>
               {open ? rows(entry.path, depth + 1) : null}
             </div>
@@ -1158,6 +1168,7 @@ export function unsavedFile(sessionId?: string) {
 function FilesPanel({
   root,
   rootId,
+  remote,
   sessionId,
   fontSize,
   fileBrowserVersion,
@@ -1168,6 +1179,7 @@ function FilesPanel({
 }: {
   root: string;
   rootId: string;
+  remote: boolean;
   sessionId: string;
   fontSize: number;
   fileBrowserVersion: number;
@@ -1328,6 +1340,7 @@ function FilesPanel({
               key={`${rootId}:${fileBrowserVersion}`}
               root={root}
               rootId={rootId}
+              remote={remote}
               query={query}
               onOpen={(entry) => void openFile(entry)}
               onLoad={onLoad}
@@ -2348,6 +2361,7 @@ export const Inspector = memo(function Inspector({
                 key={`${session.rootId}:${reload.files}`}
                 root={session.cwd}
                 rootId={session.rootId}
+                remote={Boolean(session.host)}
                 sessionId={session.id}
                 fontSize={fontSize}
                 fileBrowserVersion={fileBrowserVersion}
