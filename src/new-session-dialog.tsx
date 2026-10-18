@@ -551,7 +551,7 @@ export function NewSessionDialog({
     };
   }, [isOpen, probePath]);
   const running = (repository: GitHubRepository) =>
-    sessions.filter((session) => !session.host && session.repo === clonePath(repository)).length;
+    sessions.filter((session) => session.running && !session.host && session.repo === clonePath(repository)).length;
 
   async function chooseFolder() {
     setError("");
