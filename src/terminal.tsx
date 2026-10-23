@@ -186,7 +186,9 @@ function inlineHtml(text: string, styles: number[]) {
     let run = body
       .split(LINK)
       .map((part, index) => (index % 2 ? `<a href="${escapeHtml(part)}">${escapeHtml(part)}</a>` : escapeHtml(part)))
-      .join("");
+      .join("")
+      // HTML collapses a run of spaces, so all but the last are kept as non-breaking ones.
+      .replace(/ (?= )/g, "&nbsp;");
     for (const [bit, tag] of STYLES.entries()) if (styles[start] & (1 << bit)) run = `<${tag}>${run}</${tag}>`;
     html += run + segment.slice(body.length);
   }
@@ -198,6 +200,7 @@ function inlineHtml(text: string, styles: number[]) {
 function selectedLines(terminal: Terminal) {
   const range = terminal.getSelectionPosition();
   const lines: Line[] = [];
+  let read = "";
   for (let y = range?.start.y ?? 0; range && y <= range.end.y; y++) {
     const row = terminal.buffer.active.getLine(y);
     const from = y === range.start.y ? range.start.x : 0;
@@ -217,11 +220,20 @@ function selectedLines(terminal: Terminal) {
     }
     line.text = line.text.trimEnd();
     line.styles.length = line.text.length;
+    const previous = lines[lines.length - 1];
+    // A row the terminal wrapped itself continues the one above it exactly.
+    if (previous && row?.isWrapped) {
+      read += line.text;
+      previous.text += line.text;
+      previous.styles.push(...line.styles);
+      previous.end = line.end;
+      continue;
+    }
+    read += (previous ? "\n" : "") + line.text;
     if (from === 0 && GUTTER.test(line.text)) {
       line.text = line.text.slice(2);
       line.styles = line.styles.slice(2);
     }
-    const previous = lines[lines.length - 1];
     const head = line.text.trimStart();
     const word = head.split(" ")[0];
     if (
@@ -241,7 +253,10 @@ function selectedLines(terminal: Terminal) {
     previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
     previous.end = line.end;
   }
-  return lines;
+  // A column selection reads differently, and xterm's own copy keeps its shape. xterm keeps the spaces a
+  // CLI drew at the end of a row, so trailing space is not compared.
+  const selected = terminal.getSelection().replace(/[^\S\n]+$/gm, "");
+  return read.replace(/\u00a0/g, " ") === selected ? lines : [];
 }
 
 // Paragraphs, nested lists, tables and links in the HTML that Slack and other rich editors paste.
@@ -277,26 +292,28 @@ function richSelection(terminal: Terminal) {
       flush();
       close(item[1].length);
       const tag = item[2] ? "ol" : "ul";
+      const open = item[2] ? `<li value="${item[2]}">` : "<li>";
       const list = lists[lists.length - 1];
-      if (list?.indent === item[1].length && list.tag === tag) html += "</li><li>";
+      if (list?.indent === item[1].length && list.tag === tag) html += `</li>${open}`;
       else {
         if (list?.indent === item[1].length) html += `</li></${lists.pop()?.tag}>`;
-        html += `<${tag}><li>`;
+        html += `${item[2] ? `<ol start="${item[2]}">` : "<ul>"}${open}`;
         lists.push({ indent: item[1].length, tag });
       }
       html += inlineHtml(item[3], styles.slice(text.length - item[3].length));
     } else if (!text) flush();
-    else if (lists.length && indent > (lists[lists.length - 1]?.indent ?? 0))
-      html += `<br>${inlineHtml(text.slice(indent), styles.slice(indent))}`;
     else {
-      close(-1);
-      if (tables.has(index) ? paragraph.length : table.length) flush();
-      const heading = HEADING.exec(text.slice(indent))?.[0].length ?? 0;
-      if (tables.has(index)) table.push(text);
-      else
-        paragraph.push(
-          "&nbsp;".repeat(indent) + inlineHtml(text.slice(indent + heading), styles.slice(indent + heading)),
-        );
+      close(indent - 1);
+      if (lists.length) html += `<br>${inlineHtml(text.slice(indent), styles.slice(indent))}`;
+      else {
+        if (tables.has(index) ? paragraph.length : table.length) flush();
+        const heading = HEADING.exec(text.slice(indent))?.[0].length ?? 0;
+        if (tables.has(index)) table.push(text);
+        else
+          paragraph.push(
+            "&nbsp;".repeat(indent) + inlineHtml(text.slice(indent + heading), styles.slice(indent + heading)),
+          );
+      }
     }
   }
   flush();
