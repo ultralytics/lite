@@ -4114,6 +4114,7 @@ function App() {
             remoteSsh={remoteSsh}
             sessions={sessions}
             recentFolders={recentFolders}
+            onRemoveRecent={(path) => setRecentFolders((folders) => folders.filter((folder) => folder !== path))}
             onOpenChange={(open) => {
               setNewSessionOpen(open);
               // A welcome tile's choice is for the dialog it opened; the next opening is the user's own.
