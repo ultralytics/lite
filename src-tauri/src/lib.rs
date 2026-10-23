@@ -24,7 +24,7 @@ use tauri_plugin_updater::UpdaterExt;
 use tungstenite::Message;
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
 #[cfg(target_os = "macos")]
@@ -7786,15 +7786,16 @@ fn startup_ready(app: AppHandle) {
 // Clipboard writes stay synchronous because AppKit pasteboard access belongs on the main thread.
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn write_clipboard(text: String) -> Result<(), String> {
+fn write_clipboard(text: String, html: Option<String>) -> Result<(), String> {
     let pasteboard = NSPasteboard::generalPasteboard();
-    // SAFETY: AppKit owns this immutable process-lifetime constant.
-    let text_type = unsafe { NSPasteboardTypeString };
+    // SAFETY: AppKit owns these immutable process-lifetime constants.
+    let (text_type, html_type) = unsafe { (NSPasteboardTypeString, NSPasteboardTypeHTML) };
     pasteboard.clearContents();
-    pasteboard
-        .setString_forType(&NSString::from_str(&text), text_type)
-        .then_some(())
-        .ok_or("Could not write to the clipboard".into())
+    (pasteboard.setString_forType(&NSString::from_str(&text), text_type)
+        && html
+            .is_none_or(|html| pasteboard.setString_forType(&NSString::from_str(&html), html_type)))
+    .then_some(())
+    .ok_or("Could not write to the clipboard".into())
 }
 
 // Native editing preserves selection, Undo, and xterm's bracketed-paste handling.
