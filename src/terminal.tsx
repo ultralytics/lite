@@ -189,13 +189,12 @@ function inlineHtml(text: string, styles: number[]) {
     let run = body
       .split(LINK)
       .map((part, index) => (index % 2 ? `<a href="${escapeHtml(part)}">${escapeHtml(part)}</a>` : escapeHtml(part)))
-      .join("")
-      // HTML collapses a run of spaces, so all but the last are kept as non-breaking ones.
-      .replace(/ (?= )/g, "&nbsp;");
+      .join("");
     for (const [bit, tag] of STYLES.entries()) if (styles[start] & (1 << bit)) run = `<${tag}>${run}</${tag}>`;
     html += run + segment.slice(body.length);
   }
-  return html;
+  // HTML collapses a run of spaces, so all but the last are kept as non-breaking ones.
+  return html.replace(/ (?= )/g, "&nbsp;");
 }
 
 // The CLIs draw Markdown as styled cells and break a paragraph wherever its next word stops fitting, so a
@@ -246,6 +245,8 @@ function selectedLines(terminal: Terminal) {
       LIST_ITEM.test(line.text) ||
       TABLE.test(previous.text + head) ||
       drawn.length - drawn.trimStart().length !== previous.lead ||
+      // Codex and Claude's prompt wrap a column short of the edge, so a word that would only just fit
+      // still marks a wrap.
       previous.end + 1 + word.length < terminal.cols
     ) {
       lines.push(line);
@@ -253,7 +254,7 @@ function selectedLines(terminal: Terminal) {
     }
     // A row filled to the edge splits a link or path mid-token rather than at a space.
     const tail = previous.text.slice(previous.text.lastIndexOf(" ") + 1);
-    const space = previous.end >= terminal.cols - 1 && tail.includes("/") && /[/.]/.test(word) ? "" : " ";
+    const space = previous.end >= terminal.cols - 1 && tail.includes("/") ? "" : " ";
     previous.text += space + head;
     previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
     previous.end = line.end;
@@ -312,7 +313,9 @@ function richSelection(terminal: Terminal) {
       if (lists.length) html += `<br>${inlineHtml(text.slice(indent), styles.slice(indent))}`;
       else {
         if (tables.has(index) ? paragraph.length : table.length) flush();
-        const heading = HEADING.exec(text.slice(indent))?.[0].length ?? 0;
+        // Codex draws a heading bold behind its # markers; a comment in code is not bold.
+        const marker = HEADING.exec(text.slice(indent))?.[0].length ?? 0;
+        const heading = styles[indent + marker] & 1 ? marker : 0;
         if (tables.has(index)) table.push(text);
         else
           paragraph.push(
