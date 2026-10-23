@@ -7,7 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
-import { type IBufferCell, type ILink, type ITheme, Terminal } from "@xterm/xterm";
+import { type ILink, type ITheme, Terminal } from "@xterm/xterm";
 import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
@@ -174,19 +174,8 @@ const LINK = /(https?:\/\/(?:\([^\s()<>"]*\)|[^\s()<>"])*(?:\([^\s()<>"]*\)|[^\s
 const STYLES = ["strong", "em", "del"];
 
 // A selected row as the CLI drew it: each character's style, the column the row ends at, the column its wrapped
-// continuation starts at, its indentation, the columns its first word spans, whether it belongs to a table, and
-// whether a hyperlink holds its first and last characters.
-type Line = {
-  text: string;
-  styles: number[];
-  end: number;
-  lead: number;
-  indent: number;
-  word: number;
-  table: boolean;
-  opensLinked: boolean;
-  endsLinked: boolean;
-};
+// continuation starts at, its indentation, the columns its first word spans, and whether it belongs to a table.
+type Line = { text: string; styles: number[]; end: number; lead: number; indent: number; word: number; table: boolean };
 
 function escapeHtml(text: string) {
   return text.replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
@@ -227,8 +216,6 @@ function selectedLines(terminal: Terminal) {
       indent: drawn.length - drawn.trimStart().length,
       word: 0,
       table: false,
-      opensLinked: false,
-      endsLinked: false,
     };
     // The columns the row's first word spans, which wide characters make wider than its length.
     let word = -1;
@@ -239,13 +226,8 @@ function selectedLines(terminal: Terminal) {
       if (!cell?.getWidth()) continue;
       const chars = cell.getChars() || " ";
       if (chars !== " ") {
-        // xterm keeps the hyperlink Codex draws a link with on each of its cells.
-        line.endsLinked = Boolean((cell as IBufferCell & { extended?: { urlId?: number } }).extended?.urlId);
         line.end = x + cell.getWidth();
-        if (word < 0) {
-          word = x;
-          line.opensLinked = line.endsLinked;
-        }
+        if (word < 0) word = x;
       } else if (word >= 0 && gap < 0) gap = x;
       if (x < from || x >= (y === range.end.y ? range.end.x : terminal.cols)) continue;
       line.text += chars;
@@ -266,7 +248,6 @@ function selectedLines(terminal: Terminal) {
       previous.text += line.text;
       previous.styles.push(...line.styles);
       previous.end = line.end;
-      previous.endsLinked = line.endsLinked;
       continue;
     }
     read += (previous ? "\n" : "") + line.text;
@@ -307,15 +288,12 @@ function selectedLines(terminal: Terminal) {
       lines.push(line);
       continue;
     }
-    // A row filled to the edge splits a link or path mid-token rather than at a space. A hyperlink that runs
-    // on into the next row is split, and one followed by plain text ended; rows without one go by the edge.
+    // A row filled to the edge splits a link or path mid-token rather than at a space.
     const tail = previous.text.slice(previous.text.lastIndexOf(" ") + 1);
-    const split = previous.endsLinked ? line.opensLinked : previous.end >= terminal.cols - 1 && /[/\\]/.test(tail);
-    const space = split ? "" : " ";
+    const space = previous.end >= terminal.cols - 1 && /[/\\]/.test(tail) ? "" : " ";
     previous.text += space + head;
     previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
     previous.end = line.end;
-    previous.endsLinked = line.endsLinked;
   }
   return lines;
 }
