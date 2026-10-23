@@ -165,13 +165,16 @@ function fileLinks(
 // Both CLIs indent their output two columns behind a marker such as ⏺ or •.
 const GUTTER = /^(?:[⏺•] | {2})/;
 const LIST_ITEM = /^( *)(?:[-*•◦▪]|(\d{1,3})[.)]) (.*)$/;
+// Where a row's wrapped continuation starts: under its text, past any marker before it.
+const CONTINUATION = /^ *(?:(?:[-*•◦▪⏺❯›>⎿]|\d{1,3}[.)]) +)?/;
 const HEADING = /^#{1,6} /;
 const TABLE = /[─━│┃┌┐└┘├┤┬┴┼]/;
 const LINK = /(https?:\/\/[^\s<>"]*[^\s<>".,;:!?)])/;
 const STYLES = ["strong", "em", "del"];
 
-// A selected row as the CLI drew it, with each character's style and the column the row ends at.
-type Line = { text: string; styles: number[]; end: number };
+// A selected row as the CLI drew it, with each character's style, the column it ends at, and the column its
+// wrapped continuation starts at.
+type Line = { text: string; styles: number[]; end: number; lead: number };
 
 function escapeHtml(text: string) {
   return text.replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
@@ -204,7 +207,8 @@ function selectedLines(terminal: Terminal) {
   for (let y = range?.start.y ?? 0; range && y <= range.end.y; y++) {
     const row = terminal.buffer.active.getLine(y);
     const from = y === range.start.y ? range.start.x : 0;
-    const line: Line = { text: "", styles: [], end: from };
+    const drawn = row?.translateToString(true) ?? "";
+    const line: Line = { text: "", styles: [], end: from, lead: CONTINUATION.exec(drawn)?.[0].length ?? 0 };
     for (let x = from; x < (y === range.end.y ? range.end.x : terminal.cols); x++) {
       const cell = row?.getCell(x);
       if (!cell?.getWidth()) continue;
@@ -241,6 +245,7 @@ function selectedLines(terminal: Terminal) {
       !head ||
       LIST_ITEM.test(line.text) ||
       TABLE.test(previous.text + head) ||
+      drawn.length - drawn.trimStart().length !== previous.lead ||
       previous.end + 1 + word.length < terminal.cols
     ) {
       lines.push(line);
@@ -248,7 +253,7 @@ function selectedLines(terminal: Terminal) {
     }
     // A row filled to the edge splits a long link or path mid-word rather than at a space.
     const tail = previous.text.slice(previous.text.lastIndexOf(" ") + 1);
-    const space = tail.endsWith("/") || (previous.end >= terminal.cols - 1 && (tail + word).length > 24) ? "" : " ";
+    const space = previous.end >= terminal.cols - 1 && (tail + word).length > 24 ? "" : " ";
     previous.text += space + head;
     previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
     previous.end = line.end;
