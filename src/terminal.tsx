@@ -168,6 +168,8 @@ const LINK_TARGET = /\((?:[^\s()]|\r?\n[ \t]*)+\)/g;
 const LIST_NUMBER = /^[ \t]*\d{1,3}\.\s/gm;
 const LETTER = /[\p{L}\p{N}]/gu;
 const PUNCTUATION = /[^\s\p{L}\p{N}]/u;
+// Both CLIs indent their output two columns behind a marker such as ⏺ or •.
+const GUTTER = /^(?:[⏺•] | {2})/gm;
 
 let latestCopy = 0;
 
@@ -180,8 +182,10 @@ function letters(text: string) {
 // copied over the plain copy as HTML, which Slack and other rich editors paste with its formatting.
 async function copyReply(sessionId: string, agent: Agent, selection: string) {
   const copied = ++latestCopy;
-  const wanted = letters(selection);
-  if (!wanted || (agent !== "claude" && agent !== "codex")) return;
+  const lines = selection.split("\n");
+  const lineLetters = lines.map(letters);
+  const total = lineLetters.join("").length;
+  if (!total || (agent !== "claude" && agent !== "codex")) return;
   const [replies, { MarkdownPreview }, { renderToStaticMarkup }] = await Promise.all([
     invoke<string[]>("agent_replies", { sessionId, agent }),
     import("@/code-preview"),
@@ -190,20 +194,31 @@ async function copyReply(sessionId: string, agent: Agent, selection: string) {
   // An inert document neither loads a reply's images nor runs its markup.
   const page = document.implementation.createHTMLDocument();
   const container = page.createElement("div");
+  let text = selection;
+  let html: string | undefined;
   for (const reply of replies) {
     const source = letters(reply);
-    if (!source.includes(wanted.slice(0, 8)) || !source.includes(wanted.slice(-8))) continue;
+    // A selection often runs past the reply into the prompt above it or the status line below it.
+    let top = 0;
+    let bottom = lines.length;
+    while (top < bottom - 1 && !source.includes(lineLetters[top])) top++;
+    while (bottom > top + 1 && !source.includes(lineLetters[bottom - 1])) bottom--;
+    const kept = lines.slice(top, bottom).join("\n");
+    const wanted = letters(kept);
+    if (wanted.length * 2 < total) continue;
     container.innerHTML = renderToStaticMarkup(<MarkdownPreview source={reply} />);
     const places: [Node, number][] = [];
-    let text = "";
+    let rendered = "";
     const walker = page.createTreeWalker(container, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      text += node.textContent;
+      rendered += node.textContent;
       for (let offset = 0; offset < (node.textContent?.length ?? 0); offset++) places.push([node, offset]);
     }
     let found = "";
     const at: number[] = [];
-    for (const { 0: letter, index } of text.replace(LINK_TARGET, (link) => " ".repeat(link.length)).matchAll(LETTER)) {
+    for (const { 0: letter, index } of rendered
+      .replace(LINK_TARGET, (link) => " ".repeat(link.length))
+      .matchAll(LETTER)) {
       found += letter;
       for (let unit = 0; unit < letter.length; unit++) at.push(index + unit);
     }
@@ -211,8 +226,8 @@ async function copyReply(sessionId: string, agent: Agent, selection: string) {
     if (start < 0) continue;
     let first = at[start];
     let last = at[start + wanted.length - 1] + 1;
-    while (first > 0 && PUNCTUATION.test(text[first - 1])) first--;
-    while (last < text.length && PUNCTUATION.test(text[last])) last++;
+    while (first > 0 && PUNCTUATION.test(rendered[first - 1])) first--;
+    while (last < rendered.length && PUNCTUATION.test(rendered[last])) last++;
     const range = page.createRange();
     range.setStart(...places[first]);
     range.setEnd(places[last - 1][0], places[last - 1][1] + 1);
@@ -226,17 +241,21 @@ async function copyReply(sessionId: string, agent: Agent, selection: string) {
     }
     container.replaceChildren(copy);
     // Without a charset, AppKit reads the HTML as Latin-1 and garbles every dash and emoji.
-    const html = `<meta charset="utf-8">${container.innerHTML}`;
-    // A later copy has already replaced this one on the clipboard.
-    if (copied !== latestCopy) return;
-    if (IS_MAC) return invoke("write_clipboard", { text: selection, html });
-    return navigator.clipboard.write([
-      new ClipboardItem({
-        "text/plain": new Blob([selection], { type: "text/plain" }),
-        "text/html": new Blob([html], { type: "text/html" }),
-      }),
-    ]);
+    html = `<meta charset="utf-8">${container.innerHTML}`;
+    text = kept;
+    break;
   }
+  // A later copy has already replaced this one on the clipboard.
+  if (copied !== latestCopy) return;
+  text = text.replace(GUTTER, "");
+  if (IS_MAC) return invoke("write_clipboard", { text, html });
+  if (!html) return navigator.clipboard.writeText(text);
+  return navigator.clipboard.write([
+    new ClipboardItem({
+      "text/plain": new Blob([text], { type: "text/plain" }),
+      "text/html": new Blob([html], { type: "text/html" }),
+    }),
+  ]);
 }
 
 const FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
