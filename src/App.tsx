@@ -349,6 +349,7 @@ type AppMenuContext = {
   collapseFiles: HTMLButtonElement | null;
   collapsePanel: HTMLButtonElement | null;
   collapseSessions: HTMLButtonElement | null;
+  copy: HTMLButtonElement | null;
   directory: HTMLButtonElement | null;
   deleteEntry: HTMLButtonElement | null;
   revealEntry: HTMLButtonElement | null;
@@ -374,6 +375,7 @@ const EMPTY_MENU_CONTEXT: AppMenuContext = {
   collapseFiles: null,
   collapsePanel: null,
   collapseSessions: null,
+  copy: null,
   directory: null,
   deleteEntry: null,
   revealEntry: null,
@@ -433,6 +435,7 @@ function menuContext(target: EventTarget | null): AppMenuContext {
     collapseFiles: files?.querySelector<HTMLButtonElement>("[data-context-collapse-files]") ?? null,
     collapsePanel: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-panel]") ?? null,
     collapseSessions: surface?.querySelector<HTMLButtonElement>("[data-context-collapse-sessions]") ?? null,
+    copy: zoom?.querySelector<HTMLButtonElement>("[data-context-copy]") ?? null,
     directory,
     deleteEntry: fileRow?.querySelector<HTMLButtonElement>("[data-context-delete-entry]") ?? null,
     revealEntry: fileRow?.querySelector<HTMLButtonElement>("[data-context-reveal-entry]") ?? null,
@@ -726,7 +729,13 @@ function AppContextMenu({
           </ContextMenuItem>
         ) : null}
         {context.editable || context.selectedText ? (
-          <ContextMenuItem disabled={!context.selectedText} onClick={() => writeClipboard(context.selectedText)}>
+          <ContextMenuItem
+            disabled={!context.selectedText}
+            onClick={() => {
+              writeClipboard(context.selectedText);
+              if (!context.editable) context.copy?.click();
+            }}
+          >
             <Copy />
             Copy
             <ContextMenuShortcut>{shortcut}C</ContextMenuShortcut>
