@@ -1261,6 +1261,7 @@ export function NewSessionDialog({
                                   </button>
                                   {group.label === "Recent" && place ? (
                                     <ActionIconButton
+                                      type="button"
                                       tooltip="Remove from Recent"
                                       aria-label={`Remove ${fullName(repository)} from Recent`}
                                       disabled={busy}
@@ -1412,6 +1413,7 @@ export function NewSessionDialog({
                               ) : null}
                             </button>
                             <ActionIconButton
+                              type="button"
                               tooltip="Remove from Recent"
                               aria-label={`Remove ${folderName(place) || place} from Recent`}
                               disabled={busy}
