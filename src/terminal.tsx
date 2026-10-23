@@ -164,10 +164,12 @@ function fileLinks(
 
 // The CLIs show a link as "text (target)", wrapping a long target, and number list items in the text,
 // so neither is compared.
-const LINK_TARGET = /\((?:[^\s()]|\n\s*)+\)/g;
-const LIST_NUMBER = /^\s*\d{1,3}\.\s/gm;
+const LINK_TARGET = /\((?:[^\s()]|\r?\n[ \t]*)+\)/g;
+const LIST_NUMBER = /^[ \t]*\d{1,3}\.\s/gm;
 const LETTER = /[\p{L}\p{N}]/gu;
 const PUNCTUATION = /[^\s\p{L}\p{N}]/u;
+
+let latestCopy = 0;
 
 function letters(text: string) {
   return text.replace(LIST_NUMBER, "").replace(LINK_TARGET, "").match(LETTER)?.join("") ?? "";
@@ -177,6 +179,7 @@ function letters(text: string) {
 // is matched by its letters to the newest reply holding them, and that part of the rendered reply is
 // copied over the plain copy as HTML, which Slack and other rich editors paste with its formatting.
 async function copyReply(sessionId: string, agent: Agent, selection: string) {
+  const copied = ++latestCopy;
   const wanted = letters(selection);
   if (!wanted || (agent !== "claude" && agent !== "codex")) return;
   const [replies, { MarkdownPreview }, { renderToStaticMarkup }] = await Promise.all([
@@ -224,6 +227,8 @@ async function copyReply(sessionId: string, agent: Agent, selection: string) {
     container.replaceChildren(copy);
     // Without a charset, AppKit reads the HTML as Latin-1 and garbles every dash and emoji.
     const html = `<meta charset="utf-8">${container.innerHTML}`;
+    // A later copy has already replaced this one on the clipboard.
+    if (copied !== latestCopy) return;
     if (IS_MAC) return invoke("write_clipboard", { text: selection, html });
     return navigator.clipboard.write([
       new ClipboardItem({

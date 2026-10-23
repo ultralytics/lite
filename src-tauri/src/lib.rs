@@ -4,7 +4,7 @@ use atomicwrites::{AllowOverwrite, AtomicFile};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     fs,
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
@@ -3362,13 +3362,22 @@ async fn agent_replies(
             _ => None,
         };
         // Newest first, and only as many as the terminal's scrollback can still show to be selected.
-        Ok(path
-            .map(|path| {
-                claude_transcript_lines(&path)
-                    .filter(|line| line.contains("\"role\":\"assistant\""))
-                    .collect::<Vec<_>>()
+        let mut lines = VecDeque::new();
+        for line in path
+            .iter()
+            .flat_map(|path| claude_transcript_lines(path))
+            .filter(|line| {
+                line.contains("\"role\":\"assistant\"")
+                    && (line.contains("\"type\":\"text\"")
+                        || line.contains("\"type\":\"output_text\""))
             })
-            .unwrap_or_default()
+        {
+            if lines.len() == 200 {
+                lines.pop_front();
+            }
+            lines.push_back(line);
+        }
+        Ok(lines
             .iter()
             .rev()
             .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
