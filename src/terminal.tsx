@@ -169,7 +169,8 @@ const LIST_ITEM = /^( *)(?:[-*•◦▪]|(\d{1,3})[.)]) (.*)$/;
 const CONTINUATION = /^ *(?:(?:[-*•◦▪⏺❯›>⎿]|\d{1,3}[.)]) +)?/;
 const HEADING = /^#{1,6} /;
 const TABLE = /[─━│┃┌┐└┘├┤┬┴┼]/;
-const LINK = /(https?:\/\/[^\s<>"]*[^\s<>".,;:!?)])/;
+// A link may hold balanced parentheses, as Wikipedia's do, but not end on prose punctuation.
+const LINK = /(https?:\/\/(?:\([^\s()<>"]*\)|[^\s()<>"])*(?:\([^\s()<>"]*\)|[^\s()<>".,;:!?'"]))/;
 const STYLES = ["strong", "em", "del"];
 
 // A selected row as the CLI drew it, with each character's style, the column it ends at, and the column its
@@ -208,11 +209,17 @@ function selectedLines(terminal: Terminal) {
     const from = y === range.start.y ? range.start.x : 0;
     const drawn = row?.translateToString(true) ?? "";
     const line: Line = { text: "", styles: [], end: from, lead: CONTINUATION.exec(drawn)?.[0].length ?? 0 };
+    // The columns the row's first word spans, which wide characters make wider than its length.
+    let word = -1;
+    let gap = -1;
     for (let x = from; x < (y === range.end.y ? range.end.x : terminal.cols); x++) {
       const cell = row?.getCell(x);
       if (!cell?.getWidth()) continue;
       const chars = cell.getChars() || " ";
-      if (chars !== " ") line.end = x + cell.getWidth();
+      if (chars !== " ") {
+        line.end = x + cell.getWidth();
+        if (word < 0) word = x;
+      } else if (word >= 0 && gap < 0) gap = x;
       line.text += chars;
       // Claude moves the cursor over a gap instead of drawing it, so a gap takes the style before it.
       const style =
@@ -238,7 +245,6 @@ function selectedLines(terminal: Terminal) {
       line.styles = line.styles.slice(2);
     }
     const head = line.text.trimStart();
-    const word = head.split(" ")[0];
     if (
       !previous?.text ||
       !head ||
@@ -247,7 +253,7 @@ function selectedLines(terminal: Terminal) {
       drawn.length - drawn.trimStart().length !== previous.lead ||
       // Codex and Claude's prompt wrap a column short of the edge, so a word that would only just fit
       // still marks a wrap.
-      previous.end + 1 + word.length < terminal.cols
+      previous.end + 1 + (gap < 0 ? line.end : gap) - word < terminal.cols
     ) {
       lines.push(line);
       continue;
@@ -310,17 +316,16 @@ function richSelection(terminal: Terminal) {
     } else if (!text) flush();
     else {
       close(indent - 1);
-      if (lists.length) html += `<br>${inlineHtml(text.slice(indent), styles.slice(indent))}`;
+      if (tables.has(index) ? paragraph.length : table.length) flush();
+      if (tables.has(index)) table.push(text);
+      else if (lists.length) html += `<br>${inlineHtml(text.slice(indent), styles.slice(indent))}`;
       else {
-        if (tables.has(index) ? paragraph.length : table.length) flush();
         // Codex draws a heading bold behind its # markers; a comment in code is not bold.
         const marker = HEADING.exec(text.slice(indent))?.[0].length ?? 0;
         const heading = styles[indent + marker] & 1 ? marker : 0;
-        if (tables.has(index)) table.push(text);
-        else
-          paragraph.push(
-            "&nbsp;".repeat(indent) + inlineHtml(text.slice(indent + heading), styles.slice(indent + heading)),
-          );
+        paragraph.push(
+          "&nbsp;".repeat(indent) + inlineHtml(text.slice(indent + heading), styles.slice(indent + heading)),
+        );
       }
     }
   }
