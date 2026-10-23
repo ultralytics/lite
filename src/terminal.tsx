@@ -212,7 +212,8 @@ function selectedLines(terminal: Terminal) {
     // The columns the row's first word spans, which wide characters make wider than its length.
     let word = -1;
     let gap = -1;
-    for (let x = from; x < (y === range.end.y ? range.end.x : terminal.cols); x++) {
+    // The whole row is measured, though only the selected part of it is copied.
+    for (let x = 0; x < terminal.cols; x++) {
       const cell = row?.getCell(x);
       if (!cell?.getWidth()) continue;
       const chars = cell.getChars() || " ";
@@ -220,6 +221,7 @@ function selectedLines(terminal: Terminal) {
         line.end = x + cell.getWidth();
         if (word < 0) word = x;
       } else if (word >= 0 && gap < 0) gap = x;
+      if (x < from || x >= (y === range.end.y ? range.end.x : terminal.cols)) continue;
       line.text += chars;
       // Claude moves the cursor over a gap instead of drawing it, so a gap takes the style before it.
       const style =
@@ -260,7 +262,7 @@ function selectedLines(terminal: Terminal) {
     }
     // A row filled to the edge splits a link or path mid-token rather than at a space.
     const tail = previous.text.slice(previous.text.lastIndexOf(" ") + 1);
-    const space = previous.end >= terminal.cols - 1 && tail.includes("/") ? "" : " ";
+    const space = previous.end >= terminal.cols - 1 && /[/\\]/.test(tail) ? "" : " ";
     previous.text += space + head;
     previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
     previous.end = line.end;
