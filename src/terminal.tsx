@@ -251,9 +251,9 @@ function selectedLines(terminal: Terminal) {
       lines.push(line);
       continue;
     }
-    // A row filled to the edge splits a long link or path mid-word rather than at a space.
+    // A row filled to the edge splits a link or path mid-token rather than at a space.
     const tail = previous.text.slice(previous.text.lastIndexOf(" ") + 1);
-    const space = previous.end >= terminal.cols - 1 && (tail + word).length > 24 ? "" : " ";
+    const space = previous.end >= terminal.cols - 1 && tail.includes("/") && /[/.]/.test(word) ? "" : " ";
     previous.text += space + head;
     previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
     previous.end = line.end;
