@@ -173,9 +173,17 @@ const TABLE = /[─━│┃┌┐└┘├┤┬┴┼]/;
 const LINK = /(https?:\/\/(?:\([^\s()<>"]*\)|[^\s()<>"])*(?:\([^\s()<>"]*\)|[^\s()<>".,;:!?'"]))/;
 const STYLES = ["strong", "em", "del"];
 
-// A selected row as the CLI drew it, with each character's style, the column it ends at, and the column its
-// wrapped continuation starts at.
-type Line = { text: string; styles: number[]; end: number; lead: number };
+// A selected row as the CLI drew it: each character's style, the column the row ends at, the column its wrapped
+// continuation starts at, its indentation, the columns its first word spans, and whether it belongs to a table.
+type Line = {
+  text: string;
+  styles: number[];
+  end: number;
+  lead: number;
+  indent: number;
+  word: number;
+  table: boolean;
+};
 
 function escapeHtml(text: string) {
   return text.replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
@@ -202,13 +210,21 @@ function inlineHtml(text: string, styles: number[]) {
 // row rejoins the one above it when that row had no room left for the row's first word.
 function selectedLines(terminal: Terminal) {
   const range = terminal.getSelectionPosition();
-  const lines: Line[] = [];
+  const rows: Line[] = [];
   let read = "";
   for (let y = range?.start.y ?? 0; range && y <= range.end.y; y++) {
     const row = terminal.buffer.active.getLine(y);
     const from = y === range.start.y ? range.start.x : 0;
     const drawn = row?.translateToString(true) ?? "";
-    const line: Line = { text: "", styles: [], end: from, lead: CONTINUATION.exec(drawn)?.[0].length ?? 0 };
+    const line: Line = {
+      text: "",
+      styles: [],
+      end: from,
+      lead: CONTINUATION.exec(drawn)?.[0].length ?? 0,
+      indent: drawn.length - drawn.trimStart().length,
+      word: 0,
+      table: false,
+    };
     // The columns the row's first word spans, which wide characters make wider than its length.
     let word = -1;
     let gap = -1;
@@ -232,7 +248,8 @@ function selectedLines(terminal: Terminal) {
     }
     line.text = line.text.trimEnd();
     line.styles.length = line.text.length;
-    const previous = lines[lines.length - 1];
+    line.word = word < 0 ? 0 : (gap < 0 ? line.end : gap) - word;
+    const previous = rows[rows.length - 1];
     // A row the terminal wrapped itself continues the one above it exactly.
     if (previous && row?.isWrapped) {
       read += line.text;
@@ -246,16 +263,35 @@ function selectedLines(terminal: Terminal) {
       line.text = line.text.slice(2);
       line.styles = line.styles.slice(2);
     }
+    rows.push(line);
+  }
+  // A column selection reads differently, and xterm's own copy keeps its shape. xterm keeps the spaces a
+  // CLI drew at the end of a row, so trailing space is not compared.
+  if (read.replace(/\u00a0/g, " ") !== terminal.getSelection().replace(/[^\S\n]+$/gm, "")) return [];
+  // A table is every row of its run indented at least as far as its borders, including Codex's rows that
+  // draw none, while a list item that introduces a nested table sits to its left.
+  const indentOf = (row: Line) => row.text.length - row.text.trimStart().length;
+  for (let start = 0, end = 0; end <= rows.length; end++)
+    if (end === rows.length || !rows[end].text) {
+      const block = rows.slice(start, end);
+      const border = Math.min(...block.filter((row) => TABLE.test(row.text)).map(indentOf));
+      for (const row of block) row.table = indentOf(row) >= border;
+      start = end + 1;
+    }
+  const lines: Line[] = [];
+  for (const line of rows) {
+    const previous = lines[lines.length - 1];
     const head = line.text.trimStart();
     if (
       !previous?.text ||
       !head ||
+      line.table ||
+      previous.table ||
       LIST_ITEM.test(line.text) ||
-      TABLE.test(previous.text + head) ||
-      drawn.length - drawn.trimStart().length !== previous.lead ||
+      line.indent !== previous.lead ||
       // Codex and Claude's prompt wrap a column short of the edge, so a word that would only just fit
       // still marks a wrap.
-      previous.end + 1 + (gap < 0 ? line.end : gap) - word < terminal.cols
+      previous.end + 1 + line.word < terminal.cols
     ) {
       lines.push(line);
       continue;
@@ -267,10 +303,7 @@ function selectedLines(terminal: Terminal) {
     previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
     previous.end = line.end;
   }
-  // A column selection reads differently, and xterm's own copy keeps its shape. xterm keeps the spaces a
-  // CLI drew at the end of a row, so trailing space is not compared.
-  const selected = terminal.getSelection().replace(/[^\S\n]+$/gm, "");
-  return read.replace(/\u00a0/g, " ") === selected ? lines : [];
+  return lines;
 }
 
 // Paragraphs, nested lists, tables and links in the HTML that Slack and other rich editors paste.
@@ -279,29 +312,21 @@ function richSelection(terminal: Terminal) {
   if (!lines.length) return;
   let html = "";
   let paragraph: string[] = [];
-  let table: string[] = [];
+  let grid: string[] = [];
   const lists: { indent: number; tag: string }[] = [];
   const flush = () => {
     if (paragraph.length) html += `<p>${paragraph.join("<br>")}</p>\n`;
-    if (table.length) html += `<pre>${escapeHtml(table.join("\n"))}</pre>\n`;
+    if (grid.length) html += `<pre>${escapeHtml(grid.join("\n"))}</pre>\n`;
     paragraph = [];
-    table = [];
+    grid = [];
   };
   const close = (indent: number) => {
     for (let list = lists[lists.length - 1]; list && list.indent > indent; list = lists[lists.length - 1])
       html += `</li></${lists.pop()?.tag}>`;
   };
-  // A table is the whole run of rows its borders sit in, including rows that draw none.
-  const tables = new Set<number>();
-  for (let start = 0, end = 0; end <= lines.length; end++)
-    if (end === lines.length || !lines[end].text) {
-      if (lines.slice(start, end).some((line) => TABLE.test(line.text)))
-        for (let row = start; row < end; row++) tables.add(row);
-      start = end + 1;
-    }
-  for (const [index, { text, styles }] of lines.entries()) {
+  for (const { text, styles, table } of lines) {
     const indent = text.length - text.trimStart().length;
-    const item = LIST_ITEM.exec(text);
+    const item = !table && LIST_ITEM.exec(text);
     if (item) {
       flush();
       close(item[1].length);
@@ -318,8 +343,8 @@ function richSelection(terminal: Terminal) {
     } else if (!text) flush();
     else {
       close(indent - 1);
-      if (tables.has(index) ? paragraph.length : table.length) flush();
-      if (tables.has(index)) table.push(text);
+      if (table ? paragraph.length : grid.length) flush();
+      if (table) grid.push(text);
       else if (lists.length) html += `<br>${inlineHtml(text.slice(indent), styles.slice(indent))}`;
       else {
         // Codex draws a heading bold behind its # markers; a comment in code is not bold.
