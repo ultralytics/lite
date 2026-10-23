@@ -162,100 +162,146 @@ function fileLinks(
   );
 }
 
-// The CLIs show a link as "text (target)", wrapping a long target, and number list items in the text,
-// so neither is compared.
-const LINK_TARGET = /\((?:[^\s()]|\r?\n[ \t]*)+\)/g;
-const LIST_NUMBER = /^[ \t]*\d{1,3}\.\s/gm;
-const LETTER = /[\p{L}\p{N}]/gu;
-const PUNCTUATION = /[^\s\p{L}\p{N}]/u;
 // Both CLIs indent their output two columns behind a marker such as ⏺ or •.
-const GUTTER = /^(?:[⏺•] | {2})/gm;
+const GUTTER = /^(?:[⏺•] | {2})/;
+const LIST_ITEM = /^( *)(?:[-*•◦▪]|(\d{1,3})[.)]) (.*)$/;
+const HEADING = /^#{1,6} /;
+const TABLE = /[─━│┃┌┐└┘├┤┬┴┼]/;
+const LINK = /(https?:\/\/[^\s<>"]*[^\s<>".,;:!?)])/;
+const STYLES = ["strong", "em", "del"];
 
-let latestCopy = 0;
+// A selected row as the CLI drew it, with each character's style and the column the row ends at.
+type Line = { text: string; styles: number[]; end: number };
 
-function letters(text: string) {
-  return text.replace(LIST_NUMBER, "").replace(LINK_TARGET, "").match(LETTER)?.join("") ?? "";
+function escapeHtml(text: string) {
+  return text.replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
 }
 
-// The CLIs draw a reply's Markdown as wrapped, styled cells, which copy as broken plain text. A selection
-// is matched by its letters to the newest reply holding them, and that part of the rendered reply is
-// copied over the plain copy as HTML, which Slack and other rich editors paste with its formatting.
-async function copyReply(sessionId: string, agent: Agent, selection: string) {
-  const copied = ++latestCopy;
-  const lines = selection.split("\n");
-  const lineLetters = lines.map(letters);
-  const total = lineLetters.join("").length;
-  if (!total || (agent !== "claude" && agent !== "codex")) return;
-  const [replies, { MarkdownPreview }, { renderToStaticMarkup }] = await Promise.all([
-    invoke<string[]>("agent_replies", { sessionId, agent }),
-    import("@/code-preview"),
-    import("react-dom/server"),
-  ]);
-  // An inert document neither loads a reply's images nor runs its markup.
-  const page = document.implementation.createHTMLDocument();
-  const container = page.createElement("div");
-  let text = selection;
-  let html: string | undefined;
-  for (const reply of replies) {
-    const source = letters(reply);
-    // A selection often runs past the reply into the prompt above it or the status line below it.
-    let top = 0;
-    let bottom = lines.length;
-    while (top < bottom - 1 && !source.includes(lineLetters[top])) top++;
-    while (bottom > top + 1 && !source.includes(lineLetters[bottom - 1])) bottom--;
-    const kept = lines.slice(top, bottom).join("\n");
-    const wanted = letters(kept);
-    if (wanted.length * 2 < total) continue;
-    container.innerHTML = renderToStaticMarkup(<MarkdownPreview source={reply} />);
-    const places: [Node, number][] = [];
-    let rendered = "";
-    const walker = page.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      rendered += node.textContent;
-      for (let offset = 0; offset < (node.textContent?.length ?? 0); offset++) places.push([node, offset]);
-    }
-    let found = "";
-    const at: number[] = [];
-    for (const { 0: letter, index } of rendered
-      .replace(LINK_TARGET, (link) => " ".repeat(link.length))
-      .matchAll(LETTER)) {
-      found += letter;
-      for (let unit = 0; unit < letter.length; unit++) at.push(index + unit);
-    }
-    const start = found.indexOf(wanted);
-    if (start < 0) continue;
-    let first = at[start];
-    let last = at[start + wanted.length - 1] + 1;
-    while (first > 0 && PUNCTUATION.test(rendered[first - 1])) first--;
-    while (last < rendered.length && PUNCTUATION.test(rendered[last])) last++;
-    const range = page.createRange();
-    range.setStart(...places[first]);
-    range.setEnd(places[last - 1][0], places[last - 1][1] + 1);
-    // A selection inside one code block or list keeps the elements that make it one.
-    let copy: Node = range.cloneContents();
-    for (let node = range.commonAncestorContainer; node !== container; node = node.parentNode as Node) {
-      if (node.nodeType !== Node.ELEMENT_NODE) continue;
-      const parent = node.cloneNode();
-      parent.appendChild(copy);
-      copy = parent;
-    }
-    container.replaceChildren(copy);
-    // Without a charset, AppKit reads the HTML as Latin-1 and garbles every dash and emoji.
-    html = `<meta charset="utf-8">${container.innerHTML}`;
-    text = kept;
-    break;
+function inlineHtml(text: string, styles: number[]) {
+  let html = "";
+  for (let start = 0, end = 1; start < text.length; start = end++) {
+    while (end < text.length && styles[end] === styles[start]) end++;
+    const segment = text.slice(start, end);
+    const body = segment.trimEnd();
+    let run = body
+      .split(LINK)
+      .map((part, index) => (index % 2 ? `<a href="${escapeHtml(part)}">${escapeHtml(part)}</a>` : escapeHtml(part)))
+      .join("");
+    for (const [bit, tag] of STYLES.entries()) if (styles[start] & (1 << bit)) run = `<${tag}>${run}</${tag}>`;
+    html += run + segment.slice(body.length);
   }
-  // A later copy has already replaced this one on the clipboard.
-  if (copied !== latestCopy) return;
-  text = text.replace(GUTTER, "");
-  if (IS_MAC) return invoke("write_clipboard", { text, html });
-  if (!html) return navigator.clipboard.writeText(text);
-  return navigator.clipboard.write([
-    new ClipboardItem({
-      "text/plain": new Blob([text], { type: "text/plain" }),
-      "text/html": new Blob([html], { type: "text/html" }),
-    }),
-  ]);
+  return html;
+}
+
+// The CLIs draw Markdown as styled cells and break a paragraph wherever its next word stops fitting, so a
+// row rejoins the one above it when that row had no room left for the row's first word.
+function selectedLines(terminal: Terminal) {
+  const range = terminal.getSelectionPosition();
+  const lines: Line[] = [];
+  for (let y = range?.start.y ?? 0; range && y <= range.end.y; y++) {
+    const row = terminal.buffer.active.getLine(y);
+    const from = y === range.start.y ? range.start.x : 0;
+    const line: Line = { text: "", styles: [], end: from };
+    for (let x = from; x < (y === range.end.y ? range.end.x : terminal.cols); x++) {
+      const cell = row?.getCell(x);
+      if (!cell?.getWidth()) continue;
+      const chars = cell.getChars() || " ";
+      if (chars !== " ") line.end = x + cell.getWidth();
+      line.text += chars;
+      // Claude moves the cursor over a gap instead of drawing it, so a gap takes the style before it.
+      const style =
+        chars === " "
+          ? (line.styles[line.styles.length - 1] ?? 0)
+          : (cell.isBold() ? 1 : 0) | (cell.isItalic() ? 2 : 0) | (cell.isStrikethrough() ? 4 : 0);
+      for (let unit = 0; unit < chars.length; unit++) line.styles.push(style);
+    }
+    line.text = line.text.trimEnd();
+    line.styles.length = line.text.length;
+    if (from === 0 && GUTTER.test(line.text)) {
+      line.text = line.text.slice(2);
+      line.styles = line.styles.slice(2);
+    }
+    const previous = lines[lines.length - 1];
+    const head = line.text.trimStart();
+    const word = head.split(" ")[0];
+    if (
+      !previous?.text ||
+      !head ||
+      LIST_ITEM.test(line.text) ||
+      TABLE.test(previous.text + head) ||
+      previous.end + 1 + word.length < terminal.cols
+    ) {
+      lines.push(line);
+      continue;
+    }
+    // A row filled to the edge splits a long link or path mid-word rather than at a space.
+    const tail = previous.text.slice(previous.text.lastIndexOf(" ") + 1);
+    const space = tail.endsWith("/") || (previous.end >= terminal.cols - 1 && (tail + word).length > 24) ? "" : " ";
+    previous.text += space + head;
+    previous.styles.push(...(space ? [0] : []), ...line.styles.slice(line.text.length - head.length));
+    previous.end = line.end;
+  }
+  return lines;
+}
+
+// Paragraphs, nested lists, tables and links in the HTML that Slack and other rich editors paste.
+function richSelection(terminal: Terminal) {
+  const lines = selectedLines(terminal);
+  if (!lines.length) return;
+  let html = "";
+  let paragraph: string[] = [];
+  let table: string[] = [];
+  const lists: { indent: number; tag: string }[] = [];
+  const flush = () => {
+    if (paragraph.length) html += `<p>${paragraph.join("<br>")}</p>\n`;
+    if (table.length) html += `<pre>${escapeHtml(table.join("\n"))}</pre>\n`;
+    paragraph = [];
+    table = [];
+  };
+  const close = (indent: number) => {
+    for (let list = lists[lists.length - 1]; list && list.indent > indent; list = lists[lists.length - 1])
+      html += `</li></${lists.pop()?.tag}>`;
+  };
+  // A table is the whole run of rows its borders sit in, including rows that draw none.
+  const tables = new Set<number>();
+  for (let start = 0, end = 0; end <= lines.length; end++)
+    if (end === lines.length || !lines[end].text) {
+      if (lines.slice(start, end).some((line) => TABLE.test(line.text)))
+        for (let row = start; row < end; row++) tables.add(row);
+      start = end + 1;
+    }
+  for (const [index, { text, styles }] of lines.entries()) {
+    const indent = text.length - text.trimStart().length;
+    const item = LIST_ITEM.exec(text);
+    if (item) {
+      flush();
+      close(item[1].length);
+      const tag = item[2] ? "ol" : "ul";
+      const list = lists[lists.length - 1];
+      if (list?.indent === item[1].length && list.tag === tag) html += "</li><li>";
+      else {
+        if (list?.indent === item[1].length) html += `</li></${lists.pop()?.tag}>`;
+        html += `<${tag}><li>`;
+        lists.push({ indent: item[1].length, tag });
+      }
+      html += inlineHtml(item[3], styles.slice(text.length - item[3].length));
+    } else if (!text) flush();
+    else if (lists.length && indent > (lists[lists.length - 1]?.indent ?? 0))
+      html += `<br>${inlineHtml(text.slice(indent), styles.slice(indent))}`;
+    else {
+      close(-1);
+      if (tables.has(index) ? paragraph.length : table.length) flush();
+      const heading = HEADING.exec(text.slice(indent))?.[0].length ?? 0;
+      if (tables.has(index)) table.push(text);
+      else
+        paragraph.push(
+          "&nbsp;".repeat(indent) + inlineHtml(text.slice(indent + heading), styles.slice(indent + heading)),
+        );
+    }
+  }
+  flush();
+  close(-1);
+  return { text: lines.map((line) => line.text).join("\n"), html: `<meta charset="utf-8">${html}` };
 }
 
 const FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
@@ -649,11 +695,12 @@ export function TerminalView({
     terminalRef.current?.focus();
   }
 
-  // Runs after the plain copy, which the copy event or the menu has already made.
-  const copy = () =>
-    void copyReply(sessionId, agentRef.current, terminalRef.current?.getSelection() ?? "").catch((reason) =>
-      console.error("Lite could not copy the reply's formatting:", reason),
-    );
+  // Agent tabs copy the selection rejoined and styled, as text and as HTML.
+  const richCopy = () => {
+    const terminal = terminalRef.current;
+    const agent = agentRef.current;
+    return terminal && (agent === "claude" || agent === "codex") ? richSelection(terminal) : undefined;
+  };
 
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
@@ -666,7 +713,13 @@ export function TerminalView({
       data-context-session={sessionId}
       data-context-zoom
       className="relative h-full w-full bg-background p-3 pr-1.5"
-      onCopy={(event) => event.target === terminalRef.current?.textarea && copy()}
+      onCopy={(event) => {
+        const copy = terminalRef.current?.element?.contains(event.target as Node) ? richCopy() : undefined;
+        if (!copy) return;
+        event.preventDefault();
+        event.clipboardData.setData("text/plain", copy.text);
+        event.clipboardData.setData("text/html", copy.html);
+      }}
       onKeyDownCapture={(event) => {
         if (searchOpen && event.key === "Escape") {
           event.preventDefault();
@@ -707,7 +760,22 @@ export function TerminalView({
             .catch((reason) => console.error("Lite could not paste:", reason));
         }}
       />
-      <button type="button" hidden data-context-copy onClick={copy} />
+      <button
+        type="button"
+        hidden
+        data-context-copy
+        onClick={() => {
+          const copy = richCopy();
+          if (!copy) return;
+          const item = {
+            "text/plain": new Blob([copy.text], { type: "text/plain" }),
+            "text/html": new Blob([copy.html], { type: "text/html" }),
+          };
+          void (IS_MAC ? invoke("write_clipboard", copy) : navigator.clipboard.write([new ClipboardItem(item)])).catch(
+            (reason) => console.error("Lite could not copy:", reason),
+          );
+        }}
+      />
       <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={scrollToBottom} />
       {searchOpen ? (
