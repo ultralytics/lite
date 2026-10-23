@@ -162,6 +162,78 @@ function fileLinks(
   );
 }
 
+// The CLIs show a link as "text (target)", wrapping a long target, and number list items in the text,
+// so neither is compared.
+const LINK_TARGET = /\((?:[^\s()]|\n\s*)+\)/g;
+const LIST_NUMBER = /^\s*\d{1,3}\.\s/gm;
+const LETTER = /[\p{L}\p{N}]/gu;
+const PUNCTUATION = /[^\s\p{L}\p{N}]/u;
+
+function letters(text: string) {
+  return text.replace(LIST_NUMBER, "").replace(LINK_TARGET, "").match(LETTER)?.join("") ?? "";
+}
+
+// The CLIs draw a reply's Markdown as wrapped, styled cells, which copy as broken plain text. A selection
+// is matched by its letters to the newest reply holding them, and that part of the rendered reply is
+// copied over the plain copy as HTML, which Slack and other rich editors paste with its formatting.
+async function copyReply(sessionId: string, agent: Agent, selection: string) {
+  const wanted = letters(selection);
+  if (!wanted || (agent !== "claude" && agent !== "codex")) return;
+  const [replies, { MarkdownPreview }, { renderToStaticMarkup }] = await Promise.all([
+    invoke<string[]>("agent_replies", { sessionId, agent }),
+    import("@/code-preview"),
+    import("react-dom/server"),
+  ]);
+  // An inert document neither loads a reply's images nor runs its markup.
+  const page = document.implementation.createHTMLDocument();
+  const container = page.createElement("div");
+  for (const reply of replies) {
+    const source = letters(reply);
+    if (!source.includes(wanted.slice(0, 8)) || !source.includes(wanted.slice(-8))) continue;
+    container.innerHTML = renderToStaticMarkup(<MarkdownPreview source={reply} />);
+    const places: [Node, number][] = [];
+    let text = "";
+    const walker = page.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      text += node.textContent;
+      for (let offset = 0; offset < (node.textContent?.length ?? 0); offset++) places.push([node, offset]);
+    }
+    let found = "";
+    const at: number[] = [];
+    for (const { 0: letter, index } of text.replace(LINK_TARGET, (link) => " ".repeat(link.length)).matchAll(LETTER)) {
+      found += letter;
+      for (let unit = 0; unit < letter.length; unit++) at.push(index + unit);
+    }
+    const start = found.indexOf(wanted);
+    if (start < 0) continue;
+    let first = at[start];
+    let last = at[start + wanted.length - 1] + 1;
+    while (first > 0 && PUNCTUATION.test(text[first - 1])) first--;
+    while (last < text.length && PUNCTUATION.test(text[last])) last++;
+    const range = page.createRange();
+    range.setStart(...places[first]);
+    range.setEnd(places[last - 1][0], places[last - 1][1] + 1);
+    // A selection inside one code block or list keeps the elements that make it one.
+    let copy: Node = range.cloneContents();
+    for (let node = range.commonAncestorContainer; node !== container; node = node.parentNode as Node) {
+      if (node.nodeType !== Node.ELEMENT_NODE) continue;
+      const parent = node.cloneNode();
+      parent.appendChild(copy);
+      copy = parent;
+    }
+    container.replaceChildren(copy);
+    // Without a charset, AppKit reads the HTML as Latin-1 and garbles every dash and emoji.
+    const html = `<meta charset="utf-8">${container.innerHTML}`;
+    if (IS_MAC) return invoke("write_clipboard", { text: selection, html });
+    return navigator.clipboard.write([
+      new ClipboardItem({
+        "text/plain": new Blob([selection], { type: "text/plain" }),
+        "text/html": new Blob([html], { type: "text/html" }),
+      }),
+    ]);
+  }
+}
+
 const FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 
 export function TerminalView({
@@ -553,6 +625,12 @@ export function TerminalView({
     terminalRef.current?.focus();
   }
 
+  // Runs after the plain copy, which the copy event or the menu has already made.
+  const copy = () =>
+    void copyReply(sessionId, agentRef.current, terminalRef.current?.getSelection() ?? "").catch((reason) =>
+      console.error("Lite could not copy the reply's formatting:", reason),
+    );
+
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
   // and it only subtracts padding declared on the terminal's own element. Padding here would be
@@ -564,6 +642,7 @@ export function TerminalView({
       data-context-session={sessionId}
       data-context-zoom
       className="relative h-full w-full bg-background p-3 pr-1.5"
+      onCopy={(event) => event.target === terminalRef.current?.textarea && copy()}
       onKeyDownCapture={(event) => {
         if (searchOpen && event.key === "Escape") {
           event.preventDefault();
@@ -604,6 +683,7 @@ export function TerminalView({
             .catch((reason) => console.error("Lite could not paste:", reason));
         }}
       />
+      <button type="button" hidden data-context-copy onClick={copy} />
       <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={scrollToBottom} />
       {searchOpen ? (

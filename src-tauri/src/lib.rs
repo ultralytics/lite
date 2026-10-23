@@ -24,7 +24,7 @@ use tauri_plugin_updater::UpdaterExt;
 use tungstenite::Message;
 
 #[cfg(target_os = "macos")]
-use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+use objc2_app_kit::{NSPasteboard, NSPasteboardTypeHTML, NSPasteboardTypeString};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSObject, NSObjectProtocol, NSString};
 #[cfg(target_os = "macos")]
@@ -1866,20 +1866,19 @@ fn claude_transcript_has_messages(path: &Path) -> bool {
         })
 }
 
+fn claude_project(app: &AppHandle, transcript: &str) -> Option<PathBuf> {
+    fs::read_dir(provider_home(app, "claude").ok()?.join("projects"))
+        .ok()?
+        .flatten()
+        .map(|project| project.path())
+        .find(|project| project.join(transcript).is_file())
+}
+
 // `/resume` leaves the launched id as a marker holding no message and stamps the turns that follow into
 // the conversation it moved to. Returns the id to launch and whether it names one to resume.
 fn claude_launch_id(app: &AppHandle, session_id: &str) -> (String, bool) {
     let transcript = format!("{session_id}.jsonl");
-    let Some(project) = provider_home(app, "claude")
-        .ok()
-        .and_then(|home| fs::read_dir(home.join("projects")).ok())
-        .and_then(|projects| {
-            projects
-                .flatten()
-                .map(|project| project.path())
-                .find(|project| project.join(&transcript).is_file())
-        })
-    else {
+    let Some(project) = claude_project(app, &transcript) else {
         return (session_id.to_owned(), false);
     };
     let marker = project.join(&transcript);
@@ -3323,6 +3322,68 @@ async fn fork_source(
             _ => return Err("This session's CLI cannot fork a conversation.".into()),
         };
         saved.ok_or_else(|| "This session has no conversation to fork yet.".into())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+// The terminal shows a reply only as wrapped, styled cells, so a copy reads its Markdown back from the
+// CLI's own transcript, where Claude saves a reply as a message and Codex as a payload.
+#[tauri::command]
+async fn agent_replies(
+    app: AppHandle,
+    session_id: String,
+    agent: String,
+) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let known = app
+            .state::<ProviderSessions>()
+            .0
+            .lock()
+            .map_err(|error| error.to_string())?
+            .get(&session_id)
+            .cloned();
+        let path = match (agent.as_str(), known) {
+            ("claude", known) => {
+                let (id, _) = claude_launch_id(&app, known.as_deref().unwrap_or(&session_id));
+                let transcript = format!("{id}.jsonl");
+                claude_project(&app, &transcript).map(|project| project.join(transcript))
+            }
+            ("codex", Some(thread)) => codex_requests(
+                &app.state::<CodexServer>(),
+                &[(
+                    4,
+                    "thread/read",
+                    serde_json::json!({"threadId": thread, "includeTurns": false}),
+                )],
+            )?
+            .get(&4)
+            .and_then(|response| response["thread"]["path"].as_str().map(PathBuf::from)),
+            _ => None,
+        };
+        // Newest first, and only as many as the terminal's scrollback can still show to be selected.
+        Ok(path
+            .map(|path| {
+                claude_transcript_lines(&path)
+                    .filter(|line| line.contains("\"role\":\"assistant\""))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+            .iter()
+            .rev()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter_map(|record| {
+                let message = record.get("message").unwrap_or(&record["payload"]);
+                if message["role"] != "assistant" {
+                    return None;
+                }
+                message["content"].as_array().cloned()
+            })
+            .flatten()
+            .filter(|block| block["type"] == "text" || block["type"] == "output_text")
+            .filter_map(|block| block["text"].as_str().map(str::to_owned))
+            .take(200)
+            .collect())
     })
     .await
     .map_err(|error| error.to_string())?
@@ -7786,15 +7847,16 @@ fn startup_ready(app: AppHandle) {
 // Clipboard writes stay synchronous because AppKit pasteboard access belongs on the main thread.
 #[cfg(target_os = "macos")]
 #[tauri::command]
-fn write_clipboard(text: String) -> Result<(), String> {
+fn write_clipboard(text: String, html: Option<String>) -> Result<(), String> {
     let pasteboard = NSPasteboard::generalPasteboard();
-    // SAFETY: AppKit owns this immutable process-lifetime constant.
-    let text_type = unsafe { NSPasteboardTypeString };
+    // SAFETY: AppKit owns these immutable process-lifetime constants.
+    let (text_type, html_type) = unsafe { (NSPasteboardTypeString, NSPasteboardTypeHTML) };
     pasteboard.clearContents();
-    pasteboard
-        .setString_forType(&NSString::from_str(&text), text_type)
-        .then_some(())
-        .ok_or("Could not write to the clipboard".into())
+    (pasteboard.setString_forType(&NSString::from_str(&text), text_type)
+        && html
+            .is_none_or(|html| pasteboard.setString_forType(&NSString::from_str(&html), html_type)))
+    .then_some(())
+    .ok_or("Could not write to the clipboard".into())
 }
 
 // Native editing preserves selection, Undo, and xterm's bracketed-paste handling.
@@ -7938,6 +8000,7 @@ pub fn run() {
             codex_pickers,
             record_codex_session,
             fork_source,
+            agent_replies,
             write_session,
             watch_shell_agent,
             agent_shells,

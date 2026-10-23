@@ -207,7 +207,7 @@ export function MarkdownPreview({
               </a>
             );
           },
-          code({ className, children, ...props }) {
+          code({ node: _node, className, children, ...props }) {
             const language = /language-([\w-]+)/.exec(className ?? "")?.[1];
             const source = String(children).replace(/\n$/, "");
             return language ? (
