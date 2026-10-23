@@ -214,6 +214,7 @@ export function NewSessionDialog({
   remoteSsh,
   sessions,
   recentFolders,
+  onRemoveRecent,
   onOpenChange,
   onCreate,
   onGitHubSignIn,
@@ -227,6 +228,7 @@ export function NewSessionDialog({
   sessions: Session[];
   // The local folders sessions ran in, the latest first, including sessions since closed.
   recentFolders: string[];
+  onRemoveRecent: (path: string) => void;
   onOpenChange: (open: boolean) => void;
   onCreate: (session: Session) => void;
   onGitHubSignIn: () => void;
@@ -847,6 +849,11 @@ export function NewSessionDialog({
     folderRef.current?.focus({ preventScroll: true });
   }
 
+  function removeRecent(place: string) {
+    onRemoveRecent(place);
+    (source === "github" ? searchRef : folderRef).current?.focus({ preventScroll: true });
+  }
+
   const worktreeHere = worktreeOn && (source === "github" || (source === "local" && Boolean(repo)));
   // The worktree a session would get and its branch: what the probe named for a clone that exists, or
   // the first of each beside a clone about to be made.
@@ -1193,61 +1200,78 @@ export function NewSessionDialog({
                             {group.repositories.map((repository) => {
                               const active = Boolean(selected) && fullName(repository) === fullName(selected);
                               const count = running(repository);
+                              const place = repository.local;
                               return (
-                                <button
-                                  key={fullName(repository)}
-                                  type="button"
-                                  ref={active ? reveal : undefined}
-                                  aria-pressed={active}
-                                  disabled={busy}
-                                  onClick={() => {
-                                    setSelectedName(fullName(repository));
-                                    searchRef.current?.focus();
-                                  }}
-                                  className={pickRow(active, confirmed)}
-                                >
-                                  <Tile>
-                                    <GitHubLogomark className="size-4.5" />
-                                  </Tile>
-                                  <span className="flex min-w-0 flex-1 flex-col">
-                                    <span className="flex min-w-0 items-center gap-1 text-sm">
-                                      <span className="truncate">
-                                        <span className="text-muted-foreground">{repository.owner}/</span>
-                                        <span className="font-medium">{repository.name}</span>
-                                      </span>
-                                      {repository.private ? (
-                                        <Lock aria-label="Private" className="size-3 shrink-0 text-muted-foreground" />
-                                      ) : null}
-                                    </span>
-                                    <span className="flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
-                                      {repository.language ? (
-                                        <>
-                                          <span
-                                            className="size-2 rounded-full"
-                                            style={{ background: repository.color ?? "currentColor" }}
+                                <div key={fullName(repository)} className="group/recent relative">
+                                  <button
+                                    type="button"
+                                    ref={active ? reveal : undefined}
+                                    aria-pressed={active}
+                                    disabled={busy}
+                                    onClick={() => {
+                                      setSelectedName(fullName(repository));
+                                      searchRef.current?.focus();
+                                    }}
+                                    className={cn(pickRow(active, confirmed), group.label === "Recent" && "pr-11")}
+                                  >
+                                    <Tile>
+                                      <GitHubLogomark className="size-4.5" />
+                                    </Tile>
+                                    <span className="flex min-w-0 flex-1 flex-col">
+                                      <span className="flex min-w-0 items-center gap-1 text-sm">
+                                        <span className="truncate">
+                                          <span className="text-muted-foreground">{repository.owner}/</span>
+                                          <span className="font-medium">{repository.name}</span>
+                                        </span>
+                                        {repository.private ? (
+                                          <Lock
+                                            aria-label="Private"
+                                            className="size-3 shrink-0 text-muted-foreground"
                                           />
-                                          {repository.language}
-                                        </>
-                                      ) : null}
-                                      {repository.language && repository.pushedAt ? <span>·</span> : null}
-                                      {repository.pushedAt ? relativeAge(repository.pushedAt) : null}
-                                      {repository.local ? (
-                                        <>
-                                          <span>·</span>
-                                          <span className="min-w-0 truncate font-mono" title={repository.local}>
-                                            {tilde(repository.local)}
-                                          </span>
-                                        </>
-                                      ) : null}
+                                        ) : null}
+                                      </span>
+                                      <span className="flex min-w-0 items-center gap-1.5 text-xs whitespace-nowrap text-muted-foreground">
+                                        {repository.language ? (
+                                          <>
+                                            <span
+                                              className="size-2 rounded-full"
+                                              style={{ background: repository.color ?? "currentColor" }}
+                                            />
+                                            {repository.language}
+                                          </>
+                                        ) : null}
+                                        {repository.language && repository.pushedAt ? <span>·</span> : null}
+                                        {repository.pushedAt ? relativeAge(repository.pushedAt) : null}
+                                        {repository.local ? (
+                                          <>
+                                            <span>·</span>
+                                            <span className="min-w-0 truncate font-mono" title={repository.local}>
+                                              {tilde(repository.local)}
+                                            </span>
+                                          </>
+                                        ) : null}
+                                      </span>
                                     </span>
-                                  </span>
-                                  {count ? (
-                                    <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] text-success">
-                                      <span className="size-1.5 rounded-full bg-success" />
-                                      {count} running
-                                    </span>
+                                    {count ? (
+                                      <span className="flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] text-success">
+                                        <span className="size-1.5 rounded-full bg-success" />
+                                        {count} running
+                                      </span>
+                                    ) : null}
+                                  </button>
+                                  {group.label === "Recent" && place ? (
+                                    <ActionIconButton
+                                      tooltip="Remove from Recent"
+                                      aria-label={`Remove ${fullName(repository)} from Recent`}
+                                      disabled={busy}
+                                      onClick={() => removeRecent(place)}
+                                      className="absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-hover/recent:opacity-100 group-focus-within/recent:opacity-100 [@media(hover:none)]:opacity-100"
+                                      size="icon-sm"
+                                    >
+                                      <X />
+                                    </ActionIconButton>
                                   ) : null}
-                                </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -1358,35 +1382,46 @@ export function NewSessionDialog({
                         const active = place === path.trim();
                         const remoteName = probe?.repository?.remote?.replace(/^https:\/\/[^/]+\//, "");
                         return (
-                          <button
-                            key={place}
-                            type="button"
-                            ref={active ? reveal : undefined}
-                            aria-pressed={active}
-                            disabled={busy}
-                            onClick={() => pickFolder(place)}
-                            className={pickRow(active, confirmed)}
-                          >
-                            <Tile>
-                              {/* A GitHub clone, any other repository, or a plain folder. */}
-                              {probe?.repository?.remote?.startsWith("https://github.com/") ? (
-                                <GitHubLogomark className="size-4.5" />
-                              ) : probe?.repository ? (
-                                <GitLogomark className="size-4.5" />
-                              ) : (
-                                <FolderOpen className="size-4.5 text-muted-foreground" />
-                              )}
-                            </Tile>
-                            <span className="flex min-w-0 flex-1 flex-col">
-                              <span className="truncate text-sm font-medium">{folderName(place) || place}</span>
-                              <span className="truncate font-mono text-xs text-muted-foreground">{tilde(place)}</span>
-                            </span>
-                            {remoteName ? (
-                              <span className="max-w-40 shrink-0 truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
-                                {remoteName}
+                          <div key={place} className="group/recent relative">
+                            <button
+                              type="button"
+                              ref={active ? reveal : undefined}
+                              aria-pressed={active}
+                              disabled={busy}
+                              onClick={() => pickFolder(place)}
+                              className={cn(pickRow(active, confirmed), "pr-11")}
+                            >
+                              <Tile>
+                                {/* A GitHub clone, any other repository, or a plain folder. */}
+                                {probe?.repository?.remote?.startsWith("https://github.com/") ? (
+                                  <GitHubLogomark className="size-4.5" />
+                                ) : probe?.repository ? (
+                                  <GitLogomark className="size-4.5" />
+                                ) : (
+                                  <FolderOpen className="size-4.5 text-muted-foreground" />
+                                )}
+                              </Tile>
+                              <span className="flex min-w-0 flex-1 flex-col">
+                                <span className="truncate text-sm font-medium">{folderName(place) || place}</span>
+                                <span className="truncate font-mono text-xs text-muted-foreground">{tilde(place)}</span>
                               </span>
-                            ) : null}
-                          </button>
+                              {remoteName ? (
+                                <span className="max-w-40 shrink-0 truncate rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">
+                                  {remoteName}
+                                </span>
+                              ) : null}
+                            </button>
+                            <ActionIconButton
+                              tooltip="Remove from Recent"
+                              aria-label={`Remove ${folderName(place) || place} from Recent`}
+                              disabled={busy}
+                              onClick={() => removeRecent(place)}
+                              className="absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-hover/recent:opacity-100 group-focus-within/recent:opacity-100 [@media(hover:none)]:opacity-100"
+                              size="icon-sm"
+                            >
+                              <X />
+                            </ActionIconButton>
+                          </div>
                         );
                       })}
                     </div>
