@@ -1266,10 +1266,10 @@ export function NewSessionDialog({
                                       aria-label={`Remove ${fullName(repository)} from Recent`}
                                       disabled={busy}
                                       onClick={() => removeRecent(place)}
-                                      className="absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-hover/recent:opacity-100 group-focus-within/recent:opacity-100 [@media(hover:none)]:opacity-100"
+                                      className="absolute inset-y-0 right-2 my-auto opacity-0 group-hover/recent:opacity-100 group-focus-within/recent:opacity-100 [@media(hover:none)]:opacity-100"
                                       size="icon-sm"
                                     >
-                                      <X />
+                                      <X aria-hidden="true" />
                                     </ActionIconButton>
                                   ) : null}
                                 </div>
@@ -1418,10 +1418,10 @@ export function NewSessionDialog({
                               aria-label={`Remove ${folderName(place) || place} from Recent`}
                               disabled={busy}
                               onClick={() => removeRecent(place)}
-                              className="absolute top-1/2 right-2 -translate-y-1/2 opacity-0 group-hover/recent:opacity-100 group-focus-within/recent:opacity-100 [@media(hover:none)]:opacity-100"
+                              className="absolute inset-y-0 right-2 my-auto opacity-0 group-hover/recent:opacity-100 group-focus-within/recent:opacity-100 [@media(hover:none)]:opacity-100"
                               size="icon-sm"
                             >
-                              <X />
+                              <X aria-hidden="true" />
                             </ActionIconButton>
                           </div>
                         );
