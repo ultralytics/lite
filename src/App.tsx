@@ -7,6 +7,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   Archive,
+  ArchiveRestore,
   ArrowDown,
   ArrowDownToLine,
   ArrowUp,
@@ -555,7 +556,7 @@ function AppContextMenu({
         ) : null}
         {session ? (
           <>
-            {session.id !== selectedId || !session.running ? (
+            {!session.archivedAt && (session.id !== selectedId || !session.running) ? (
               <ContextMenuItem onClick={() => onSelectSession(session)}>
                 <Play />
                 {session.running ? "Open session" : "Resume session"}
@@ -582,10 +583,13 @@ function AppContextMenu({
                 Restart
               </ContextMenuItem>
             )}
-            {session.archivedAt || session.mode ? null : (
-              <ContextMenuItem disabled={startingIds.has(session.id)} onClick={() => onArchiveSession(session)}>
-                <Archive />
-                Archive
+            {session.mode ? null : (
+              <ContextMenuItem
+                disabled={startingIds.has(session.id)}
+                onClick={() => (session.archivedAt ? onSelectSession(session) : onArchiveSession(session))}
+              >
+                {session.archivedAt ? <ArchiveRestore /> : <Archive />}
+                {session.archivedAt ? "Restore" : "Archive"}
               </ContextMenuItem>
             )}
             <ContextMenuItem
