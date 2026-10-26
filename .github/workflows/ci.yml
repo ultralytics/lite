@@ -19,7 +19,7 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -42,9 +42,18 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Download Linux packages
+        if: runner.os == 'Linux'
+        uses: ultralytics/actions/retry@main
+        with:
+          retries: 3
+          timeout_minutes: 12
+          run: |
+            sudo timeout --kill-after=10s 10m bash -e -c 'apt-get update --error-on=any && apt-get install --download-only -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf'
+
       - name: Install Linux packages
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get install --no-download -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install dependencies
         run: bun ci
