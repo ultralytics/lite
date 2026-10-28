@@ -1365,6 +1365,8 @@ function SessionRow({
   const drop = useRef<{ row: HTMLElement; after: boolean } | undefined>(undefined);
   const shifted = useRef<HTMLElement[]>([]);
   const dragging = useRef(false);
+  const scrollFrame = useRef(0);
+  useEffect(() => () => window.cancelAnimationFrame(scrollFrame.current), []);
 
   function saveName(value: string) {
     const next = value.trim();
@@ -1383,6 +1385,7 @@ function SessionRow({
   }
 
   function clearDrag(row: HTMLElement) {
+    window.cancelAnimationFrame(scrollFrame.current);
     delete document.documentElement.dataset.sessionDragging;
     for (const property of [
       "background-color",
@@ -1395,6 +1398,72 @@ function SessionRow({
     ])
       row.style.removeProperty(property);
     clearDrop();
+  }
+
+  function moveDrag(clientY: number) {
+    const pointer = drag.current;
+    if (!pointer) return;
+    window.cancelAnimationFrame(scrollFrame.current);
+    const bounds = pointer.viewport.getBoundingClientRect();
+    const scrollTop = pointer.viewport.scrollTop;
+    pointer.viewport.scrollTop += clientY < bounds.top + 32 ? -12 : clientY > bounds.bottom - 32 ? 12 : 0;
+    if (pointer.viewport.scrollTop !== scrollTop)
+      scrollFrame.current = window.requestAnimationFrame(() => moveDrag(clientY));
+    const scale = pointer.row.getBoundingClientRect().height / pointer.row.offsetHeight;
+    pointer.row.style.transform = `translate3d(0, ${(clientY - pointer.y + pointer.viewport.scrollTop - pointer.scrollTop) / scale}px, 0)`;
+    const list = pointer.row.closest("[data-session-list]");
+    // The archive takes a drop anywhere on it, collapsed or empty, and archives the session.
+    const archive = onArchive && list?.querySelector<HTMLElement>("[data-archive-drop]");
+    if (archive && clientY >= archive.getBoundingClientRect().top) {
+      if (drop.current?.row === archive) return;
+      clearDrop();
+      archive.dataset.drop = "archive";
+      drop.current = { row: archive, after: false };
+      return;
+    }
+    // Reordering stays on the same side of the archive boundary.
+    const rows = [
+      ...((groupBounded ? pointer.row.parentElement : list)?.querySelectorAll<HTMLElement>(
+        `[data-context-session]${session.archivedAt ? "[data-archived]" : ":not([data-archived])"}`,
+      ) ?? []),
+    ];
+    const before = rows.find((row) => {
+      const rect = row.getBoundingClientRect();
+      return row !== pointer.row && clientY < rect.top + rect.height / 2;
+    });
+    const last = rows[rows.length - 1];
+    let row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
+    let after = !before;
+    if (!row) return clearDrop();
+    if (row.parentElement !== pointer.row.parentElement) {
+      const targetRows = [...(row.parentElement?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
+      const targetRect = row.parentElement?.getBoundingClientRect();
+      after = Boolean(targetRect && clientY >= targetRect.top + targetRect.height / 2);
+      row = targetRows[after ? targetRows.length - 1 : 0];
+    }
+    if (drop.current?.row === row && drop.current?.after === after) return;
+    const sourceIndex = rows.indexOf(pointer.row);
+    const targetIndex = rows.indexOf(row);
+    const start = sourceIndex < targetIndex ? sourceIndex + 1 : targetIndex + Number(after);
+    const end = sourceIndex < targetIndex ? targetIndex + Number(after) : sourceIndex;
+    const shifts: [HTMLElement, number][] = [];
+    // Group headers do not move during a drag, so cross-group drops use the insertion marker
+    // without pretending the rows can close a gap that includes a header.
+    if (pointer.row.parentElement === row.parentElement) {
+      for (let index = start; index < end; index++) {
+        const shiftedRow = rows[index];
+        const neighbor = rows[index + (sourceIndex < targetIndex ? -1 : 1)];
+        shifts.push([shiftedRow, neighbor.offsetTop - shiftedRow.offsetTop]);
+      }
+    }
+    clearDrop();
+    row.dataset.drop = after ? "after" : "before";
+    drop.current = { row, after };
+    for (const [shiftedRow, distance] of shifts) {
+      shiftedRow.dataset.shifted = "";
+      shiftedRow.style.transform = `translate3d(0, ${distance}px, 0)`;
+      shifted.current.push(shiftedRow);
+    }
   }
 
   return (
@@ -1445,64 +1514,7 @@ function SessionRow({
           });
         }
         event.preventDefault();
-        const bounds = pointer.viewport.getBoundingClientRect();
-        pointer.viewport.scrollTop +=
-          event.clientY < bounds.top + 32 ? -12 : event.clientY > bounds.bottom - 32 ? 12 : 0;
-        const scale = pointer.row.getBoundingClientRect().height / pointer.row.offsetHeight;
-        pointer.row.style.transform = `translate3d(0, ${(event.clientY - pointer.y + pointer.viewport.scrollTop - pointer.scrollTop) / scale}px, 0)`;
-        const list = pointer.row.closest("[data-session-list]");
-        // The archive takes a drop anywhere on it, collapsed or empty, and archives the session.
-        const archive = onArchive && list?.querySelector<HTMLElement>("[data-archive-drop]");
-        if (archive && event.clientY >= archive.getBoundingClientRect().top) {
-          if (drop.current?.row === archive) return;
-          clearDrop();
-          archive.dataset.drop = "archive";
-          drop.current = { row: archive, after: false };
-          return;
-        }
-        // Reordering stays on the same side of the archive boundary.
-        const rows = [
-          ...((groupBounded ? pointer.row.parentElement : list)?.querySelectorAll<HTMLElement>(
-            `[data-context-session]${session.archivedAt ? "[data-archived]" : ":not([data-archived])"}`,
-          ) ?? []),
-        ];
-        const before = rows.find((row) => {
-          const rect = row.getBoundingClientRect();
-          return row !== pointer.row && event.clientY < rect.top + rect.height / 2;
-        });
-        const last = rows[rows.length - 1];
-        let row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
-        let after = !before;
-        if (!row) return clearDrop();
-        if (row.parentElement !== pointer.row.parentElement) {
-          const targetRows = [...(row.parentElement?.querySelectorAll<HTMLElement>("[data-context-session]") ?? [])];
-          const targetRect = row.parentElement?.getBoundingClientRect();
-          after = Boolean(targetRect && event.clientY >= targetRect.top + targetRect.height / 2);
-          row = targetRows[after ? targetRows.length - 1 : 0];
-        }
-        if (drop.current?.row === row && drop.current?.after === after) return;
-        const sourceIndex = rows.indexOf(pointer.row);
-        const targetIndex = rows.indexOf(row);
-        const start = sourceIndex < targetIndex ? sourceIndex + 1 : targetIndex + Number(after);
-        const end = sourceIndex < targetIndex ? targetIndex + Number(after) : sourceIndex;
-        const shifts: [HTMLElement, number][] = [];
-        // Group headers do not move during a drag, so cross-group drops use the insertion marker
-        // without pretending the rows can close a gap that includes a header.
-        if (pointer.row.parentElement === row.parentElement) {
-          for (let index = start; index < end; index++) {
-            const shiftedRow = rows[index];
-            const neighbor = rows[index + (sourceIndex < targetIndex ? -1 : 1)];
-            shifts.push([shiftedRow, neighbor.offsetTop - shiftedRow.offsetTop]);
-          }
-        }
-        clearDrop();
-        row.dataset.drop = after ? "after" : "before";
-        drop.current = { row, after };
-        for (const [shiftedRow, distance] of shifts) {
-          shiftedRow.dataset.shifted = "";
-          shiftedRow.style.transform = `translate3d(0, ${distance}px, 0)`;
-          shifted.current.push(shiftedRow);
-        }
+        moveDrag(event.clientY);
       }}
       onPointerUp={(event) => {
         const pointer = drag.current;
