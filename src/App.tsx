@@ -1913,11 +1913,12 @@ function App() {
   notificationsRef.current = notifications;
   closeRef.current = closeSession;
   openRef.current = (session) => {
-    // Opening an archived session is how it comes back: it rejoins the list and resumes like any other.
+    // Opening an archived session puts it first in manual order and resumes it like any other.
     if (session.archivedAt)
-      setSessions((current) =>
-        current.map((item) => (item.id === session.id ? { ...item, archivedAt: undefined } : item)),
-      );
+      setSessions((current) => [
+        ...current.filter((item) => item.id === session.id).map((item) => ({ ...item, archivedAt: undefined })),
+        ...current.filter((item) => item.id !== session.id),
+      ]);
     setRecentFolders((folders) => rememberFolder(folders, session));
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
     clearAttention(session.id);
@@ -3594,7 +3595,7 @@ function App() {
                                       starting={startingIds.has(session.id)}
                                       working={working.has(session.id)}
                                       renaming={renamingId === session.id}
-                                      groupBounded={archive || sessionView.grouping === "state"}
+                                      groupBounded={sessionView.grouping === "state"}
                                       onSelect={() => openRef.current(session)}
                                       onRename={(name) =>
                                         setSessions((current) =>
