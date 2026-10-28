@@ -822,6 +822,7 @@ function sessionGroupPath(session: Session, grouping: SessionGrouping) {
 }
 
 function sessionGroupKey(session: Session, grouping: SessionGrouping, attention: Set<string>, working: Set<string>) {
+  if (session.archivedAt) return "archived";
   if (grouping === "repository" || grouping === "directory")
     return hostPath(session, sessionGroupPath(session, grouping));
   if (grouping === "state") {
@@ -870,7 +871,7 @@ function sortSessions(sessions: Session[], sort: SessionSort) {
       const order = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
       return sort === "name-asc" ? order : -order;
     }
-    const order = (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    const order = (b.archivedAt ?? b.createdAt ?? 0) - (a.archivedAt ?? a.createdAt ?? 0);
     return sort === "newest" ? order : -order;
   });
 }
@@ -1331,7 +1332,6 @@ function SessionRow({
   starting,
   working,
   renaming,
-  reorderable,
   groupBounded,
   onSelect,
   onRename,
@@ -1349,7 +1349,6 @@ function SessionRow({
   starting: boolean;
   working: boolean;
   renaming: boolean;
-  reorderable: boolean;
   groupBounded: boolean;
   onSelect: () => void;
   onRename: (name: string) => void;
@@ -1360,7 +1359,9 @@ function SessionRow({
   onArchive?: () => void;
   onClose: () => void;
 }) {
-  const drag = useRef<{ id: number; x: number; y: number; row: HTMLElement } | undefined>(undefined);
+  const drag = useRef<
+    { id: number; x: number; y: number; row: HTMLElement; viewport: HTMLElement; scrollTop: number } | undefined
+  >(undefined);
   const drop = useRef<{ row: HTMLElement; after: boolean } | undefined>(undefined);
   const shifted = useRef<HTMLElement[]>([]);
   const dragging = useRef(false);
@@ -1410,7 +1411,6 @@ function SessionRow({
       }}
       onPointerDown={(event) => {
         if (
-          !reorderable ||
           event.pointerType === "touch" ||
           event.button !== 0 ||
           renaming ||
@@ -1418,7 +1418,15 @@ function SessionRow({
         )
           return;
         event.currentTarget.setPointerCapture(event.pointerId);
-        drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, row: event.currentTarget };
+        const viewport = event.currentTarget.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+        drag.current = {
+          id: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          row: event.currentTarget,
+          viewport,
+          scrollTop: viewport.scrollTop,
+        };
       }}
       onPointerMove={(event) => {
         const pointer = drag.current;
@@ -1437,7 +1445,11 @@ function SessionRow({
           });
         }
         event.preventDefault();
-        pointer.row.style.transform = `translate3d(0, ${event.clientY - pointer.y}px, 0)`;
+        const bounds = pointer.viewport.getBoundingClientRect();
+        pointer.viewport.scrollTop +=
+          event.clientY < bounds.top + 32 ? -12 : event.clientY > bounds.bottom - 32 ? 12 : 0;
+        const scale = pointer.row.getBoundingClientRect().height / pointer.row.offsetHeight;
+        pointer.row.style.transform = `translate3d(0, ${(event.clientY - pointer.y + pointer.viewport.scrollTop - pointer.scrollTop) / scale}px, 0)`;
         const list = pointer.row.closest("[data-session-list]");
         // The archive takes a drop anywhere on it, collapsed or empty, and archives the session.
         const archive = onArchive && list?.querySelector<HTMLElement>("[data-archive-drop]");
@@ -1448,15 +1460,16 @@ function SessionRow({
           drop.current = { row: archive, after: false };
           return;
         }
-        // Archived rows keep their own order, so a drag never lands among them.
+        // Reordering stays on the same side of the archive boundary.
         const rows = [
           ...((groupBounded ? pointer.row.parentElement : list)?.querySelectorAll<HTMLElement>(
-            "[data-context-session]:not([data-archived])",
+            `[data-context-session]${session.archivedAt ? "[data-archived]" : ":not([data-archived])"}`,
           ) ?? []),
         ];
-        const before = rows.find(
-          (row) => row !== pointer.row && event.clientY < row.getBoundingClientRect().top + row.offsetHeight / 2,
-        );
+        const before = rows.find((row) => {
+          const rect = row.getBoundingClientRect();
+          return row !== pointer.row && event.clientY < rect.top + rect.height / 2;
+        });
         const last = rows[rows.length - 1];
         let row = before ?? (last === pointer.row ? rows[rows.length - 2] : last);
         let after = !before;
@@ -1513,7 +1526,7 @@ function SessionRow({
       }}
       // Never wrapped: Item wraps by default, and a row narrow enough to push the buttons onto a second
       // line takes the tooltip's anchor out from under the pointer that opened it.
-      className={`relative cursor-pointer flex-nowrap transition-[color,background-color,opacity] data-[shifted]:transition-transform data-[shifted]:duration-150 data-[shifted]:ease-out motion-reduce:data-[shifted]:transition-none after:pointer-events-none after:absolute after:inset-x-1 after:z-10 after:hidden after:h-0.5 after:rounded-full after:bg-primary data-[drop=before]:after:-top-0.5 data-[drop=before]:after:block data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:block active:opacity-70 ${reorderable ? "select-none active:cursor-grabbing" : ""} ${active ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground dark:border-transparent" : session.archivedAt ? "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground" : "hover:bg-sidebar-accent/60"}`}
+      className={`relative cursor-pointer select-none flex-nowrap active:cursor-grabbing transition-[color,background-color,opacity] data-[shifted]:transition-transform data-[shifted]:duration-150 data-[shifted]:ease-out motion-reduce:data-[shifted]:transition-none after:pointer-events-none after:absolute after:inset-x-1 after:z-10 after:hidden after:h-0.5 after:rounded-full after:bg-primary data-[drop=before]:after:-top-0.5 data-[drop=before]:after:block data-[drop=after]:after:-bottom-0.5 data-[drop=after]:after:block active:opacity-70 ${active ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground dark:border-transparent" : session.archivedAt ? "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-foreground" : "hover:bg-sidebar-accent/60"}`}
     >
       <ItemMedia>
         <SessionBadge
@@ -1556,7 +1569,7 @@ function SessionRow({
                 onRenamingChange(true);
               }}
               onKeyDown={(event) => {
-                if (!reorderable || !event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+                if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
                 event.preventDefault();
                 onMove(event.key === "ArrowUp" ? -1 : 1);
               }}
@@ -1852,23 +1865,23 @@ function App() {
     );
   }, [sessions, query]);
   const attentionIds = useMemo(() => new Set(attention), [attention]);
-  const sortedVisible = useMemo(() => {
-    return sortSessions(
-      visible.filter((session) => !session.archivedAt),
-      sessionView.sort,
-    );
-  }, [sessionView.sort, visible]);
+  const sortedVisible = useMemo(() => sortSessions(visible, sessionView.sort), [sessionView.sort, visible]);
   const visibleGroups = useMemo(
-    () => groupSessions(sortedVisible, sessionView.grouping, attentionIds, working),
+    () =>
+      groupSessions(
+        sortedVisible.filter((session) => !session.archivedAt),
+        sessionView.grouping,
+        attentionIds,
+        working,
+      ),
     [attentionIds, sessionView.grouping, sortedVisible, working],
   );
-  // The archive follows the groups whatever the grouping, most recently archived first. It is left out
+  // The archive follows the groups and shares their sort order. It is left out
   // of what the number and cycling shortcuts count, since reaching an archived row brings it back.
   const listedGroups = useMemo(() => {
-    const archived = visible.filter((session) => session.archivedAt);
-    archived.sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0));
+    const archived = sortedVisible.filter((session) => session.archivedAt);
     return [...visibleGroups, { name: "Archived", key: "archived", title: "", sessions: archived }];
-  }, [visible, visibleGroups]);
+  }, [sortedVisible, visibleGroups]);
   const selectedGroupKey = selected
     ? `${sessionView.grouping}:${sessionGroupKey(selected, sessionView.grouping, attentionIds, working)}`
     : "";
@@ -2638,12 +2651,16 @@ function App() {
       setSessionView(view);
     }
     setSessions((current) => {
-      const ordered = groupSessions(
-        sortSessions(current, sessionView.sort),
-        sessionView.grouping,
-        attentionIds,
-        working,
-      ).flatMap((group) => group.sessions);
+      const sorted = sortSessions(current, sessionView.sort);
+      const ordered = [
+        ...groupSessions(
+          sorted.filter((session) => !session.archivedAt),
+          sessionView.grouping,
+          attentionIds,
+          working,
+        ).flatMap((group) => group.sessions),
+        ...sorted.filter((session) => session.archivedAt),
+      ];
       const draggedIndex = ordered.findIndex((session) => session.id === draggedId);
       const targetIndex = ordered.findIndex((session) => session.id === targetId);
       if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return current;
@@ -3042,9 +3059,12 @@ function App() {
     untrack(session.id);
     void invoke("stop_session", { sessionId: session.id }).then(
       () => {
-        setSessions((current) =>
-          current.map((item) => (item.id === session.id ? { ...item, running: false, archivedAt: Date.now() } : item)),
-        );
+        setSessions((current) => [
+          ...current
+            .filter((item) => item.id === session.id)
+            .map((item) => ({ ...item, running: false, archivedAt: Date.now() })),
+          ...current.filter((item) => item.id !== session.id),
+        ]);
         const next = sessionsRef.current.find((item) => item.id !== session.id && !item.archivedAt)?.id ?? "";
         setSelectedId((current) => (current === session.id ? next : current));
         clearOutput(session.id);
@@ -3518,9 +3538,7 @@ function App() {
                               key={group.key}
                               data-archive-drop={archive ? "" : undefined}
                               className={
-                                archive
-                                  ? "sticky bottom-0 mt-auto border-t bg-sidebar pt-2 data-[drop=archive]:z-30 data-[drop=archive]:bg-sidebar-accent"
-                                  : undefined
+                                archive ? "mt-auto border-t pt-2 data-[drop=archive]:bg-sidebar-accent" : undefined
                               }
                             >
                               {sessionView.grouping === "none" && !archive ? null : (
@@ -3560,7 +3578,7 @@ function App() {
                                 </button>
                               )}
                               {open ? (
-                                <div className={archive ? "max-h-[40vh] space-y-0.5 overflow-y-auto" : "space-y-0.5"}>
+                                <div className="space-y-0.5">
                                   {archive && !group.sessions.length && !query.trim() ? (
                                     <p className="px-2 py-1.5 text-xs text-muted-foreground">
                                       Drag a session here to archive it.
@@ -3576,8 +3594,7 @@ function App() {
                                       starting={startingIds.has(session.id)}
                                       working={working.has(session.id)}
                                       renaming={renamingId === session.id}
-                                      reorderable={!archive}
-                                      groupBounded={sessionView.grouping === "state"}
+                                      groupBounded={archive || sessionView.grouping === "state"}
                                       onSelect={() => openRef.current(session)}
                                       onRename={(name) =>
                                         setSessions((current) =>
@@ -3589,8 +3606,9 @@ function App() {
                                       onRenamingChange={(renaming) => setRenamingId(renaming ? session.id : "")}
                                       onReorder={(targetId, after) => reorderSession(session.id, targetId, after)}
                                       onMove={(direction) => {
-                                        const index = displayed.findIndex((item) => item.id === session.id);
-                                        const target = displayed[index + direction];
+                                        const rows = archive ? group.sessions : displayed;
+                                        const index = rows.findIndex((item) => item.id === session.id);
+                                        const target = rows[index + direction];
                                         if (target) reorderSession(session.id, target.id, direction > 0);
                                       }}
                                       onRestart={archive ? undefined : () => void restartSession(session)}
