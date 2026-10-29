@@ -78,8 +78,9 @@ chmod +x Lite_*_linux_amd64.AppImage
 - [Codex](https://learn.chatgpt.com/docs/codex/cli)
 - [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)
 - [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) —— Windows 还需要安装 Git for Windows
+- [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/)
 
-在 Lite 中打开每个 provider 并完成一次常规登录。每个 CLI 都把凭据保存在自己的本地存储中，因此之后的 Lite 会话会复用同一份认证信息。Lite 从不读取或复制这些存储。当某个 CLI 缺失时，新建会话对话框会提示你，并给出对应的安装指引。
+在 Lite 中打开每个 provider 并完成一次常规登录。每个 CLI 都把凭据保存在自己的本地存储中，因此之后的 Lite 会话会复用同一份认证信息。Lite 从不读取或复制这些存储。当某个 CLI 缺失时，新建会话对话框会为你安装它。
 
 Lite 使用 Antigravity CLI 取代 Gemini CLI。Gemini CLI 会话仍由 Gemini CLI 保存；Antigravity 会创建自己的会话。
 
