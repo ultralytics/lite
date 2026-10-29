@@ -60,7 +60,7 @@ body:
         Please include:
         - OS (e.g., macOS 26.0, Windows 11, Ubuntu 24.04)
         - Lite version (e.g., 0.0.33)
-        - Provider CLI and version (e.g., claude 2.1.0, codex-cli 0.146.0, gemini 0.9.0)
+        - Provider CLI and version (e.g., claude 2.1.0, codex-cli 0.146.0, agy 1.4.10)
         - Any relevant environment details
 
         Example:

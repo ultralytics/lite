@@ -150,6 +150,7 @@ export function ProviderAuthDescription({
 }) {
   const hint = status?.keyHint;
   if (!status) return "Checking…";
+  if (provider.agent === "gemini" && !hint) return "Sign-in managed by Antigravity";
   if (!hint && !status.cliAuthMethod) return "Not set up";
   return (
     <span className="flex items-center gap-1.5">

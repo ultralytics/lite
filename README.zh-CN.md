@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI、[DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)、[Z.ai](https://docs.z.ai/devpack/tool/codex)、[小米 MiMo](https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration) 或 [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli) 的 [Codex](https://learn.chatgpt.com/docs/codex/cli)、[Gemini CLI](https://google-gemini.github.io/gemini-cli/)、[Kimi Code](https://www.kimi.com/code)、[Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
+Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claude.com/docs/en/overview)、基于 OpenAI、[DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex)、[Z.ai](https://docs.z.ai/devpack/tool/codex)、[小米 MiMo](https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration) 或 [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli) 的 [Codex](https://learn.chatgpt.com/docs/codex/cli)、[Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)、[Kimi Code](https://www.kimi.com/code)、[Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/) 以及你的 shell。它把 agent 会话、文件和 Git 上下文放在一起，同时不做仓库索引、不采集遥测数据，也不依赖任何云服务。
 
 <div align="center">
   <br>
@@ -21,7 +21,7 @@ Lite 是一个快速的本地工作区，支持 [Claude Code](https://code.claud
 
 ## ✨ 功能
 
-- 并排运行 Claude Code、Codex、Gemini CLI、Kimi Code、Qwen Code 和 shell 会话
+- 并排运行 Claude Code、Codex、Antigravity CLI、Kimi Code、Qwen Code 和 shell 会话
 - 通过 Codex 使用 DeepSeek V4.1 Flash、Z.ai GLM-5.3、小米 MiMo-V2.6 或 OpenRouter，而无需更改默认的 Codex provider
 - 重启或关闭后有八秒钟可以撤销，之后 Lite 才会停止终端
 - 归档会话即可停止它并释放内存，之后在列表底部随时恢复
@@ -76,9 +76,12 @@ chmod +x Lite_*_linux_amd64.AppImage
 
 - [Claude Code](https://code.claude.com/docs/en/setup)
 - [Codex](https://learn.chatgpt.com/docs/codex/cli)
+- [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)
 - [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) —— Windows 还需要安装 Git for Windows
 
 在 Lite 中打开每个 provider 并完成一次常规登录。每个 CLI 都把凭据保存在自己的本地存储中，因此之后的 Lite 会话会复用同一份认证信息。Lite 从不读取或复制这些存储。当某个 CLI 缺失时，新建会话对话框会提示你，并给出对应的安装指引。
+
+Lite 使用 Antigravity CLI 取代 Gemini CLI。Gemini CLI 会话仍由 Gemini CLI 保存；Antigravity 会创建自己的会话。
 
 如果你更愿意使用 API key，打开 **设置 › API Keys**，为每个 provider 粘贴一个 key。Lite 会把它们保存在自己数据目录下仅属主可读的文件中——与 Codex 和 Kimi 保存自身凭据的方式一致——并通过该 CLI 本来就会读取的环境变量（`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`ZAI_API_KEY`、`MIMO_API_KEY`、`OPENROUTER_API_KEY`、`GEMINI_API_KEY` 或 `MOONSHOT_API_KEY`）把 key 传给会话。Qwen Code 自行负责其区域 provider 与认证设置。不会写入任何 provider 配置文件；删除 key 会在下次启动时生效；应用更新也不会丢失该文件，因为更新程序替换的是应用包而不是你的数据。
 

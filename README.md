@@ -11,7 +11,7 @@
 [![Ultralytics Forums](https://img.shields.io/discourse/users?server=https%3A%2F%2Fcommunity.ultralytics.com&logo=discourse&label=Forums&color=blue)](https://community.ultralytics.com)
 [![Ultralytics Reddit](https://img.shields.io/reddit/subreddit-subscribers/ultralytics?style=flat&logo=reddit&logoColor=white&label=Reddit&color=blue)](https://reddit.com/r/ultralytics)
 
-Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli) on OpenAI, [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), [Z.ai](https://docs.z.ai/devpack/tool/codex), [Xiaomi MiMo](https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration), or [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli), [Gemini CLI](https://google-gemini.github.io/gemini-cli/), [Kimi Code](https://www.kimi.com/code), [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
+Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://learn.chatgpt.com/docs/codex/cli) on OpenAI, [DeepSeek](https://api-docs.deepseek.com/quick_start/agent_integrations/codex), [Z.ai](https://docs.z.ai/devpack/tool/codex), [Xiaomi MiMo](https://mimo.mi.com/docs/en-US/tokenplan/integration/codex-configuration), or [OpenRouter](https://openrouter.ai/docs/cookbook/coding-agents/codex-cli), [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli), [Kimi Code](https://www.kimi.com/code), [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/), and your shell. Keep agent sessions, files, and Git context together without repository indexing, telemetry, or a cloud service.
 
 <div align="center">
   <br>
@@ -21,7 +21,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 
 ## ✨ Features
 
-- Run Claude Code, Codex, Gemini CLI, Kimi Code, Qwen Code, and shell sessions side by side
+- Run Claude Code, Codex, Antigravity CLI, Kimi Code, Qwen Code, and shell sessions side by side
 - Run Codex against DeepSeek V4.1 Flash, Z.ai GLM-5.3, Xiaomi MiMo-V2.6, or OpenRouter, without changing your default Codex provider
 - Resume session tabs automatically after closing Lite or restarting your computer
 - Undo a restart or close for eight seconds before Lite stops the terminal
@@ -78,11 +78,13 @@ Install the provider CLIs you want to use:
 
 - [Claude Code](https://code.claude.com/docs/en/setup)
 - [Codex](https://learn.chatgpt.com/docs/codex/cli)
-- [Gemini CLI](https://google-gemini.github.io/gemini-cli/)
+- [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)
 - [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) — Windows also needs Git for Windows
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/)
 
 Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
+
+Lite uses Antigravity CLI in place of Gemini CLI. Gemini CLI conversations remain in Gemini CLI; Antigravity starts its own conversations.
 
 If you would rather use API keys, open **Settings › API Keys** and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `MIMO_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
