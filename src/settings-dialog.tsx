@@ -540,6 +540,8 @@ export function SettingsDialog({
                       description={
                         !auth ? (
                           "Checking…"
+                        ) : option.agent === "gemini" ? (
+                          "Managed by Antigravity"
                         ) : signedIn ? (
                           <span className="flex items-center gap-1.5">
                             <Check className="size-3.5 text-success" />
@@ -551,7 +553,7 @@ export function SettingsDialog({
                       }
                     >
                       <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
-                        {signedIn ? "Sign in again" : "Sign in"}
+                        {option.agent === "gemini" ? "Open" : signedIn ? "Sign in again" : "Sign in"}
                       </Button>
                     </Setting>
                   );

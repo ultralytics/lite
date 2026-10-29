@@ -1572,14 +1572,6 @@ fn ssh_native_session_state(
             "home=${{{variable}:-$HOME/{fallback}}}; file=$(find \"$home/projects\" -type f -name {} -print -quit 2>/dev/null); if test -z \"$file\"; then printf 0; elif grep -m 1 -E -q -- '\"type\"[[:space:]]*:[[:space:]]*\"(user|assistant|system)\"' \"$file\"; then printf 2; else printf 1; fi",
             posix_quote(&format!("{id}.jsonl")),
         ),
-        "gemini" => format!(
-            "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/tmp\" -type f -path {} -exec grep -m 1 -F -q -- {} {{}} \\; -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
-            posix_quote(&format!(
-                "*/chats/*-{}.jsonl",
-                id.chars().take(8).collect::<String>()
-            )),
-            posix_quote(&serde_json::to_string(id).map_err(|error| error.to_string())?),
-        ),
         "qwen" => format!(
             "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/projects\" -type f -path {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
             posix_quote(&format!("*/chats/{id}.jsonl")),
@@ -1815,7 +1807,6 @@ fn provider_home_parts(agent: &str) -> Option<(&'static str, &'static str)> {
     match agent {
         "claude" => Some(("CLAUDE_CONFIG_DIR", ".claude")),
         "codex" => Some(("CODEX_HOME", ".codex")),
-        "gemini" => Some(("GEMINI_CLI_HOME", ".gemini")),
         "kimi" => Some(("KIMI_CODE_HOME", ".kimi-code")),
         "qwen" => Some(("QWEN_HOME", ".qwen")),
         _ => None,
@@ -2048,6 +2039,25 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
         println!("\x1b]6973;lite-{activity}\x07Lite · {percent:.0}% context");
     } else {
         println!("\x1b]6973;lite-{activity}\x07Lite");
+    }
+    Ok(())
+}
+
+// Antigravity sends its active conversation to its per-session title command. The title reaches
+// Lite even when the terminal is in the background, without reading the CLI's account or history.
+pub fn antigravity_title() -> Result<(), String> {
+    let input: serde_json::Value =
+        serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
+    if let Some(id) = input
+        .get("conversation_id")
+        .and_then(serde_json::Value::as_str)
+        .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+    {
+        let title = input
+            .get("conversation_title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        println!("lite-agy:{id} | {title}");
     }
     Ok(())
 }
@@ -2955,7 +2965,7 @@ fn codex_context(path: &Path) -> Option<UsageSnapshot> {
     })
 }
 
-fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
+fn qwen_context(path: &Path) -> Option<UsageSnapshot> {
     let model = |record: &serde_json::Value| {
         record
             .get("model")
@@ -2966,20 +2976,8 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
         .lines()
         .rev()
         .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .find_map(|record| match agent {
-            "gemini"
-                if record.get("type").and_then(serde_json::Value::as_str) == Some("gemini") =>
-            {
-                let tokens = record.pointer("/tokens/input")?.as_u64()?;
-                (tokens > 0).then(|| UsageSnapshot {
-                    model: model(&record),
-                    context_tokens: Some(tokens),
-                    ..UsageSnapshot::default()
-                })
-            }
-            "qwen"
-                if record.get("type").and_then(serde_json::Value::as_str) == Some("assistant") =>
-            {
+        .find_map(|record| {
+            if record.get("type").and_then(serde_json::Value::as_str) == Some("assistant") {
                 let tokens = record
                     .pointer("/usageMetadata/promptTokenCount")?
                     .as_u64()?;
@@ -2993,8 +2991,9 @@ fn native_context(path: &Path, agent: &str) -> Option<UsageSnapshot> {
                     context_tokens: Some(tokens),
                     ..UsageSnapshot::default()
                 })
+            } else {
+                None
             }
-            _ => None,
         })
 }
 
@@ -3263,6 +3262,31 @@ async fn record_codex_session(
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+fn record_antigravity_session(
+    app: AppHandle,
+    sessions: State<'_, Sessions>,
+    provider_sessions: State<'_, ProviderSessions>,
+    session_id: String,
+    run_id: String,
+    provider_session_id: String,
+) -> Result<(), String> {
+    uuid::Uuid::parse_str(&provider_session_id).map_err(|_| "Invalid conversation ID")?;
+    let running = sessions.0.lock().map_err(|error| error.to_string())?;
+    if running
+        .get(&session_id)
+        .is_some_and(|session| session.run_id == run_id)
+    {
+        update_provider_session(
+            &app,
+            &provider_sessions,
+            &session_id,
+            Some(provider_session_id),
+        )?;
+    }
+    Ok(())
 }
 
 fn codex_thread_resumable(server: &CodexServer, thread_id: &str) -> Result<bool, String> {
@@ -3711,7 +3735,7 @@ fn key_hint(key: &str) -> String {
 
 fn kimi_auth(app: &AppHandle) -> Option<CliAuthMethod> {
     let home = kimi_home(app).ok()?;
-    // As with Codex and Gemini, check only whether the CLI has stored its sign-in.
+    // As with Codex, check only whether the CLI has stored its sign-in.
     if home.join("credentials/kimi-code.json").is_file() {
         return Some(CliAuthMethod::Provider);
     }
@@ -3744,9 +3768,6 @@ fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
                 || codex_declares_provider(app, provider.codex_key))
             .then_some(CliAuthMethod::ApiKey)
         }
-        "gemini" => gemini_home(app)
-            .is_ok_and(|home| home.join("oauth_creds.json").is_file())
-            .then_some(CliAuthMethod::Provider),
         "kimi" => kimi_auth(app),
         "qwen" => qwen_home(app)
             .is_ok_and(|home| home.join("oauth_creds.json").is_file())
@@ -3837,7 +3858,7 @@ fn agent_executable(agent: &str) -> Option<&'static str> {
     match agent {
         "claude" => Some("claude"),
         "codex" => Some("codex"),
-        "gemini" => Some("gemini"),
+        "gemini" => Some("agy"),
         "kimi" => Some("kimi"),
         "qwen" => Some("qwen"),
         _ => None,
@@ -3871,10 +3892,13 @@ fn session_arguments(launch: &SessionCommand<'_>) -> Result<Vec<String>, String>
             if resume { "--resume" } else { "--session-id" }.into(),
             provider_session_id.unwrap_or(session_id).into(),
         ]),
-        "gemini" | "qwen" => Ok(vec![
+        "qwen" => Ok(vec![
             if resume { "--resume" } else { "--session-id" }.into(),
             session_id.into(),
         ]),
+        "gemini" => Ok(provider_session_id
+            .map(|id| vec!["--conversation".into(), id.into()])
+            .unwrap_or_default()),
         "codex" => Ok(provider_session_id
             .map(|id| vec!["resume".into(), id.into()])
             .unwrap_or_default()),
@@ -4021,61 +4045,18 @@ fn codex_profile_exists(app: &AppHandle, provider: &str) -> bool {
     codex_home(app).is_ok_and(|home| home.join(format!("{provider}.config.toml")).is_file())
 }
 
-fn gemini_home(app: &AppHandle) -> Result<PathBuf, String> {
-    provider_home(app, "gemini")
-}
-
 fn qwen_home(app: &AppHandle) -> Result<PathBuf, String> {
     provider_home(app, "qwen")
 }
 
-fn native_session_path(app: &AppHandle, agent: &str, session_id: &str) -> Option<PathBuf> {
-    let (home, directory) = match agent {
-        "gemini" => (gemini_home(app), "tmp"),
-        "qwen" => (qwen_home(app), "projects"),
-        _ => return None,
-    };
-    let projects = home
-        .and_then(|home| fs::read_dir(home.join(directory)).map_err(|error| error.to_string()))
+fn qwen_session_path(app: &AppHandle, session_id: &str) -> Option<PathBuf> {
+    let projects = qwen_home(app)
+        .and_then(|home| fs::read_dir(home.join("projects")).map_err(|error| error.to_string()))
         .ok()?;
-    let expected = if agent == "qwen" {
-        format!("{session_id}.jsonl")
-    } else {
-        format!("-{}.jsonl", session_id.chars().take(8).collect::<String>())
-    };
+    let expected = format!("{session_id}.jsonl");
     projects.flatten().take(512).find_map(|project| {
-        if agent == "qwen" {
-            let path = project.path().join("chats").join(&expected);
-            return path.is_file().then_some(path);
-        }
-        fs::read_dir(project.path().join("chats"))
-            .ok()?
-            .flatten()
-            .take(512)
-            .find_map(|chat| {
-                let name = chat.file_name();
-                let name = name.to_string_lossy();
-                if name.ends_with(&expected)
-                    && fs::File::open(chat.path()).is_ok_and(|file| {
-                        BufReader::new(file)
-                            .lines()
-                            .next()
-                            .and_then(Result::ok)
-                            .and_then(|line| serde_json::from_str::<serde_json::Value>(&line).ok())
-                            .and_then(|value| {
-                                value
-                                    .get("sessionId")
-                                    .and_then(serde_json::Value::as_str)
-                                    .map(str::to_owned)
-                            })
-                            .is_some_and(|id| id == session_id)
-                    })
-                {
-                    Some(chat.path())
-                } else {
-                    None
-                }
-            })
+        let path = project.path().join("chats").join(&expected);
+        path.is_file().then_some(path)
     })
 }
 
@@ -4217,6 +4198,16 @@ struct SessionCommand<'a> {
     fork: Option<&'a str>,
 }
 
+fn antigravity_settings(title: &str, api_key: bool) -> String {
+    let mut settings = serde_json::json!({
+        "title": { "type": "command", "command": title, "enabled": true }
+    });
+    if api_key {
+        settings["modelProvider"] = "gemini".into();
+    }
+    settings.to_string()
+}
+
 fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<CommandBuilder, String> {
     let agent = launch.agent;
     let provider = launch.provider;
@@ -4333,14 +4324,20 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
+    let key = api_key_env(agent, provider)
+        .and_then(|(_, variable)| saved_api_key(app, agent, provider).map(|key| (variable, key)));
+    if agent == "gemini" {
+        let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let title = format!(
+            "{} --antigravity-title",
+            shell_quote(&path_text(&executable))
+        );
+        command.args(["--settings", &antigravity_settings(&title, key.is_some())]);
+        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
+    }
     // The key reaches the CLI through the variable it already reads, and only for this session.
-    if let Some((_, variable)) = api_key_env(agent, provider)
-        && let Some(key) = saved_api_key(app, agent, provider)
-    {
-        command.env(variable, &key);
-        if agent == "gemini" {
-            command.env("GEMINI_DEFAULT_AUTH_TYPE", "gemini-api-key");
-        }
+    if let Some((variable, key)) = key {
+        command.env(variable, key);
     }
     Ok(command)
 }
@@ -4363,6 +4360,9 @@ fn login_command(agent: &str) -> Result<CommandBuilder, String> {
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
+    if agent == "gemini" {
+        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
+    }
     Ok(command)
 }
 
@@ -4383,9 +4383,7 @@ async fn agent_availability(
     let missing = match agent.as_str() {
         "claude" => "Install the Claude Code CLI, then sign in with `claude`.",
         "codex" => "Install the Codex CLI, then sign in with `codex login`.",
-        "gemini" => {
-            "Install Gemini CLI with `npm install -g @google/gemini-cli`, then run `gemini`."
-        }
+        "gemini" => "Install Antigravity CLI, then run `agy` to sign in.",
         "kimi" => {
             if cfg!(windows) {
                 "Install Git for Windows, then run `irm https://code.kimi.com/kimi-code/install.ps1 | iex` in PowerShell."
@@ -4445,6 +4443,9 @@ fn agent_version(agent: &str) -> Result<String, String> {
         .ok_or_else(|| format!("Could not find {executable} in your PATH"))?;
     let mut command = Command::new(path);
     command.arg("--version");
+    if agent == "gemini" {
+        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
+    }
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
@@ -4505,11 +4506,15 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 }
                 command.arg(name);
                 command
-            } else if agent == "kimi" || agent == "claude" {
-                let url = if agent == "kimi" {
-                    "https://code.kimi.com/kimi-code/install"
-                } else {
-                    "https://claude.ai/install"
+            } else if agent == "gemini" && let Some(agy) = resolve_executable("agy") {
+                let mut command = Command::new(agy);
+                command.arg("update");
+                command
+            } else if agent == "kimi" || agent == "claude" || agent == "gemini" {
+                let url = match agent.as_str() {
+                    "kimi" => "https://code.kimi.com/kimi-code/install",
+                    "gemini" => "https://antigravity.google/cli/install",
+                    _ => "https://claude.ai/install",
                 };
                 // Claude's script takes its version as an argument and Kimi's from the environment.
                 let argument = if agent == "claude" {
@@ -4550,7 +4555,6 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
             } else {
                 let package = match agent.as_str() {
                     "codex" => "@openai/codex",
-                    "gemini" => "@google/gemini-cli",
                     "qwen" => "@qwen-code/qwen-code",
                     _ => return Err("This session type cannot be installed automatically".into()),
                 };
@@ -4624,10 +4628,9 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 detail.to_owned()
             })
         };
-        // A release can publish without the files it needs to start, so the version that runs now
-        // is kept to put back. Homebrew installs only its newest release, so it keeps none.
-        let previous = homebrew
-            .is_none()
+        // A release can publish without the files it needs to start. Homebrew and Antigravity's
+        // updater do not install a selected version, so only the other installers can roll back.
+        let previous = (homebrew.is_none() && agent != "gemini")
             .then(|| agent_version(&agent).ok())
             .flatten()
             .and_then(|output| version_number(&output));
@@ -4676,16 +4679,29 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
         if resolve_executable(executable).is_none() {
             return Ok(false);
         }
+        let antigravity_manifest = if agent == "gemini" {
+            let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
+                ("macos", "aarch64") => "darwin_arm64",
+                ("macos", "x86_64") => "darwin_amd64",
+                ("linux", "aarch64") if cfg!(target_env = "musl") => "linux_arm64_musl",
+                ("linux", "x86_64") if cfg!(target_env = "musl") => "linux_amd64_musl",
+                ("linux", "aarch64") => "linux_arm64",
+                ("linux", "x86_64") => "linux_amd64",
+                ("windows", "aarch64") => "windows_arm64",
+                ("windows", "x86_64") => "windows_amd64",
+                _ => return Err("Unsupported Antigravity platform".into()),
+            };
+            format!("https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/{platform}.json")
+        } else {
+            String::new()
+        };
         let (latest_url, version_field) = match agent.as_str() {
             "claude" => (
                 "https://downloads.claude.ai/claude-code-releases/latest",
                 false,
             ),
             "codex" => ("https://registry.npmjs.org/@openai%2Fcodex/latest", true),
-            "gemini" => (
-                "https://registry.npmjs.org/@google%2Fgemini-cli/latest",
-                true,
-            ),
+            "gemini" => (antigravity_manifest.as_str(), true),
             "kimi" => ("https://code.kimi.com/kimi-code/latest", false),
             "qwen" => (
                 "https://registry.npmjs.org/@qwen-code%2Fqwen-code/latest",
@@ -4730,7 +4746,7 @@ async fn open_setup_docs(agent: String, provider: Option<String>) -> Result<(), 
     let url = match (agent.as_str(), provider.as_deref()) {
         ("claude", _) => "https://code.claude.com/docs/en/setup",
         ("codex", _) => "https://learn.chatgpt.com/docs/codex/cli",
-        ("gemini", _) => "https://google-gemini.github.io/gemini-cli/",
+        ("gemini", _) => "https://antigravity.google/docs/getting-started?tab=cli",
         ("kimi", _) => {
             "https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html"
         }
@@ -4932,6 +4948,10 @@ fn ssh_session_command(
                 if let Some(prompt) = initial_prompt {
                     args.push(prompt.into());
                 }
+            } else if launch.agent == "gemini" {
+                // The remote host has no Lite executable. Extract the CLI's UUID using its POSIX shell.
+                let title = r#"sed -n 's/.*"conversation_id"[[:space:]]*:[[:space:]]*"\([0-9a-fA-F-]\{36\}\)".*/lite-agy:\1/p'"#;
+                args.extend(["--settings".into(), antigravity_settings(title, false)]);
             }
         }
         args.extend_from_slice(launch.flags);
@@ -4948,7 +4968,12 @@ fn ssh_session_command(
     };
     // SSH does not forward the local PTY environment to the remote shell.
     let remote = ssh_script(&format!(
-        "export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1; {remote}"
+        "export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1; {}{remote}",
+        if launch.agent == "gemini" {
+            "export AGY_CLI_DISABLE_AUTO_UPDATE=true; "
+        } else {
+            ""
+        }
     ));
     let command = ssh_command(&root.host)?;
     let argv = std::iter::once(command.get_program().to_os_string())
@@ -5065,14 +5090,12 @@ async fn spawn_session(
     let mut resume = resume
         && match agent.as_str() {
             "claude" if ssh.is_none() => claude_launch.as_ref().is_some_and(|(_, resume)| *resume),
-            "gemini" | "qwen" if ssh.is_none() => {
-                native_session_path(&app, &agent, &session_id).is_some()
-            }
+            "qwen" if ssh.is_none() => qwen_session_path(&app, &session_id).is_some(),
             _ => true,
         };
     if resume
         && let Some(root) = ssh.clone()
-        && matches!(agent.as_str(), "claude" | "gemini" | "qwen")
+        && matches!(agent.as_str(), "claude" | "qwen")
     {
         let remote_agent = agent.clone();
         let remote_id = provider_session_id
@@ -5118,7 +5141,7 @@ async fn spawn_session(
         });
     }
     if !signing_in
-        && (agent == "codex" || agent == "kimi")
+        && matches!(agent.as_str(), "codex" | "gemini" | "kimi")
         && let Some(saved_provider_session_id) = provider_sessions
             .0
             .lock()
@@ -5416,8 +5439,9 @@ async fn spawn_session(
 }
 
 fn is_agent_process(process: &sysinfo::Process, agent: &str) -> bool {
+    let executable_name = if agent == "gemini" { "agy" } else { agent };
     let name = process.name().to_string_lossy().to_ascii_lowercase();
-    if name.strip_suffix(".exe").unwrap_or(&name) == agent {
+    if name.strip_suffix(".exe").unwrap_or(&name) == executable_name {
         return true;
     }
     process.cmd().iter().any(|argument| {
@@ -5426,9 +5450,8 @@ fn is_agent_process(process: &sysinfo::Process, agent: &str) -> bool {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or_default();
-        executable.strip_suffix(".exe").unwrap_or(executable) == agent
+        executable.strip_suffix(".exe").unwrap_or(executable) == executable_name
             || (agent == "codex" && executable == "codex.js")
-            || (agent == "gemini" && executable == "gemini.js")
             || (agent == "kimi" && argument.contains("kimi-code"))
             || (agent == "qwen" && argument.contains("qwen-code"))
     })
@@ -7624,8 +7647,8 @@ async fn read_usage(
                 )
                 .map(Some)
             }
-            "gemini" | "qwen" => Ok(native_session_path(&app, &agent, &session_id)
-                .and_then(|path| native_context(&path, &agent))),
+            "qwen" => Ok(qwen_session_path(&app, &session_id).and_then(|path| qwen_context(&path))),
+            "gemini" => Ok(None),
             "kimi" => Ok(provider_session_id
                 .as_deref()
                 .and_then(|id| kimi_context(&app, id))),
@@ -7938,6 +7961,7 @@ pub fn run() {
             spawn_session,
             codex_pickers,
             record_codex_session,
+            record_antigravity_session,
             fork_source,
             write_session,
             watch_shell_agent,
@@ -8008,6 +8032,35 @@ mod tests {
     use super::*;
     use std::ffi::OsStr;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn antigravity_restores_the_recorded_conversation() {
+        let mut launch = SessionCommand {
+            agent: "gemini",
+            provider: None,
+            model: None,
+            reasoning_effort: None,
+            flags: &[],
+            resume: false,
+            session_id: "lite-session",
+            provider_session_id: None,
+            fork: None,
+        };
+        assert!(session_arguments(&launch).unwrap().is_empty());
+        launch.resume = true;
+        launch.provider_session_id = Some("12345678-abcd-ef01-2345-6789abcdef01");
+        assert_eq!(
+            session_arguments(&launch).unwrap(),
+            ["--conversation", "12345678-abcd-ef01-2345-6789abcdef01"]
+        );
+        let settings: serde_json::Value =
+            serde_json::from_str(&antigravity_settings("title command", true)).unwrap();
+        assert_eq!(settings["modelProvider"], "gemini");
+        assert_eq!(settings["title"]["command"], "title command");
+        let account: serde_json::Value =
+            serde_json::from_str(&antigravity_settings("title command", false)).unwrap();
+        assert!(account.get("modelProvider").is_none());
+    }
 
     #[test]
     fn claude_flags_preserve_lites_session_and_workspace() {

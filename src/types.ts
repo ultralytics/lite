@@ -41,7 +41,7 @@ export interface Session {
 const agentLabels: Record<Agent, string> = {
   claude: "Claude Code",
   codex: "Codex",
-  gemini: "Gemini CLI",
+  gemini: "Antigravity CLI",
   kimi: "Kimi Code",
   qwen: "Qwen Code",
   shell: "Shell",

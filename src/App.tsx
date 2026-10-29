@@ -1730,11 +1730,8 @@ function commandAgent(command: string): Agent | undefined {
     .pop()
     ?.replace(/\.exe$/i, "")
     .toLowerCase();
-  return executable === "claude" ||
-    executable === "codex" ||
-    executable === "gemini" ||
-    executable === "kimi" ||
-    executable === "qwen"
+  if (executable === "agy") return "gemini";
+  return executable === "claude" || executable === "codex" || executable === "kimi" || executable === "qwen"
     ? executable
     : undefined;
 }
@@ -2333,6 +2330,12 @@ function App() {
             name.pop();
             if (name.length && !name[0].startsWith(identity.replace("...", ""))) markTitle(sessionId, name.join(" | "));
           }
+        } else if (session?.agent === "gemini" && title.startsWith("lite-agy:")) {
+          const [id, ...name] = title.slice(9).split(" | ");
+          void invoke("record_antigravity_session", { sessionId, runId, providerSessionId: id }).catch((reason) =>
+            setError(String(reason)),
+          );
+          if (name.length) markTitle(sessionId, name.join(" | "));
         } else markTitle(sessionId, title);
       }
       if (path) markDirectory(sessionId, path);
