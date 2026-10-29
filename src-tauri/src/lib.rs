@@ -4333,7 +4333,6 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
             shell_quote(&path_text(&executable))
         );
         command.args(["--settings", &antigravity_settings(&title, key.is_some())]);
-        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
     }
     // The key reaches the CLI through the variable it already reads, and only for this session.
     if let Some((variable, key)) = key {
@@ -4359,9 +4358,6 @@ fn login_command(agent: &str) -> Result<CommandBuilder, String> {
     });
     if let Some(path) = user_path() {
         command.env("PATH", path);
-    }
-    if agent == "gemini" {
-        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
     }
     Ok(command)
 }
@@ -4443,9 +4439,6 @@ fn agent_version(agent: &str) -> Result<String, String> {
         .ok_or_else(|| format!("Could not find {executable} in your PATH"))?;
     let mut command = Command::new(path);
     command.arg("--version");
-    if agent == "gemini" {
-        command.env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
-    }
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
@@ -4479,10 +4472,10 @@ fn version_number(output: &str) -> Option<String> {
 async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, String> {
     let handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let executable = agent_executable(&agent).ok_or("Unknown session type")?;
         // An update goes through whoever owns the installed CLI: npm or an install script refuses to
         // replace a Homebrew link, or leaves it shadowing the new copy, so Homebrew upgrades its own.
-        let homebrew = agent_executable(&agent)
-            .and_then(resolve_executable)
+        let homebrew = resolve_executable(executable)
             .and_then(|path| fs::canonicalize(path).ok())
             .and_then(|path| {
                 let parts: Vec<_> = path.iter().collect();
@@ -4623,7 +4616,7 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
             let detail = String::from_utf8_lossy(&detail);
             let detail = detail.trim();
             Err(if detail.is_empty() {
-                format!("The {agent} installer exited with {status}")
+                format!("The {executable} installer exited with {status}")
             } else {
                 detail.to_owned()
             })
@@ -4643,13 +4636,13 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
             Err(error) => error,
         };
         let Some(previous) = previous else {
-            return Err(format!("Installed {agent}, but it cannot run: {error}"));
+            return Err(format!("Installed {executable}, but it cannot run: {error}"));
         };
         Err(
             if install(Some(&previous)).is_ok_and(|done| done) && agent_version(&agent).is_ok() {
-                format!("The new {agent} could not start, so Lite reinstalled {previous}")
+                format!("The new {executable} could not start, so Lite reinstalled {previous}")
             } else {
-                format!("The new {agent} could not start, and reinstalling {previous} failed")
+                format!("The new {executable} could not start, and reinstalling {previous} failed")
             },
         )
     })
@@ -4683,8 +4676,6 @@ async fn agent_update_available(agent: String) -> Result<bool, String> {
             let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
                 ("macos", "aarch64") => "darwin_arm64",
                 ("macos", "x86_64") => "darwin_amd64",
-                ("linux", "aarch64") if cfg!(target_env = "musl") => "linux_arm64_musl",
-                ("linux", "x86_64") if cfg!(target_env = "musl") => "linux_amd64_musl",
                 ("linux", "aarch64") => "linux_arm64",
                 ("linux", "x86_64") => "linux_amd64",
                 ("windows", "aarch64") => "windows_arm64",
@@ -4968,12 +4959,7 @@ fn ssh_session_command(
     };
     // SSH does not forward the local PTY environment to the remote shell.
     let remote = ssh_script(&format!(
-        "export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1; {}{remote}",
-        if launch.agent == "gemini" {
-            "export AGY_CLI_DISABLE_AUTO_UPDATE=true; "
-        } else {
-            ""
-        }
+        "export CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1; {remote}"
     ));
     let command = ssh_command(&root.host)?;
     let argv = std::iter::once(command.get_program().to_os_string())
@@ -5298,8 +5284,9 @@ async fn spawn_session(
             return Err(if agent == "shell" {
                 error.to_string()
             } else {
+                let executable = agent_executable(&agent).unwrap_or(&agent);
                 format!(
-                    "Could not start {agent}. Install its CLI and make sure it is available in your PATH. {error}"
+                    "Could not start {executable}. Install its CLI and make sure it is available in your PATH. {error}"
                 )
             });
         }

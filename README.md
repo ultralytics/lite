@@ -84,7 +84,7 @@ Install the provider CLIs you want to use:
 
 Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
 
-Antigravity CLI replaces Gemini CLI for Google sign-in. Gemini CLI conversations remain in Gemini CLI; Antigravity starts its own conversations.
+Lite uses Antigravity CLI in place of Gemini CLI. Gemini CLI conversations remain in Gemini CLI; Antigravity starts its own conversations.
 
 If you would rather use API keys, open **Settings › API Keys** and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `MIMO_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
