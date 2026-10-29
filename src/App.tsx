@@ -1421,15 +1421,19 @@ function SessionRow({
   function moveDrag(clientY: number) {
     const pointer = drag.current;
     if (!pointer) return;
+    // Holding near an edge scrolls one step a frame, however often the pointer moves, retargeting as
+    // rows pass under it.
     window.cancelAnimationFrame(scrollFrame.current);
-    const bounds = pointer.viewport.getBoundingClientRect();
-    const scrollTop = pointer.viewport.scrollTop;
-    pointer.viewport.scrollTop += clientY < bounds.top + 32 ? -12 : clientY > bounds.bottom - 32 ? 12 : 0;
-    if (pointer.viewport.scrollTop !== scrollTop)
-      scrollFrame.current = window.requestAnimationFrame(() => moveDrag(clientY));
-    const scale = pointer.row.getBoundingClientRect().height / pointer.row.offsetHeight;
-    pointer.row.style.transform = `translate3d(0, ${(clientY - pointer.y + pointer.viewport.scrollTop - pointer.scrollTop) / scale}px, 0)`;
-    const list = pointer.row.closest("[data-session-list]");
+    scrollFrame.current = window.requestAnimationFrame(() => {
+      const bounds = pointer.viewport.getBoundingClientRect();
+      const scrollTop = pointer.viewport.scrollTop;
+      pointer.viewport.scrollTop += clientY < bounds.top + 32 ? -12 : clientY > bounds.bottom - 32 ? 12 : 0;
+      if (pointer.viewport.scrollTop !== scrollTop) moveDrag(clientY);
+    });
+    const list = pointer.row.closest<HTMLElement>("[data-session-list]");
+    // The list zooms with the sidebar font size, so the row moves in zoomed pixels.
+    const zoom = Number(list?.style.zoom) || 1;
+    pointer.row.style.transform = `translate3d(0, ${(clientY - pointer.y + pointer.viewport.scrollTop - pointer.scrollTop) / zoom}px, 0)`;
     // The archive takes a drop anywhere on it, collapsed or empty, and archives the session.
     const archive = onArchive && list?.querySelector<HTMLElement>("[data-archive-drop]");
     if (archive && clientY >= archive.getBoundingClientRect().top) {
@@ -3556,14 +3560,18 @@ function App() {
                                   title={group.title}
                                   aria-label={`${group.name}, ${group.sessions.length} session${group.sessions.length === 1 ? "" : "s"}`}
                                   aria-expanded={open}
-                                  onClick={() =>
+                                  onClick={(event) => {
+                                    // The archive ends the list, so its rows open below the fold unless brought into view.
+                                    const section = event.currentTarget.parentElement;
+                                    if (archive && !open)
+                                      requestAnimationFrame(() => section?.scrollIntoView({ block: "nearest" }));
                                     setCollapsedGroups((current) => {
                                       const next = new Set(current);
                                       if (next.has(group.key)) next.delete(group.key);
                                       else next.add(group.key);
                                       return next;
-                                    })
-                                  }
+                                    });
+                                  }}
                                 >
                                   <ChevronRight
                                     aria-hidden="true"
