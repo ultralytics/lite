@@ -834,16 +834,24 @@ function sessionGroupKey(session: Session, grouping: SessionGrouping, attention:
 }
 
 // Grouping is presentation only. First appearance preserves manual session order for paths, while
-// state follows the same stable urgency order as the status badges.
+// state follows the same stable urgency order as the status badges. The archive follows the groups
+// whatever the grouping, in the same sort order.
 function groupSessions(
   sessions: Session[],
   grouping: SessionGrouping,
   attention: Set<string>,
   working: Set<string>,
 ): SessionGroup[] {
-  if (grouping === "none") return [{ name: "", key: "none:all", title: "", sessions }];
+  const archive = {
+    name: "Archived",
+    key: "archived",
+    title: "",
+    sessions: sessions.filter((session) => session.archivedAt),
+  };
+  const current = sessions.filter((session) => !session.archivedAt);
+  if (grouping === "none") return [{ name: "", key: "none:all", title: "", sessions: current }, archive];
   const groups = new Map<string, SessionGroup>();
-  for (const session of sessions) {
+  for (const session of current) {
     const value = sessionGroupKey(session, grouping, attention, working);
     const groupPath = sessionGroupPath(session, grouping);
     const status = grouping === "state" ? SESSION_STATUS[value as keyof typeof SESSION_STATUS] : undefined;
@@ -859,9 +867,19 @@ function groupSessions(
     group.sessions.push(session);
     groups.set(value, group);
   }
-  if (grouping === "state")
-    return ["attention", "working", "idle", "disconnected"].flatMap((state) => groups.get(state) ?? []);
-  return [...groups.values()];
+  const listed =
+    grouping === "state"
+      ? ["attention", "working", "idle", "disconnected"].flatMap((state) => groups.get(state) ?? [])
+      : [...groups.values()];
+  return [...listed, archive];
+}
+
+// Archiving and restoring put a session first in manual order, the way a new session arrives.
+function changeFirst(sessions: Session[], id: string, change: Partial<Session>) {
+  return [
+    ...sessions.filter((session) => session.id === id).map((session) => ({ ...session, ...change })),
+    ...sessions.filter((session) => session.id !== id),
+  ];
 }
 
 function sortSessions(sessions: Session[], sort: SessionSort) {
@@ -1877,23 +1895,10 @@ function App() {
     );
   }, [sessions, query]);
   const attentionIds = useMemo(() => new Set(attention), [attention]);
-  const sortedVisible = useMemo(() => sortSessions(visible, sessionView.sort), [sessionView.sort, visible]);
-  const visibleGroups = useMemo(
-    () =>
-      groupSessions(
-        sortedVisible.filter((session) => !session.archivedAt),
-        sessionView.grouping,
-        attentionIds,
-        working,
-      ),
-    [attentionIds, sessionView.grouping, sortedVisible, working],
+  const listedGroups = useMemo(
+    () => groupSessions(sortSessions(visible, sessionView.sort), sessionView.grouping, attentionIds, working),
+    [attentionIds, sessionView.grouping, sessionView.sort, visible, working],
   );
-  // The archive follows the groups and shares their sort order. It is left out
-  // of what the number and cycling shortcuts count, since reaching an archived row brings it back.
-  const listedGroups = useMemo(() => {
-    const archived = sortedVisible.filter((session) => session.archivedAt);
-    return [...visibleGroups, { name: "Archived", key: "archived", title: "", sessions: archived }];
-  }, [sortedVisible, visibleGroups]);
   const selectedGroupKey = selected
     ? `${sessionView.grouping}:${sessionGroupKey(selected, sessionView.grouping, attentionIds, working)}`
     : "";
@@ -1906,8 +1911,10 @@ function App() {
       return next;
     });
   }, [selectedGroupKey]);
-  const displayed = visibleGroups.flatMap((group) =>
-    query.trim() || !collapsedGroups.has(group.key) ? group.sessions : [],
+  // The archive is left out of what the number and cycling shortcuts count, since reaching an archived
+  // row brings it back.
+  const displayed = listedGroups.flatMap((group) =>
+    group.key !== "archived" && (query.trim() || !collapsedGroups.has(group.key)) ? group.sessions : [],
   );
   const sessionsById = new Map(active.map((session) => [session.id, session]));
   recentSessions.current = recentSessions.current.filter((id) => sessionsById.has(id));
@@ -1926,11 +1933,7 @@ function App() {
   closeRef.current = closeSession;
   openRef.current = (session) => {
     // Opening an archived session puts it first in manual order and resumes it like any other.
-    if (session.archivedAt)
-      setSessions((current) => [
-        ...current.filter((item) => item.id === session.id).map((item) => ({ ...item, archivedAt: undefined })),
-        ...current.filter((item) => item.id !== session.id),
-      ]);
+    if (session.archivedAt) setSessions((current) => changeFirst(current, session.id, { archivedAt: undefined }));
     setRecentFolders((folders) => rememberFolder(folders, session));
     recentSessions.current = [session.id, ...recentSessions.current.filter((id) => id !== session.id)];
     clearAttention(session.id);
@@ -2664,16 +2667,12 @@ function App() {
       setSessionView(view);
     }
     setSessions((current) => {
-      const sorted = sortSessions(current, sessionView.sort);
-      const ordered = [
-        ...groupSessions(
-          sorted.filter((session) => !session.archivedAt),
-          sessionView.grouping,
-          attentionIds,
-          working,
-        ).flatMap((group) => group.sessions),
-        ...sorted.filter((session) => session.archivedAt),
-      ];
+      const ordered = groupSessions(
+        sortSessions(current, sessionView.sort),
+        sessionView.grouping,
+        attentionIds,
+        working,
+      ).flatMap((group) => group.sessions);
       const draggedIndex = ordered.findIndex((session) => session.id === draggedId);
       const targetIndex = ordered.findIndex((session) => session.id === targetId);
       if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return current;
@@ -3072,12 +3071,7 @@ function App() {
     untrack(session.id);
     void invoke("stop_session", { sessionId: session.id }).then(
       () => {
-        setSessions((current) => [
-          ...current
-            .filter((item) => item.id === session.id)
-            .map((item) => ({ ...item, running: false, archivedAt: Date.now() })),
-          ...current.filter((item) => item.id !== session.id),
-        ]);
+        setSessions((current) => changeFirst(current, session.id, { running: false, archivedAt: Date.now() }));
         const next = sessionsRef.current.find((item) => item.id !== session.id && !item.archivedAt)?.id ?? "";
         setSelectedId((current) => (current === session.id ? next : current));
         clearOutput(session.id);
@@ -3535,8 +3529,9 @@ function App() {
                       </ActionIconButton>
                     </div>
                     <ScrollArea className="min-h-0 flex-1">
+                      {/* Clipped so a dragged row's transform never lengthens what edge scrolling can reach. */}
                       <div
-                        className="flex min-h-full flex-col space-y-0.5 px-2 pb-2"
+                        className="flex min-h-full flex-col space-y-0.5 overflow-clip px-2 pb-2"
                         data-session-list
                         style={contentZoomStyle(sidebarFontSize)}
                       >
