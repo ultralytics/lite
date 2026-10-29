@@ -15,7 +15,7 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 
 <div align="center">
   <br>
-  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/user-attachments/assets/eb526bdc-85f8-4dce-888a-8ed68743a3e4" width="100%" alt="Ultralytics Lite desktop app"></a>
+  <a href="https://github.com/ultralytics/lite/releases/latest"><img src="https://github.com/user-attachments/assets/e5983e1c-c4c7-48b7-8cdb-c911bac478cd" width="100%" alt="Ultralytics Lite desktop app"></a>
   <br>
 </div>
 
@@ -86,10 +86,10 @@ Open each provider in Lite and complete its normal sign-in once. Every CLI keeps
 
 Lite uses Antigravity CLI in place of Gemini CLI. Gemini CLI conversations remain in Gemini CLI; Antigravity starts its own conversations.
 
-If you would rather use API keys, open **Settings › API Keys** and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `MIMO_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
+If you would rather use API keys, open **Settings › Accounts**, choose **Add key**, and paste one for a supported provider. Lite keeps them in an owner-only file in its own data folder — the same shape Codex and Kimi already use for their credentials — and passes a key to a session through the environment variable that CLI already reads (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`, `ZAI_API_KEY`, `MIMO_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or `MOONSHOT_API_KEY`). Qwen Code keeps ownership of its regional provider and authentication setup. Nothing is written into provider configuration, deleting a key takes effect on the next launch, and app updates keep the file since the updater replaces the bundle and not your data.
 
 <div align="center">
-  <img src="https://github.com/user-attachments/assets/d3ccbfcf-bf4c-498a-8f7f-f0a134a90e92" width="100%" alt="Saving provider API keys in Lite">
+  <img src="https://github.com/user-attachments/assets/defe5144-e079-475c-9476-141bfd9b5c6e" width="100%" alt="Managing provider sign-ins and API keys in Lite">
 </div>
 
 **Codex · DeepSeek** runs the Codex harness against DeepSeek V4.1 Flash through its OpenAI Responses API. Saving a DeepSeek key in Lite is enough — Lite then defines the provider for that launch only. To configure it yourself instead, use your own [Codex configuration](https://api-docs.deepseek.com/quick_start/agent_integrations/codex); a `deepseek.config.toml` profile in `$CODEX_HOME` is cleanest:
