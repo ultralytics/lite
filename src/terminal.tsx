@@ -892,7 +892,7 @@ export function TerminalView({
       {scrolledUp ? (
         <Button
           size="sm"
-          className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-md"
+          className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 animate-in rounded-full shadow-md fade-in-0 slide-in-from-bottom-2 hover:bg-[color-mix(in_oklch,var(--primary),var(--background)_20%)] motion-reduce:animate-none"
           onMouseDown={(event) => event.preventDefault()}
           onClick={scrollToBottom}
         >
