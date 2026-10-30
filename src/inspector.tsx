@@ -2022,7 +2022,8 @@ function UsagePanel({
 
   // Usage is read while it is visible, and again a second after each turn ends, when the harness has
   // written it. Claude can also switch models mid-turn, and its status line rewrites the local snapshot
-  // 300 ms later, so for Claude any output starts that second; the other harnesses are read once per
+  // 300 ms later, so for Claude any output starts that second. Antigravity rewrites it from its title
+  // command and sends no notification, so it is read the same way; the other harnesses are read once per
   // finished turn, which Codex marks with a notification and whose read starts an app server.
   useEffect(() => {
     if (!active) return;
@@ -2055,7 +2056,7 @@ function UsagePanel({
       settle = window.setTimeout(read, 1000);
     };
     const unsubscribe =
-      session.agent === "claude"
+      session.agent === "claude" || session.agent === "gemini"
         ? subscribeTerminalOutput(session.id, settled)
         : subscribeNotifications(session.id, settled);
     return () => {
