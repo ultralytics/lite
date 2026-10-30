@@ -12,7 +12,7 @@ import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 
-import { ActionIconButton } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { toast } from "@/components/ui/toast";
 import {
@@ -827,8 +827,9 @@ export function TerminalView({
       />
       <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={scrollToBottom} />
+      {/* An open find bar takes the corner over the session actions, as an editor's find widget does. */}
       {searchOpen ? (
-        <div className="absolute top-11 right-2 z-10 w-72 max-w-[calc(100%-1rem)] rounded-lg bg-background shadow-lg">
+        <div className="absolute top-2 right-2 z-30 w-72 max-w-[calc(100%-1rem)] rounded-lg bg-background shadow-lg">
           <InputGroup>
             <InputGroupAddon>
               <Search />
@@ -889,18 +890,15 @@ export function TerminalView({
         </div>
       ) : null}
       {scrolledUp ? (
-        <ActionIconButton
-          variant="default"
-          size="icon-lg"
-          className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-lg"
-          tooltip="Scroll to bottom"
-          tooltipSide="top"
-          aria-label="Scroll to bottom"
+        <Button
+          size="sm"
+          className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-md"
           onMouseDown={(event) => event.preventDefault()}
           onClick={scrollToBottom}
         >
-          <ArrowDownToLine className="size-5" />
-        </ActionIconButton>
+          <ArrowDownToLine />
+          Scroll to bottom
+        </Button>
       ) : null}
       <div ref={containerRef} className="h-full w-full" />
     </div>
