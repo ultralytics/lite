@@ -828,7 +828,7 @@ export function TerminalView({
       <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={scrollToBottom} />
       {searchOpen ? (
-        <div className="absolute top-2 right-[8.5rem] z-10 w-72 max-w-[calc(100%-9rem)] rounded-lg bg-background shadow-lg">
+        <div className="absolute top-11 right-2 z-10 w-72 max-w-[calc(100%-1rem)] rounded-lg bg-background shadow-lg">
           <InputGroup>
             <InputGroupAddon>
               <Search />
@@ -890,15 +890,16 @@ export function TerminalView({
       ) : null}
       {scrolledUp ? (
         <ActionIconButton
-          size="icon-sm"
-          className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-full bg-background/90 text-muted-foreground shadow-sm"
+          variant="default"
+          size="icon-lg"
+          className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-full shadow-lg"
           tooltip="Scroll to bottom"
           tooltipSide="top"
           aria-label="Scroll to bottom"
           onMouseDown={(event) => event.preventDefault()}
           onClick={scrollToBottom}
         >
-          <ArrowDownToLine />
+          <ArrowDownToLine className="size-5" />
         </ActionIconButton>
       ) : null}
       <div ref={containerRef} className="h-full w-full" />
