@@ -12,7 +12,7 @@ import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react
 import { useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 
-import { ActionIconButton } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { toast } from "@/components/ui/toast";
 import {
@@ -827,8 +827,9 @@ export function TerminalView({
       />
       <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={scrollToBottom} />
+      {/* An open find bar takes the corner over the session actions, as an editor's find widget does. */}
       {searchOpen ? (
-        <div className="absolute top-2 right-[8.5rem] z-10 w-72 max-w-[calc(100%-9rem)] rounded-lg bg-background shadow-lg">
+        <div className="absolute top-2 right-2 z-30 w-72 max-w-[calc(100%-1rem)] rounded-lg bg-background shadow-lg">
           <InputGroup>
             <InputGroupAddon>
               <Search />
@@ -889,17 +890,15 @@ export function TerminalView({
         </div>
       ) : null}
       {scrolledUp ? (
-        <ActionIconButton
-          size="icon-sm"
-          className="absolute bottom-5 left-1/2 z-10 -translate-x-1/2 rounded-full bg-background/90 text-muted-foreground shadow-sm"
-          tooltip="Scroll to bottom"
-          tooltipSide="top"
-          aria-label="Scroll to bottom"
+        <Button
+          size="sm"
+          className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 animate-in rounded-full shadow-md fade-in-0 slide-in-from-bottom-2 hover:bg-[color-mix(in_oklch,var(--primary),var(--background)_20%)] motion-reduce:animate-none"
           onMouseDown={(event) => event.preventDefault()}
           onClick={scrollToBottom}
         >
           <ArrowDownToLine />
-        </ActionIconButton>
+          Scroll to bottom
+        </Button>
       ) : null}
       <div ref={containerRef} className="h-full w-full" />
     </div>
