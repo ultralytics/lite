@@ -1973,6 +1973,20 @@ pub fn capture_claude_activity(path: &str) -> Result<(), String> {
 pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), String> {
     let input: serde_json::Value =
         serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
+    let snapshot = write_usage_snapshot(&input, path)?;
+    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some());
+    let activity = if working { "working" } else { "idle" };
+    if let Some(percent) = snapshot.context_used_percent {
+        println!("\x1b]6973;lite-{activity}\x07Lite · {percent:.0}% context");
+    } else {
+        println!("\x1b]6973;lite-{activity}\x07Lite");
+    }
+    Ok(())
+}
+
+// Claude's status line and Antigravity's title command share the model and context fields, so one
+// writer keeps the snapshot `read_usage` serves for both.
+fn write_usage_snapshot(input: &serde_json::Value, path: &str) -> Result<UsageSnapshot, String> {
     let context = input
         .get("context_window")
         .unwrap_or(&serde_json::Value::Null);
@@ -1996,6 +2010,42 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
                 used_percent,
                 resets_at: window.get("resets_at").and_then(serde_json::Value::as_u64),
                 window_minutes: Some(minutes),
+            });
+        }
+    }
+    // Antigravity reports each account quota as the fraction left and when it refills, keyed by model
+    // family and window ("gemini-5h", "3p-weekly"). It carries no window length, which keeps it out of
+    // Claude's account-wide merge.
+    if let Some(quota) = input.get("quota").and_then(serde_json::Value::as_object) {
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_secs());
+        // Keys sort Claude and GPT before Gemini, so the reversed order leads with Gemini's limits.
+        for (key, entry) in quota.iter().rev() {
+            let Some(remaining) = entry
+                .get("remaining_fraction")
+                .and_then(serde_json::Value::as_f64)
+            else {
+                continue;
+            };
+            let (family, window) = key.rsplit_once('-').unwrap_or((key, ""));
+            let family = match family {
+                "3p" => "Claude and GPT".into(),
+                "gemini" => "Gemini".into(),
+                // A model's own limit, such as "gemini-argon-wtu", reads as "Gemini argon".
+                other => other
+                    .trim_end_matches("-wtu")
+                    .replacen("gemini", "Gemini", 1)
+                    .replace('-', " "),
+            };
+            windows.push(UsageWindow {
+                label: format!("{family} {}", window.replace("weekly", "week")),
+                used_percent: (1.0 - remaining) * 100.0,
+                resets_at: entry
+                    .get("reset_in_seconds")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|seconds| now + seconds),
+                window_minutes: None,
             });
         }
     }
@@ -2033,19 +2083,14 @@ pub fn capture_claude_status(path: &str, activity_path: &str) -> Result<(), Stri
     if !fs::read(path).is_ok_and(|current| current == usage) {
         write_atomic(Path::new(path), &usage)?;
     }
-    let working = fs::read_dir(activity_path).is_ok_and(|mut entries| entries.next().is_some());
-    let activity = if working { "working" } else { "idle" };
-    if let Some(percent) = snapshot.context_used_percent {
-        println!("\x1b]6973;lite-{activity}\x07Lite · {percent:.0}% context");
-    } else {
-        println!("\x1b]6973;lite-{activity}\x07Lite");
-    }
-    Ok(())
+    Ok(snapshot)
 }
 
-// Antigravity sends its active conversation to its per-session title command. The title reaches
-// Lite even when the terminal is in the background, without reading the CLI's account or history.
-pub fn antigravity_title() -> Result<(), String> {
+// Antigravity sends its active conversation and context to its per-session title command. Both reach
+// Lite even when the terminal is in the background, without reading the CLI's account or history. The
+// title goes out before the snapshot is written because resume depends on it, and a session launched
+// before the command named a snapshot path keeps its title.
+pub fn antigravity_title(usage_path: Option<&str>) -> Result<(), String> {
     let input: serde_json::Value =
         serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
     if let Some(id) = input
@@ -2059,7 +2104,7 @@ pub fn antigravity_title() -> Result<(), String> {
             .unwrap_or_default();
         println!("lite-agy:{id} | {title}");
     }
-    Ok(())
+    usage_path.map_or(Ok(()), |path| write_usage_snapshot(&input, path).map(drop))
 }
 
 #[tauri::command]
@@ -4328,9 +4373,15 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
         .and_then(|(_, variable)| saved_api_key(app, agent, provider).map(|key| (variable, key)));
     if agent == "gemini" {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let usage = app
+            .path()
+            .app_data_dir()
+            .map_err(|error| error.to_string())?
+            .join(format!("usage-{session_id}.json"));
         let title = format!(
-            "{} --antigravity-title",
-            shell_quote(&path_text(&executable))
+            "{} --antigravity-title {}",
+            shell_quote(&path_text(&executable)),
+            shell_quote(&path_text(&usage))
         );
         command.args(["--settings", &antigravity_settings(&title, key.is_some())]);
     }
@@ -7549,7 +7600,7 @@ async fn read_usage(
     };
     tauri::async_runtime::spawn_blocking(move || {
         match agent.as_str() {
-            "claude" => {
+            "claude" | "gemini" => {
                 let directory = app
                     .path()
                     .app_data_dir()
@@ -7567,7 +7618,9 @@ async fn read_usage(
                 // Claude's limits are account-wide, while its context and cost belong to this session.
                 // Use Claude's newest report for each account-wide limit rather than hiding one when the
                 // selected session has not sent a message yet or another report omitted that window.
-                if let Ok(entries) = fs::read_dir(directory) {
+                if agent == "claude"
+                    && let Ok(entries) = fs::read_dir(directory)
+                {
                     let mut latest = [None, None];
                     for (modified, window) in entries
                         .flatten()
@@ -7635,7 +7688,6 @@ async fn read_usage(
                 .map(Some)
             }
             "qwen" => Ok(qwen_session_path(&app, &session_id).and_then(|path| qwen_context(&path))),
-            "gemini" => Ok(None),
             "kimi" => Ok(provider_session_id
                 .as_deref()
                 .and_then(|id| kimi_context(&app, id))),
