@@ -19,7 +19,7 @@ fn main() {
             return;
         }
         Some("--antigravity-title") => {
-            let _ = lite_lib::antigravity_title(arguments.next().as_deref());
+            let _ = lite_lib::antigravity_title();
             return;
         }
         _ => {}

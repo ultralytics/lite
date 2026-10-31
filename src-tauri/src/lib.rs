@@ -2025,6 +2025,7 @@ fn write_usage_snapshot(input: &serde_json::Value, path: &str) -> Result<UsageSn
             let Some(remaining) = entry
                 .get("remaining_fraction")
                 .and_then(serde_json::Value::as_f64)
+                .filter(|_| entry["disabled"] != true)
             else {
                 continue;
             };
@@ -2032,14 +2033,14 @@ fn write_usage_snapshot(input: &serde_json::Value, path: &str) -> Result<UsageSn
             let family = match family {
                 "3p" => "Claude and GPT".into(),
                 "gemini" => "Gemini".into(),
-                // A model's own limit, such as "gemini-argon-wtu", reads as "Gemini argon".
+                // A model's own limit, such as "gemini-argon-wtu-weekly", reads as "Gemini argon".
                 other => other
                     .trim_end_matches("-wtu")
                     .replacen("gemini", "Gemini", 1)
                     .replace('-', " "),
             };
             windows.push(UsageWindow {
-                label: format!("{family} {}", window.replace("weekly", "week")),
+                label: format!("{family} · {}", window.replace("weekly", "Week")),
                 used_percent: (1.0 - remaining) * 100.0,
                 resets_at: entry
                     .get("reset_in_seconds")
@@ -2089,8 +2090,8 @@ fn write_usage_snapshot(input: &serde_json::Value, path: &str) -> Result<UsageSn
 // Antigravity sends its active conversation and context to its per-session title command. Both reach
 // Lite even when the terminal is in the background, without reading the CLI's account or history. The
 // title goes out before the snapshot is written because resume depends on it, and a session launched
-// before the command named a snapshot path keeps its title.
-pub fn antigravity_title(usage_path: Option<&str>) -> Result<(), String> {
+// without a snapshot path keeps its title.
+pub fn antigravity_title() -> Result<(), String> {
     let input: serde_json::Value =
         serde_json::from_reader(std::io::stdin()).map_err(|error| error.to_string())?;
     if let Some(id) = input
@@ -2104,7 +2105,8 @@ pub fn antigravity_title(usage_path: Option<&str>) -> Result<(), String> {
             .unwrap_or_default();
         println!("lite-agy:{id} | {title}");
     }
-    usage_path.map_or(Ok(()), |path| write_usage_snapshot(&input, path).map(drop))
+    std::env::var("LITE_USAGE_PATH")
+        .map_or(Ok(()), |path| write_usage_snapshot(&input, &path).map(drop))
 }
 
 #[tauri::command]
@@ -4373,17 +4375,18 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
         .and_then(|(_, variable)| saved_api_key(app, agent, provider).map(|key| (variable, key)));
     if agent == "gemini" {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+        let title = format!(
+            "{} --antigravity-title",
+            shell_quote(&path_text(&executable))
+        );
+        command.args(["--settings", &antigravity_settings(&title, key.is_some())]);
+        // The title command inherits the snapshot path: a second quoted argument breaks Windows `cmd /c`.
         let usage = app
             .path()
             .app_data_dir()
             .map_err(|error| error.to_string())?
             .join(format!("usage-{session_id}.json"));
-        let title = format!(
-            "{} --antigravity-title {}",
-            shell_quote(&path_text(&executable)),
-            shell_quote(&path_text(&usage))
-        );
-        command.args(["--settings", &antigravity_settings(&title, key.is_some())]);
+        command.env("LITE_USAGE_PATH", usage);
     }
     // The key reaches the CLI through the variable it already reads, and only for this session.
     if let Some((variable, key)) = key {
