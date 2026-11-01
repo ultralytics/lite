@@ -750,6 +750,20 @@ export function TerminalView({
     const agent = agentRef.current;
     return terminal && (agent === "claude" || agent === "codex") ? richSelection(terminal) : undefined;
   };
+  // WebKit rewrites HTML that a page copies, inlining styles and making the spaces beside bold
+  // non-breaking, which Slack misreads, so macOS writes the clipboard natively.
+  const writeRichCopy = () => {
+    const copy = richCopy();
+    if (!copy) return false;
+    const item = {
+      "text/plain": new Blob([copy.text], { type: "text/plain" }),
+      "text/html": new Blob([copy.html], { type: "text/html" }),
+    };
+    void (IS_MAC ? invoke("write_clipboard", copy) : navigator.clipboard.write([new ClipboardItem(item)])).catch(
+      (reason) => console.error("Lite could not copy:", reason),
+    );
+    return true;
+  };
 
   // The padding belongs on the wrapper, never on the element the terminal is opened in. The fit addon
   // sizes the terminal from getComputedStyle(parent).height, which WebKit reports as the border box,
@@ -785,6 +799,20 @@ export function TerminalView({
           find(searchQuery, event.shiftKey);
           return;
         }
+        // ⌘C copies natively before the menu's Copy reaches WebKit's copy event, whose HTML WebKit rewrites.
+        if (
+          IS_MAC &&
+          event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          event.key.toLowerCase() === "c" &&
+          terminalRef.current?.element?.contains(event.target as Node) &&
+          writeRichCopy()
+        ) {
+          event.preventDefault();
+          return;
+        }
         if (matchesShortcut(event.nativeEvent, "find")) {
           event.preventDefault();
           event.stopPropagation();
@@ -809,22 +837,7 @@ export function TerminalView({
             .catch((reason) => console.error("Lite could not paste:", reason));
         }}
       />
-      <button
-        type="button"
-        hidden
-        data-context-copy
-        onClick={() => {
-          const copy = richCopy();
-          if (!copy) return;
-          const item = {
-            "text/plain": new Blob([copy.text], { type: "text/plain" }),
-            "text/html": new Blob([copy.html], { type: "text/html" }),
-          };
-          void (IS_MAC ? invoke("write_clipboard", copy) : navigator.clipboard.write([new ClipboardItem(item)])).catch(
-            (reason) => console.error("Lite could not copy:", reason),
-          );
-        }}
-      />
+      <button type="button" hidden data-context-copy onClick={writeRichCopy} />
       <button type="button" hidden data-terminal-search onClick={openSearch} />
       <button type="button" hidden data-terminal-scroll-bottom onClick={scrollToBottom} />
       {/* An open find bar takes the corner over the session actions, as an editor's find widget does. */}
