@@ -766,6 +766,14 @@ export function TerminalView({
         const copy = terminalRef.current?.element?.contains(event.target as Node) ? richCopy() : undefined;
         if (!copy) return;
         event.preventDefault();
+        // WebKit rewrites HTML that a page copies, inlining styles and making the spaces beside bold
+        // non-breaking, which Slack misreads. It leaves the clipboard alone when the event carries no data,
+        // so macOS drops xterm's text and writes both formats natively, as the context menu's Copy does.
+        if (IS_MAC) {
+          event.clipboardData.clearData();
+          void invoke("write_clipboard", copy).catch((reason) => console.error("Lite could not copy:", reason));
+          return;
+        }
         event.clipboardData.setData("text/plain", copy.text);
         event.clipboardData.setData("text/html", copy.html);
       }}
