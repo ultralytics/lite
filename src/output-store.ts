@@ -269,6 +269,11 @@ export function subscribeNotifications(sessionId: string, listener: () => void) 
   return () => sessionListeners.delete(listener);
 }
 
+// A restarted process draws its own screen, so only its bytes are replayed; listeners and input stay.
+export function resetOutput(sessionId: string) {
+  buffers.delete(sessionId);
+}
+
 export function clearOutput(sessionId: string) {
   buffers.delete(sessionId);
   listeners.delete(sessionId);
