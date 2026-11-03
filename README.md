@@ -24,7 +24,8 @@ Lite is a fast, local workspace for [Claude Code](https://code.claude.com/docs/e
 - Run Claude Code, Codex, Antigravity CLI, Kimi Code, Qwen Code, and shell sessions side by side
 - Run Codex against DeepSeek V4.1 Flash, Z.ai GLM-5.3, Xiaomi MiMo-V2.6, or OpenRouter, without changing your default Codex provider
 - Resume session tabs automatically after closing Lite or restarting your computer
-- Undo a restart or close for eight seconds before Lite stops the terminal
+- Restart a session to apply new settings and pick up where it left off
+- Undo a close for eight seconds
 - Archive sessions to stop them and free their memory, then resume them later from the bottom of the list
 - Authenticate once with each provider and reuse its existing local credentials
 - Or save API keys for supported providers in Lite and skip their sign-in flows entirely

@@ -21,12 +21,3 @@ export function without(current: Set<string>, key: string): Set<string> {
 export function including(current: Set<string>, key: string): Set<string> {
   return current.has(key) ? current : new Set(current).add(key);
 }
-
-// One key taking another's place, which is what a session does to the one it replaces: the tab that
-// was starting stops, and the tab standing in for it starts, in the one change the list redraws for.
-export function swapped(current: Set<string>, from: string, to: string): Set<string> {
-  const next = new Set(current);
-  next.delete(from);
-  next.add(to);
-  return next;
-}

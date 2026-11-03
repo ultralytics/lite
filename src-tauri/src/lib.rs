@@ -45,9 +45,12 @@ const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const CODEX_NOTIFICATION_ARGS: [&str; 7] = [
+const CODEX_NOTIFICATION_ARGS: [&str; 9] = [
     // Per-launch overrides require embedded mode; select it explicitly instead of warning on fallback.
     "--no-daemon",
+    // The alternate screen has no scrollback, so Lite could neither scroll nor return to the bottom.
+    "-c",
+    r#"tui.alternate_screen="never""#,
     "-c",
     r#"tui.notification_method="osc9""#,
     "-c",
@@ -3452,14 +3455,24 @@ fn shell_path(shell: &str) -> Option<String> {
         })
 }
 
+// Claude's installer puts its CLI in ~/.local/bin and leaves PATH to the user, so on a fresh account
+// nothing finds what Lite just installed. That directory is searched last, after the user's own PATH.
+fn user_path() -> Option<String> {
+    let path = path_cache().lock().ok().and_then(|path| path.clone());
+    #[cfg(windows)]
+    let path = path.or_else(|| std::env::var("PATH").ok());
+    let mut directories: Vec<_> = std::env::split_paths(&path?).collect();
+    if let Some(local) = std::env::home_dir().map(|home| home.join(".local").join("bin"))
+        && !directories.contains(&local)
+    {
+        directories.push(local);
+    }
+    std::env::join_paths(directories).ok()?.into_string().ok()
+}
+
 // An account shell that does not speak this command leaves nothing usable, so the search falls back to
 // the POSIX shell rather than losing every provider CLI.
 // Asking costs a login shell, so the answer is cached until Lite itself installs a CLI that changes it.
-#[cfg(unix)]
-fn user_path() -> Option<String> {
-    path_cache().lock().ok().and_then(|path| path.clone())
-}
-
 #[cfg(unix)]
 fn path_cache() -> &'static Mutex<Option<String>> {
     static PATH: std::sync::OnceLock<Mutex<Option<String>>> = std::sync::OnceLock::new();
@@ -3478,15 +3491,6 @@ fn refresh_user_path() {
     if let Ok(mut path) = path_cache().lock() {
         *path = refreshed;
     }
-}
-
-#[cfg(windows)]
-fn user_path() -> Option<String> {
-    path_cache()
-        .lock()
-        .ok()
-        .and_then(|path| path.clone())
-        .or_else(|| std::env::var("PATH").ok())
 }
 
 #[cfg(windows)]

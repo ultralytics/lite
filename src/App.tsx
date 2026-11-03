@@ -102,12 +102,13 @@ import { Spinner } from "@/components/ui/spinner";
 import { Toaster, toast } from "@/components/ui/toast";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { clearInspectorCache, Inspector, rememberGitHubReferences, SearchInput, unsavedFile } from "@/inspector";
-import { including, swapped, without } from "@/lib/utils";
+import { including, without } from "@/lib/utils";
 import { NewSessionDialog, SESSION_CHOICES } from "@/new-session-dialog";
 import {
   appendOutput,
   clearOutput,
   holdSessionWrites,
+  resetOutput,
   subscribeOutput,
   syncTerminalTheme,
   writeSession,
@@ -1636,36 +1637,6 @@ function SessionRow({
   );
 }
 
-// Kimi has no flag for starting a session: launching without an id joins the one the directory already
-// has, and only its own /new command makes another. So a restart asks for it the way a person would,
-// once the interface has drawn itself and can take the command.
-function startKimiConversation(sessionId: string) {
-  const decoder = new TextDecoder();
-  let seen = "";
-  let sent = false;
-  // Subscribing replays everything the session has already said, so the greeting can arrive inside the
-  // subscribe call itself — before it has returned the way to undo it, and before there is a wait to
-  // call off. Both are named here so that asking early is a thing this can do rather than a crash.
-  let unsubscribe: (() => void) | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const send = () => {
-    if (sent) return;
-    sent = true;
-    unsubscribe?.();
-    clearTimeout(timer);
-    writeSession(sessionId, "/new\r");
-  };
-  unsubscribe = subscribeOutput(sessionId, (data) => {
-    seen += decoder.decode(data, { stream: true });
-    if (seen.includes("Welcome to Kimi")) send();
-  });
-  // Already greeted: the listener is undone now, since there was nothing to undo when it ran, and no
-  // wait is started for a greeting that has been and gone.
-  if (sent) unsubscribe();
-  // Its greeting may change; waiting forever for the words would be worse than asking a little late.
-  else timer = setTimeout(send, 15_000);
-}
-
 // A session opened to run one command is sent it once the program in it has finished arriving. A shell
 // drains whatever was typed while it was still setting itself up — a prompt framework rebuilding its
 // line editor throws the queue away — so the command waits for output to start and then to stop, rather
@@ -2711,7 +2682,6 @@ function App() {
 
   function sessionUndoToast(
     session: Session,
-    action: "Closed" | "Restarted",
     completed: Promise<boolean>,
     undo: () => Promise<void> | void,
     cleanup: () => Promise<void>,
@@ -2728,7 +2698,7 @@ function App() {
       }
     });
     toastId = toast.add({
-      title: action,
+      title: "Closed",
       description: session.name,
       type: "success",
       timeout: 8000,
@@ -2751,21 +2721,16 @@ function App() {
     });
   }
 
-  // Restarting keeps the tab and its folder but asks the provider for a conversation of its own, so the
-  // session it resumed by id is retained only until the shared Undo window expires.
-  function replaceRecentSession(from: string, to: string) {
-    recentSessions.current = recentSessions.current.map((id) => (id === from ? to : id));
-  }
-
-  function restartSession(session: Session, select = true, recovered = false) {
-    if (!canCloseEditors(session.id)) return;
+  // Restarting replaces the provider process and resumes the same conversation, so changed settings and
+  // an updated CLI take effect without the session losing its place.
+  async function restartSession(session: Session, select = true, recovered = false) {
     // A close in flight owns this session's fate: restarting now would inherit a worktree the
     // close dialog is about to take away.
     const recovering = recoveries.current.get(session.id);
     if (recovering) {
       const restart = () => {
         const current = sessionsRef.current.find((item) => item.id === session.id);
-        if (current) restartSession(current, select, true);
+        if (current) void restartSession(current, select, true);
       };
       void recovering.then(restart, restart);
       return;
@@ -2773,112 +2738,33 @@ function App() {
     if ((!recovered && startingIds.has(session.id)) || closingIds.current.has(session.id)) return;
     recoveryFailures.current.delete(session.id);
     clearAttention(session.id);
-    const fresh: Session = {
-      ...session,
-      id: crypto.randomUUID(),
-      createdAt: Date.now(),
-      providerSessionId: undefined,
-      running: false,
-    };
-    const restarted = restartSessionNow(session, fresh, select);
-    sessionUndoToast(
-      session,
-      "Restarted",
-      restarted,
-      () => {
-        const restored = { ...session, running: false };
-        replaceRecentSession(fresh.id, session.id);
-        setStartingIds((current) => swapped(current, fresh.id, session.id));
-        setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
-        setSelectedId((current) => (current === fresh.id ? session.id : current));
-        resumed.current = session.id;
-        return restarted.then(async (successful) => {
-          if (!successful) return;
-          runs.current.delete(fresh.id);
-          forgetShellAgent(fresh.id);
-          try {
-            await invoke("stop_session", { sessionId: fresh.id });
-          } catch (reason) {
-            replaceRecentSession(session.id, fresh.id);
-            setStartingIds((current) => swapped(current, session.id, fresh.id));
-            const relaunched = { ...fresh, running: false };
-            setSessions((current) => current.map((item) => (item.id === session.id ? relaunched : item)));
-            setSelectedId((current) => (current === session.id ? fresh.id : current));
-            resumed.current = fresh.id;
-            if (await launch(relaunched, true)) {
-              setError(`Restart could not be undone; the restarted session was restored: ${String(reason)}`);
-            }
-            await invoke("delete_session_data", { sessionId: session.id }).catch(() => {});
-            clearOutput(session.id);
-            clearInspectorCache(session.id);
-            return;
-          }
-          await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
-          clearOutput(fresh.id);
-          clearInspectorCache(fresh.id);
-          await launch(restored, true);
-        });
-      },
-      async () => {
-        await invoke("delete_session_data", { sessionId: session.id }).catch((reason) =>
-          setError(`Session restarted, but local cleanup failed: ${String(reason)}`),
-        );
-        clearOutput(session.id);
-        clearInspectorCache(session.id);
-      },
-    );
-  }
-
-  async function restartSessionNow(session: Session, fresh: Session, select: boolean): Promise<boolean> {
-    const wasWorking = workingRef.current.has(session.id);
     runs.current.delete(session.id);
     forgetShellAgent(session.id);
-    replaceRecentSession(session.id, fresh.id);
-    setStartingIds((current) => including(current, fresh.id));
-    setSessions((current) => current.map((item) => (item.id === session.id ? fresh : item)));
+    setStartingIds((current) => including(current, session.id));
     if (select) {
-      setSelectedId(fresh.id);
-      resumed.current = fresh.id;
+      setSelectedId(session.id);
+      resumed.current = session.id;
     }
     try {
       await invoke("stop_session", { sessionId: session.id });
     } catch (reason) {
-      replaceRecentSession(fresh.id, session.id);
-      const restored = { ...session, running: false };
-      setStartingIds((current) => swapped(current, fresh.id, session.id));
-      setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
-      setSelectedId((current) => (current === fresh.id ? session.id : current));
-      resumed.current = session.id;
-      if (await launch(restored, true)) {
-        setError(`Session could not be restarted; the original session was restored: ${String(reason)}`);
-      }
-      return false;
+      // The old process is still running, so launching again reattaches to it.
+      if (await launch(session, true)) setError(`Session could not be restarted: ${String(reason)}`);
+      return;
     }
     const timer = workTimers.current.get(session.id);
     if (timer) window.clearTimeout(timer);
     workTimers.current.delete(session.id);
     setWorking((current) => without(current, session.id));
-    if (!(await launch(fresh, false))) {
-      replaceRecentSession(fresh.id, session.id);
-      await invoke("delete_session_data", { sessionId: fresh.id }).catch(() => {});
-      clearOutput(fresh.id);
-      clearInspectorCache(fresh.id);
-      const restored = { ...session, running: false };
-      setSessions((current) => current.map((item) => (item.id === fresh.id ? restored : item)));
-      setSelectedId((current) => (current === fresh.id ? session.id : current));
-      resumed.current = session.id;
-      if (await launch(restored, true)) {
-        if (wasWorking) markWorking(session.id);
-        setError("Restart failed; the original session was restored.");
-      }
-      return false;
-    }
-    if (fresh.agent === "kimi") startKimiConversation(fresh.id);
-    return true;
+    // The resumed process draws its conversation again, so the old output is not replayed above it.
+    resetOutput(session.id);
+    const stopped = { ...session, running: false };
+    setSessions((current) => current.map((item) => (item.id === session.id ? stopped : item)));
+    await launch(stopped, true);
   }
 
   function restartAllSessions() {
-    for (const session of active) restartSession(session, session.id === selectedId);
+    for (const session of active) void restartSession(session, session.id === selectedId);
   }
 
   // Runs one worktree cleanup operation after another: the caller gets its own result, the
@@ -3145,7 +3031,6 @@ function App() {
     }
     sessionUndoToast(
       session,
-      "Closed",
       stopped,
       () => {
         // An archived session goes back to the archive as it was, with nothing to start.
