@@ -45,9 +45,12 @@ const MISSING_DIRECTORY: &str = "The selected folder no longer exists";
 const CODEX_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 // Requests stay bounded so an app server that never answers surfaces an error instead of a stuck tab.
 const CODEX_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
-const CODEX_NOTIFICATION_ARGS: [&str; 7] = [
+const CODEX_NOTIFICATION_ARGS: [&str; 9] = [
     // Per-launch overrides require embedded mode; select it explicitly instead of warning on fallback.
     "--no-daemon",
+    // The alternate screen has no scrollback, so Lite could neither scroll nor return to the bottom.
+    "-c",
+    r#"tui.alternate_screen="never""#,
     "-c",
     r#"tui.notification_method="osc9""#,
     "-c",
