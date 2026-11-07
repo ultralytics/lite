@@ -69,7 +69,9 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             bundles: dmg,app
-          - platform: ubuntu-latest
+          # Oldest hosted image on purpose: the AppImage needs the build host's glibc or newer and the updater
+          # installs it over working copies (an ubuntu-latest/26.04 build needs glibc 2.43). Move when 22.04 retires.
+          - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             bundles: appimage
           - platform: windows-latest
