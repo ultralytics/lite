@@ -118,7 +118,7 @@ const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$
 // unquoted paths stop at prose punctuation. Never start inside a URL or a longer path. A lowercase
 // host such as example.com/page starts a web address, which keeps its query and fragment.
 const FILE_PATH =
-  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])(?:(['"`])([^'"`\r\n]+)\1|((?:(?:file:\/\/|((?:[a-z\d-]+\.)+[a-z]{2,})(?=\/))[\p{L}\p{N}\p{M}_.~:/?#@!$&+,;=%[\]-]+(?<![.,;:!?\]])|(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{1,2})?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]+[\\/]?)))(?::(\d+)(?::\d+)?)?/gu;
+  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])(?:(['"`])([^'"`\r\n]+)\1|((?:file:\/\/[^\s'"`<>()[\]]+|((?:[a-z\d-]+\.)+[a-z]{2,})(?=\/)[\p{L}\p{N}\p{M}_.~:/?#@!$&+,;=%[\]-]+(?<![.,;:!?\]])|(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{1,2})?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]+[\\/]?)))(?::(\d+)(?::\d+)?)?/gu;
 
 // Read the full wrapped line and map UTF-16 offsets back to terminal cells, including wide characters.
 function fileLinks(
@@ -157,7 +157,7 @@ function fileLinks(
           range: { start: cells[start], end: cells[end] },
           text: text.slice(start, end + 1),
           activate: (event: MouseEvent) =>
-            open(event, host ? `https://${value}` : path.replace(/^@/, ""), line ? Number(line) : undefined),
+            open(event, host && !line ? `https://${value}` : path.replace(/^@/, ""), line ? Number(line) : undefined),
         },
       ];
     },
