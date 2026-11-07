@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import { type ILink, type ITheme, Terminal } from "@xterm/xterm";
 import { ArrowDownToLine, ChevronDown, ChevronUp, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -114,10 +115,10 @@ const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]
 const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$/;
 
 // Paths need a separator or :line so names such as Node.js stay prose. Quoting permits spaces;
-// unquoted paths stop at prose punctuation. Never start inside a URL or a longer path. Web addresses,
-// including a bare lowercase host such as example.com/page, keep their query and fragment.
+// unquoted paths stop at prose punctuation. Never start inside a URL or a longer path. A lowercase
+// host such as example.com/page starts a web address, which keeps its query and fragment.
 const FILE_PATH =
-  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])(?:(['"`])([^'"`\r\n]+)\1|((?:(?:(?:file|https?):\/\/|((?:[a-z\d-]+\.)+[a-z]{2,})(?=\/))[\p{L}\p{N}\p{M}_.~:/?#@!$&+,;=%[\]-]+(?<![.,;:!?\]])|(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{1,2})?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]+[\\/]?)))(?::(\d+)(?::\d+)?)?/gu;
+  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])(?:(['"`])([^'"`\r\n]+)\1|((?:(?:file:\/\/|((?:[a-z\d-]+\.)+[a-z]{2,})(?=\/))[\p{L}\p{N}\p{M}_.~:/?#@!$&+,;=%[\]-]+(?<![.,;:!?\]])|(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{1,2})?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]+[\\/]?)))(?::(\d+)(?::\d+)?)?/gu;
 
 // Read the full wrapped line and map UTF-16 offsets back to terminal cells, including wide characters.
 function fileLinks(
@@ -141,12 +142,11 @@ function fileLinks(
   return Array.from(text.matchAll(FILE_PATH)).flatMap(
     ({ 0: link, 1: quote, 2: quoted, 3: plain, 4: host, 5: suffix, index }) => {
       const value = quoted ?? plain.replace(/\.+$/, "");
-      const url = host ? `https://${value}` : /^https?:/.test(value) && value;
       const [path, embeddedLine] = value.split(/:(\d+)(?::\d+)?$/);
       const line = suffix ?? embeddedLine;
       if (
         (!/[\\/]/.test(path) && !(line && /(?<!\.)\.[A-Za-z]\w*$/.test(path))) ||
-        /^(?!file:|https?:)[a-z][a-z\d+.-]*:\/\//i.test(path)
+        /^(?!file:)[a-z][a-z\d+.-]*:\/\//i.test(path)
       )
         return [];
       const start = index + (quote ? 1 : 0);
@@ -156,7 +156,8 @@ function fileLinks(
         {
           range: { start: cells[start], end: cells[end] },
           text: text.slice(start, end + 1),
-          activate: (event: MouseEvent) => open(event, url || path.replace(/^@/, ""), line ? Number(line) : undefined),
+          activate: (event: MouseEvent) =>
+            open(event, host ? `https://${value}` : path.replace(/^@/, ""), line ? Number(line) : undefined),
         },
       ];
     },
@@ -464,6 +465,7 @@ export function TerminalView({
     const searchResults = searchAddon.onDidChangeResults((result) => {
       setSearchResult(result);
     });
+    terminal.loadAddon(new WebLinksAddon(openLink));
     // Shells count emoji as two cells; xterm's default Unicode 6 widths count one and misplace the cursor.
     terminal.loadAddon(new Unicode11Addon());
     terminal.unicode.activeVersion = "11";
