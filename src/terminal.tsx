@@ -115,9 +115,10 @@ const SEQUENCES = /\x1b(?:[\]P][\s\S]*?(?:\x07|\x1b\\)|\[[\x30-\x3f]*[ -/]*[@-~]
 const PARTIAL = /\x1b(?:[\]P](?:(?!\x07|\x1b\\)[\s\S])*|\[[\x30-\x3f]*[ -/]*|O)$/;
 
 // Paths need a separator or :line so names such as Node.js stay prose. Quoting permits spaces;
-// unquoted paths stop at prose punctuation. Never start inside a URL or a longer path.
+// unquoted paths stop at prose punctuation. Never start inside a URL or a longer path. A lowercase
+// host such as example.com/page starts a web address, which keeps its query and fragment.
 const FILE_PATH =
-  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])(?:(['"`])([^'"`\r\n]+)\1|((?:file:\/\/[^\s'"`<>()[\]]+|(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{1,2})?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]+[\\/]?)))(?::(\d+)(?::\d+)?)?/gu;
+  /(?<![\p{L}\p{N}\p{M}_@+.~:/\\-])(?:(['"`])([^'"`\r\n]+)\1|((?:file:\/\/[^\s'"`<>()[\]]+|((?:[a-z\d-]+\.)+[a-z]{2,})(?=\/)[\p{L}\p{N}\p{M}_.~:/?#@!$&+,;=%[\]-]+(?<![.,;:!?\]])|(?:~[\\/]|[A-Za-z]:[\\/]|[\\/]{1,2})?(?:[\p{L}\p{N}\p{M}_@+.-]+[\\/])*[\p{L}\p{N}\p{M}_@+.-]+[\\/]?)))(?::(\d+)(?::\d+)?)?/gu;
 
 // Read the full wrapped line and map UTF-16 offsets back to terminal cells, including wide characters.
 function fileLinks(
@@ -139,7 +140,7 @@ function fileLinks(
       for (let i = 0; i < chars.length; i++) cells.push({ x: x + 1, y: row + 1 });
     }
   return Array.from(text.matchAll(FILE_PATH)).flatMap(
-    ({ 0: link, 1: quote, 2: quoted, 3: plain, 4: suffix, index }) => {
+    ({ 0: link, 1: quote, 2: quoted, 3: plain, 4: host, 5: suffix, index }) => {
       const value = quoted ?? plain.replace(/\.+$/, "");
       const [path, embeddedLine] = value.split(/:(\d+)(?::\d+)?$/);
       const line = suffix ?? embeddedLine;
@@ -155,7 +156,8 @@ function fileLinks(
         {
           range: { start: cells[start], end: cells[end] },
           text: text.slice(start, end + 1),
-          activate: (event: MouseEvent) => open(event, path.replace(/^@/, ""), line ? Number(line) : undefined),
+          activate: (event: MouseEvent) =>
+            open(event, host && !line ? `https://${value}` : path.replace(/^@/, ""), line ? Number(line) : undefined),
         },
       ];
     },
