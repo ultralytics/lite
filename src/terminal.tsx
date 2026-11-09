@@ -214,12 +214,12 @@ function inlineHtml(text: string, styles: number[]) {
 }
 
 // Slack pastes plain text that looks like Markdown, such as a list, as Markdown and ignores the HTML, so the
-// text carries the same emphasis. A table stays as drawn so its columns line up, and so does Codex's bold
+// text carries the same emphasis. A table stays as drawn so its columns line up, and so does Codex's styled
 // heading, which its # markers already mark.
 function inlineMarkdown({ text, styles, table }: Line) {
   const head = text.trimStart();
   const marker = HEADING.exec(head)?.[0].length;
-  if (table || (marker && styles[text.length - head.length + marker] & 1)) return text;
+  if (table || (marker && styles[text.length - head.length + marker])) return text;
   return styledRuns(text, styles, (body, style) => {
     for (const [bit, [, mark]] of STYLES.entries()) if (body && style & (1 << bit)) body = mark + body + mark;
     return body;
