@@ -79,6 +79,7 @@ import {
 import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import { contentZoomStyle } from "@/theme";
 import {
+  type Agent,
   type DirectoryCursor,
   type DirectoryListing,
   type FileEntry,
@@ -1997,22 +1998,28 @@ function GitPanel({
 }
 
 // Each harness and provider reports what it reports; Lite never fills the gap with a number of its own.
-function missingUsage(session: Session): string {
+function missingUsage(session: Session, fromShell: boolean): string {
   if (session.host) return "Remote sessions report no provider usage.";
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
     return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
   if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
+  if (fromShell) return SHELL_CONTEXT;
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
 
+// Lite gives each harness it starts the hooks that report session context; one started from a shell has none.
+const SHELL_CONTEXT = "Session context appears only for sessions Lite starts.";
+
 function UsagePanel({
   session,
+  fromShell,
   fontSize,
   active,
   onLoad,
 }: {
   session: Session;
+  fromShell: boolean;
   fontSize: number;
   active: boolean;
   onLoad: (tab: InspectorTab) => void;
@@ -2098,7 +2105,7 @@ function UsagePanel({
           ) : usage === null ? (
             <Empty>
               <EmptyHeader>
-                <EmptyDescription>{missingUsage(session)}</EmptyDescription>
+                <EmptyDescription>{missingUsage(session, fromShell)}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
@@ -2140,7 +2147,7 @@ function UsagePanel({
                 </section>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  Session context appears after this harness reports its first response.
+                  {fromShell ? SHELL_CONTEXT : "Session context appears after this harness reports its first response."}
                 </p>
               )}
               {usage.windows.length || usage.bankedResets != null || usage.lifetimeTokens != null ? (
@@ -2206,6 +2213,7 @@ function UsagePanel({
 
 export const Inspector = memo(function Inspector({
   session,
+  agent,
   remote,
   fontSize,
   fileBrowserVersion,
@@ -2216,6 +2224,8 @@ export const Inspector = memo(function Inspector({
   onCollapse,
 }: {
   session: Session;
+  // The agent a shell session is running, whose usage it reports while it runs.
+  agent?: Agent;
   remote: string;
   fontSize: number;
   fileBrowserVersion: number;
@@ -2342,7 +2352,7 @@ export const Inspector = memo(function Inspector({
                 </Tooltip>
               ))}
             </TabsList>
-            {tab === "usage" && session.agent === "shell" ? null : (
+            {tab === "usage" && session.agent === "shell" && !agent ? null : (
               <ActionIconButton
                 size="icon-sm"
                 className="ml-auto"
@@ -2391,7 +2401,8 @@ export const Inspector = memo(function Inspector({
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
               <UsagePanel
                 key={reload.usage}
-                session={session}
+                session={agent ? { ...session, agent } : session}
+                fromShell={Boolean(agent)}
                 fontSize={fontSize}
                 active={tab === "usage" && !collapsed}
                 onLoad={finishRefresh}

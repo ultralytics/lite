@@ -3696,6 +3696,7 @@ function App() {
                     <PanelBoundary key={`${selected.id}:${sessionVisit}`}>
                       <Inspector
                         session={selected}
+                        agent={shellAgents.get(selected.id)}
                         remote={remote}
                         fontSize={inspectorFontSize}
                         fileBrowserVersion={fileBrowserVersion}
