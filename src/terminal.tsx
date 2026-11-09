@@ -173,7 +173,12 @@ const HEADING = /^#{1,6} /;
 const TABLE = /[─━│┃┌┐└┘├┤┬┴┼]/;
 // A link may hold balanced parentheses, as Wikipedia's do, but not end on prose punctuation.
 const LINK = /(https?:\/\/(?:\([^\s()<>"]*\)|[^\s()<>"])*(?:\([^\s()<>"]*\)|[^\s()<>".,;:!?'"]))/;
-const STYLES = ["strong", "em", "del"];
+// Each style's HTML tag and the Markdown that marks it.
+const STYLES = [
+  ["strong", "**"],
+  ["em", "*"],
+  ["del", "~~"],
+];
 
 // A selected row as the CLI drew it: each character's style, the column the row ends at, the column its wrapped
 // continuation starts at, its indentation, the columns its first word spans, and whether it belongs to a table.
@@ -183,21 +188,42 @@ function escapeHtml(text: string) {
   return text.replace(/[&<>"]/g, (character) => `&#${character.charCodeAt(0)};`);
 }
 
-function inlineHtml(text: string, styles: number[]) {
-  let html = "";
+// Each run of one style, marked by wrap around its words while the spaces that end it stay outside.
+function styledRuns(text: string, styles: number[], wrap: (body: string, style: number) => string) {
+  let out = "";
   for (let start = 0, end = 1; start < text.length; start = end++) {
     while (end < text.length && styles[end] === styles[start]) end++;
     const segment = text.slice(start, end);
     const body = segment.trimEnd();
+    out += wrap(body, styles[start]) + segment.slice(body.length);
+  }
+  return out;
+}
+
+function inlineHtml(text: string, styles: number[]) {
+  const html = styledRuns(text, styles, (body, style) => {
     let run = body
       .split(LINK)
       .map((part, index) => (index % 2 ? `<a href="${escapeHtml(part)}">${escapeHtml(part)}</a>` : escapeHtml(part)))
       .join("");
-    for (const [bit, tag] of STYLES.entries()) if (styles[start] & (1 << bit)) run = `<${tag}>${run}</${tag}>`;
-    html += run + segment.slice(body.length);
-  }
+    for (const [bit, [tag]] of STYLES.entries()) if (style & (1 << bit)) run = `<${tag}>${run}</${tag}>`;
+    return run;
+  });
   // HTML collapses a run of spaces, so all but the last are kept as non-breaking ones.
   return html.replace(/ (?= )/g, "&nbsp;");
+}
+
+// Slack pastes plain text that looks like Markdown, such as a list, as Markdown and ignores the HTML, so the
+// text carries the same emphasis. A table stays as drawn so its columns line up, and so does Codex's styled
+// heading, which its # markers already mark.
+function inlineMarkdown({ text, styles, table }: Line) {
+  const head = text.trimStart();
+  const marker = HEADING.exec(head)?.[0].length;
+  if (table || (marker && styles[text.length - head.length + marker])) return text;
+  return styledRuns(text, styles, (body, style) => {
+    for (const [bit, [, mark]] of STYLES.entries()) if (body && style & (1 << bit)) body = mark + body + mark;
+    return body;
+  });
 }
 
 // The CLIs draw Markdown as styled cells and break a paragraph wherever its next word stops fitting, so a
@@ -352,7 +378,7 @@ function richSelection(terminal: Terminal) {
   }
   flush();
   close(-1);
-  return { text: lines.map((line) => line.text).join("\n"), html: `<meta charset="utf-8">${html}` };
+  return { text: lines.map(inlineMarkdown).join("\n"), html: `<meta charset="utf-8">${html}` };
 }
 
 const FONT_FAMILY = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
