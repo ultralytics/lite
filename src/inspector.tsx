@@ -1998,13 +1998,13 @@ function GitPanel({
 }
 
 // Each harness and provider reports what it reports; Lite never fills the gap with a number of its own.
-function missingUsage(session: Session, shell: boolean): string {
+function missingUsage(session: Session, fromShell: boolean): string {
   if (session.host) return "Remote sessions report no provider usage.";
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
     return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
   if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
-  if (shell) return SHELL_CONTEXT;
+  if (fromShell) return SHELL_CONTEXT;
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
 
@@ -2013,13 +2013,13 @@ const SHELL_CONTEXT = "Session context appears only for sessions Lite starts.";
 
 function UsagePanel({
   session,
-  shell,
+  fromShell,
   fontSize,
   active,
   onLoad,
 }: {
   session: Session;
-  shell: boolean;
+  fromShell: boolean;
   fontSize: number;
   active: boolean;
   onLoad: (tab: InspectorTab) => void;
@@ -2105,7 +2105,7 @@ function UsagePanel({
           ) : usage === null ? (
             <Empty>
               <EmptyHeader>
-                <EmptyDescription>{missingUsage(session, shell)}</EmptyDescription>
+                <EmptyDescription>{missingUsage(session, fromShell)}</EmptyDescription>
               </EmptyHeader>
             </Empty>
           ) : (
@@ -2147,7 +2147,7 @@ function UsagePanel({
                 </section>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  {shell ? SHELL_CONTEXT : "Session context appears after this harness reports its first response."}
+                  {fromShell ? SHELL_CONTEXT : "Session context appears after this harness reports its first response."}
                 </p>
               )}
               {usage.windows.length || usage.bankedResets != null || usage.lifetimeTokens != null ? (
@@ -2402,7 +2402,7 @@ export const Inspector = memo(function Inspector({
               <UsagePanel
                 key={reload.usage}
                 session={agent ? { ...session, agent } : session}
-                shell={Boolean(agent)}
+                fromShell={Boolean(agent)}
                 fontSize={fontSize}
                 active={tab === "usage" && !collapsed}
                 onLoad={finishRefresh}
