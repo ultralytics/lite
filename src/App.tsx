@@ -2584,6 +2584,24 @@ function App() {
   async function signIn(agent: Session["agent"]) {
     setSettingsOpen(false);
     try {
+      if (agent === "shell") {
+        // A new computer gets Git and the GitHub CLI first; the toast appears only when that takes a while.
+        let setup = "";
+        const notice = setTimeout(() => {
+          setup = toast.add({
+            title: "Setting up GitHub",
+            description: "Installing Git and the GitHub CLI this computer is missing.",
+            type: "loading",
+            timeout: 0,
+            actionProps: { children: "Cancel", onClick: () => void invoke("cancel_install") },
+          });
+        }, 500);
+        const ready = await invoke<boolean>("prepare_github").finally(() => {
+          clearTimeout(notice);
+          if (setup) toast.close(setup);
+        });
+        if (!ready) return;
+      }
       const grant =
         (await invoke<{ id: string; path: string } | null>("default_directory", { path: null })) ??
         (await invoke<{ id: string; path: string } | null>("choose_directory"));

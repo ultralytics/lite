@@ -3499,13 +3499,14 @@ fn path_cache() -> &'static Mutex<Option<String>> {
     PATH.get_or_init(|| Mutex::new(None))
 }
 
+// Git's installer adds itself to the machine PATH, which Lite did not start with.
 #[cfg(windows)]
 fn refresh_user_path() {
     let refreshed = Command::new("powershell")
         .args([
             "-NoProfile",
             "-Command",
-            "[Environment]::GetEnvironmentVariable('Path','User')",
+            "[Environment]::GetEnvironmentVariable('Path','User') + ';' + [Environment]::GetEnvironmentVariable('Path','Machine')",
         ])
         .output()
         .ok()
@@ -4565,7 +4566,7 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
         });
         // Installs the given version, or the latest without one. False means it was cancelled.
         let install = |version: Option<&str>| -> Result<bool, String> {
-            let mut command = if let Some((brew, cask, name)) = &homebrew {
+            let command = if let Some((brew, cask, name)) = &homebrew {
                 let mut command = Command::new(brew);
                 command.arg("upgrade");
                 if *cask {
@@ -4605,38 +4606,18 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 } else {
                     ""
                 };
-                // Kimi runs its shell commands through Git Bash, which a new Windows computer lacks.
                 #[cfg(windows)]
-                let git = if agent == "kimi" {
-                    r#"if (-not (Get-Command git -ErrorAction SilentlyContinue) -and -not (Test-Path "$env:ProgramFiles\Git\bin\bash.exe")) { if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'Kimi Code needs Git for Windows. Install it from https://git-scm.com, then try again.' }; winget install --id Git.Git --exact --source winget --silent --accept-package-agreements --accept-source-agreements; if ($LASTEXITCODE) { throw 'Could not install Git for Windows, which Kimi Code needs.' } }; "#
+                let mut command = installer_shell(&if argument.is_empty() {
+                    format!("irm {url}.ps1 | iex")
                 } else {
-                    ""
-                };
-                #[cfg(windows)]
-                let mut command = {
-                    let powershell = resolve_executable("powershell")
-                        .ok_or("Could not find PowerShell in your PATH")?;
-                    let mut command = Command::new(powershell);
-                    command
-                        .args(["-NoProfile", "-Command"])
-                        .arg(if argument.is_empty() {
-                            format!("{git}irm {url}.ps1 | iex")
-                        } else {
-                            format!("{git}& ([scriptblock]::Create((irm {url}.ps1))) '{argument}'")
-                        });
-                    command
-                };
+                    format!("& ([scriptblock]::Create((irm {url}.ps1))) '{argument}'")
+                })?;
                 // A pipe reports only bash's status, and bash given nothing succeeds, so the script
-                // is downloaded first and a failed download fails the install. A new Linux computer
-                // can have wget without curl.
+                // is downloaded first and a failed download fails the install.
                 #[cfg(unix)]
-                let mut command = {
-                    let mut command = Command::new("/bin/sh");
-                    command.arg("-c").arg(format!(
-                        "fetch='curl -fsSL'; command -v curl >/dev/null || fetch='wget -qO-'; script=$($fetch {url}.sh) && printf '%s\\n' \"$script\" | bash -s -- {argument}"
-                    ));
-                    command
-                };
+                let mut command = installer_shell(&format!(
+                    "script=$($fetch {url}.sh) && printf '%s\\n' \"$script\" | bash -s -- {argument}"
+                ))?;
                 let variable = match agent.as_str() {
                     "kimi" => Some("KIMI_VERSION"),
                     "codex" => Some("CODEX_RELEASE"),
@@ -4652,67 +4633,13 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 }
                 command
             };
-            if let Some(path) = user_path() {
-                command.env("PATH", path);
-            }
-            // No one can answer a prompt, so an installer that asks (sudo, a confirmation) fails
-            // instead of waiting forever.
-            command
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped());
-            // A pipeline installer keeps stderr open through every process it spawned, so a cancel
-            // has to reach the whole group before this read can end.
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                command.process_group(0);
-            }
-            let mut child = command
-                .spawn()
-                .map_err(|error| format!("Could not run the installer: {error}"))?;
-            let mut stderr = child
-                .stderr
-                .take()
-                .ok_or("Could not read installer errors")?;
-            let installer = app.state::<Installer>();
-            let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
-            if matches!(*slot, InstallSlot::Cancelled) {
-                stop_installer(child);
-                return Ok(false);
-            }
-            *slot = InstallSlot::Running(child);
-            drop(slot);
-            let mut detail = Vec::with_capacity(16_384);
-            let mut buffer = [0_u8; 4096];
-            while let Ok(count) = stderr.read(&mut buffer) {
-                if count == 0 {
-                    break;
-                }
-                detail.extend_from_slice(&buffer[..count]);
-                if detail.len() > 16_384 {
-                    detail.drain(..detail.len() - 16_384);
-                }
-            }
-            let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
-            let InstallSlot::Running(mut child) = std::mem::take(&mut *slot) else {
-                return Ok(false);
-            };
-            drop(slot);
-            let status = child
-                .wait()
-                .map_err(|error| format!("Could not finish the installer: {error}"))?;
-            if status.success() {
-                return Ok(true);
-            }
-            let detail = String::from_utf8_lossy(&detail);
-            let detail = detail.trim();
-            Err(if detail.is_empty() {
-                format!("The {executable} installer exited with {status}")
-            } else {
-                detail.to_owned()
-            })
+            run_installer(&app, command, executable)
         };
+        // Agents run Git on nearly every task, and a new computer does not have it. A failed Git install
+        // still lets the agent's own install go ahead; a cancel stops both.
+        if let Ok(false) = install_git(&app) {
+            return Ok(None);
+        }
         // A release can publish without the files it needs to start. Homebrew and Antigravity's
         // updater do not install a selected version, so only the other installers can roll back.
         let previous = (homebrew.is_none() && agent != "gemini")
@@ -4755,6 +4682,196 @@ fn cancel_install(installer: State<'_, Installer>) -> Result<(), String> {
         stop_installer(child);
     }
     Ok(())
+}
+
+// An install script runs in PowerShell on Windows and in sh elsewhere, where $fetch downloads with curl
+// or, on a new Linux computer that has only wget, with wget.
+fn installer_shell(script: &str) -> Result<Command, String> {
+    #[cfg(windows)]
+    let command = {
+        let powershell =
+            resolve_executable("powershell").ok_or("Could not find PowerShell in your PATH")?;
+        let mut command = Command::new(powershell);
+        command.args(["-NoProfile", "-Command", script]);
+        command
+    };
+    #[cfg(unix)]
+    let command = {
+        let mut command = Command::new("/bin/sh");
+        command.arg("-c").arg(format!(
+            "fetch='curl -fsSL'; command -v curl >/dev/null || fetch='wget -qO-'; {script}"
+        ));
+        command
+    };
+    Ok(command)
+}
+
+// Runs one installer where Cancel can stop it. False means it was cancelled.
+fn run_installer(app: &AppHandle, mut command: Command, name: &str) -> Result<bool, String> {
+    if let Some(path) = user_path() {
+        command.env("PATH", path);
+    }
+    // No one can answer a prompt, so an installer that asks (sudo, a confirmation) fails
+    // instead of waiting forever.
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    // A pipeline installer keeps stderr open through every process it spawned, so a cancel
+    // has to reach the whole group before this read can end.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not run the {name} installer: {error}"))?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or("Could not read installer errors")?;
+    let installer = app.state::<Installer>();
+    let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+    if matches!(*slot, InstallSlot::Cancelled) {
+        stop_installer(child);
+        return Ok(false);
+    }
+    *slot = InstallSlot::Running(child);
+    drop(slot);
+    let mut detail = Vec::with_capacity(16_384);
+    let mut buffer = [0_u8; 4096];
+    while let Ok(count) = stderr.read(&mut buffer) {
+        if count == 0 {
+            break;
+        }
+        detail.extend_from_slice(&buffer[..count]);
+        if detail.len() > 16_384 {
+            detail.drain(..detail.len() - 16_384);
+        }
+    }
+    let mut slot = installer.0.lock().map_err(|error| error.to_string())?;
+    let InstallSlot::Running(mut child) = std::mem::take(&mut *slot) else {
+        return Ok(false);
+    };
+    drop(slot);
+    let status = child
+        .wait()
+        .map_err(|error| format!("Could not finish the installer: {error}"))?;
+    if status.success() {
+        return Ok(true);
+    }
+    let detail = String::from_utf8_lossy(&detail);
+    let detail = detail.trim();
+    Err(if detail.is_empty() {
+        format!("The {name} installer exited with {status}")
+    } else {
+        detail.to_owned()
+    })
+}
+
+// A new computer has no Git: macOS has only a stub until Apple's Command Line Tools are installed,
+// Windows has none, and Linux leaves it to the package manager. Each system's own installer adds it,
+// asking for the administrator's approval in its own window. False means it was cancelled.
+fn install_git(app: &AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    let command = {
+        if Command::new("/usr/bin/xcode-select")
+            .arg("-p")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return Ok(true);
+        }
+        // Apple's installer runs on its own after this request, so Lite waits for it for up to an hour.
+        installer_shell(
+            "/usr/bin/xcode-select --install 2>/dev/null; for _ in $(seq 720); do /usr/bin/xcode-select -p >/dev/null 2>&1 && exit 0; sleep 5; done; echo 'Apple’s Command Line Tools, which include Git, did not finish installing.' >&2; exit 1",
+        )?
+    };
+    #[cfg(target_os = "linux")]
+    let command = {
+        if executable_exists("git") {
+            return Ok(true);
+        }
+        let pkexec = resolve_executable("pkexec")
+            .ok_or("Install Git with your package manager, for example `sudo apt install git`")?;
+        let mut command = Command::new(pkexec);
+        command.args([
+            "/bin/sh",
+            "-c",
+            "for manager in 'apt-get install -y git' 'dnf install -y git' 'zypper --non-interactive install git' 'pacman -S --noconfirm git'; do command -v ${manager%% *} >/dev/null && exec $manager; done; echo 'Could not find a package manager to install Git with.' >&2; exit 1",
+        ]);
+        command
+    };
+    #[cfg(windows)]
+    let command = {
+        if executable_exists("git") {
+            return Ok(true);
+        }
+        installer_shell(
+            "if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'Install Git for Windows from https://git-scm.com, then try again.' }; winget install --id Git.Git --exact --source winget --silent --accept-package-agreements --accept-source-agreements; if ($LASTEXITCODE) { throw 'Could not install Git for Windows.' }",
+        )?
+    };
+    let done = run_installer(app, command, "Git")?;
+    refresh_user_path();
+    Ok(done)
+}
+
+// Lite lists and clones repositories through the GitHub CLI's own sign-in, and its clones run Git, so
+// a new computer gets both first. The CLI is GitHub's release build, unpacked into ~/.local/bin with no
+// administrator needed. False means it was cancelled.
+#[tauri::command]
+async fn prepare_github(app: AppHandle) -> Result<bool, String> {
+    let handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        if !install_git(&app)? {
+            return Ok(false);
+        }
+        if executable_exists("gh") {
+            return Ok(true);
+        }
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let release = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .user_agent("Lite")
+            .build()
+            .map_err(|error| error.to_string())?
+            .get("https://api.github.com/repos/cli/cli/releases/latest")
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .and_then(reqwest::blocking::Response::text)
+            .map_err(|error| format!("Could not find the latest GitHub CLI: {error}"))?;
+        let version = serde_json::from_str::<serde_json::Value>(&release)
+            .ok()
+            .and_then(|release| version_number(release.get("tag_name")?.as_str()?.trim_start_matches('v')))
+            .ok_or("Could not read the latest GitHub CLI version")?;
+        let arch = if cfg!(target_arch = "aarch64") {
+            "arm64"
+        } else {
+            "amd64"
+        };
+        let base = format!("https://github.com/cli/cli/releases/download/v{version}/gh_{version}");
+        #[cfg(windows)]
+        let command = installer_shell(&format!(
+            r#"$ErrorActionPreference = 'Stop'; $d = Join-Path $env:TEMP ([guid]::NewGuid()); Invoke-WebRequest '{base}_windows_{arch}.zip' -OutFile "$d.zip" -UseBasicParsing; Expand-Archive "$d.zip" $d; New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Move-Item -Force "$d\bin\gh.exe" "$HOME\.local\bin\gh.exe"; Remove-Item -Recurse -Force $d, "$d.zip""#
+        ))?;
+        #[cfg(unix)]
+        let command = installer_shell(&format!(
+            r#"d=$(mktemp -d) && $fetch {base}_{} > "$d/gh" && tar -xf "$d/gh" -C "$d" && mkdir -p "$HOME/.local/bin" && mv -f "$d"/gh_*/bin/gh "$HOME/.local/bin/gh"; status=$?; rm -rf "$d"; exit $status"#,
+            if cfg!(target_os = "macos") {
+                format!("macOS_{arch}.zip")
+            } else {
+                format!("linux_{arch}.tar.gz")
+            }
+        ))?;
+        run_installer(&app, command, "GitHub CLI")
+    })
+    .await
+    .map_err(|error| format!("Could not set up GitHub: {error}"))?;
+    if let Ok(mut slot) = handle.state::<Installer>().0.lock() {
+        *slot = InstallSlot::Idle;
+    }
+    result
 }
 
 #[tauri::command]
@@ -8078,6 +8195,7 @@ pub fn run() {
             agent_update_available,
             cancel_install,
             install_agent,
+            prepare_github,
             open_setup_docs,
             open_url,
             open_directory,
