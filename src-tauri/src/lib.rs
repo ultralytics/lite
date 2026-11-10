@@ -82,8 +82,37 @@ enum InstallSlot {
     Running(std::process::Child),
 }
 
+// The second lock is held for a whole install or GitHub setup, so only one runs at a time.
 #[derive(Default)]
-struct Installer(Mutex<InstallSlot>);
+struct Installer(Mutex<InstallSlot>, Mutex<()>);
+
+impl Installer {
+    fn turn(&self) -> Result<InstallTurn<'_>, String> {
+        let running = self
+            .1
+            .try_lock()
+            .map_err(|_| "Wait for the install that is running to finish".to_owned())?;
+        Ok(InstallTurn {
+            installer: self,
+            _running: running,
+        })
+    }
+}
+
+// Ending a turn leaves the slot idle before the next turn can start, so a cancel from this one cannot
+// reach the next.
+struct InstallTurn<'a> {
+    installer: &'a Installer,
+    _running: std::sync::MutexGuard<'a, ()>,
+}
+
+impl Drop for InstallTurn<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut slot) = self.installer.0.lock() {
+            *slot = InstallSlot::Idle;
+        }
+    }
+}
 
 // Installers are pipelines, so only the whole group ending releases the stderr pipe Lite reads.
 fn stop_installer(mut child: std::process::Child) {
@@ -96,7 +125,10 @@ fn stop_installer(mut child: std::process::Child) {
         .args(["/T", "/F", "/PID", &child.id().to_string()])
         .status();
     let _ = child.kill();
-    let _ = child.wait();
+    // A child running as root through pkexec ignores Lite's kill, so its end is awaited off this thread.
+    thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -4521,8 +4553,9 @@ fn version_number(output: &str) -> Option<String> {
 // Resolves to no version when the install was cancelled, which is not a failure to report.
 #[tauri::command]
 async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, String> {
-    let handle = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
+        let installer = app.state::<Installer>();
+        let _turn = installer.turn()?;
         let executable = agent_executable(&agent).ok_or("Unknown session type")?;
         // An update goes through whoever owns the installed CLI: an install script refuses to replace
         // a Homebrew link, or leaves a Homebrew or npm copy shadowing the new one, so each upgrades its own.
@@ -4637,7 +4670,9 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
         };
         // Agents run Git on nearly every task, and a new computer does not have it. A failed Git install
         // still lets the agent's own install go ahead; a cancel stops both.
-        if let Ok(false) = install_git(&app) {
+        if installed.is_none()
+            && let Ok(false) = install_git(&app)
+        {
             return Ok(None);
         }
         // A release can publish without the files it needs to start. Homebrew and Antigravity's
@@ -4666,12 +4701,7 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
         )
     })
     .await
-    .map_err(|error| format!("Could not finish the install: {error}"))?;
-    // Every exit leaves the slot idle, so a cancel from this attempt cannot reach the next one.
-    if let Ok(mut slot) = handle.state::<Installer>().0.lock() {
-        *slot = InstallSlot::Idle;
-    }
-    result
+    .map_err(|error| format!("Could not finish the install: {error}"))?
 }
 
 #[tauri::command]
@@ -4774,22 +4804,23 @@ fn run_installer(app: &AppHandle, mut command: Command, name: &str) -> Result<bo
 // Windows has none, and Linux leaves it to the package manager. Each system's own installer adds it,
 // asking for the administrator's approval in its own window. False means it was cancelled.
 fn install_git(app: &AppHandle) -> Result<bool, String> {
+    // Apple's installer runs on its own once asked, and can be declined, so Lite does not wait for it.
     #[cfg(target_os = "macos")]
-    let command = {
-        if Command::new("/usr/bin/xcode-select")
+    {
+        let _ = app;
+        if !Command::new("/usr/bin/xcode-select")
             .arg("-p")
             .output()
             .is_ok_and(|output| output.status.success())
         {
-            return Ok(true);
+            let _ = Command::new("/usr/bin/xcode-select")
+                .arg("--install")
+                .output();
         }
-        // Apple's installer runs on its own after this request, so Lite waits for it for up to an hour.
-        installer_shell(
-            "/usr/bin/xcode-select --install 2>/dev/null; for _ in $(seq 720); do /usr/bin/xcode-select -p >/dev/null 2>&1 && exit 0; sleep 5; done; echo 'Apple’s Command Line Tools, which include Git, did not finish installing.' >&2; exit 1",
-        )?
-    };
+        Ok(true)
+    }
     #[cfg(target_os = "linux")]
-    let command = {
+    {
         if executable_exists("git") {
             return Ok(true);
         }
@@ -4799,22 +4830,28 @@ fn install_git(app: &AppHandle) -> Result<bool, String> {
         command.args([
             "/bin/sh",
             "-c",
-            "for manager in 'apt-get install -y git' 'dnf install -y git' 'zypper --non-interactive install git' 'pacman -S --noconfirm git'; do command -v ${manager%% *} >/dev/null && exec $manager; done; echo 'Could not find a package manager to install Git with.' >&2; exit 1",
+            "if command -v apt-get >/dev/null; then apt-get update -qq && exec apt-get install -y git; elif command -v dnf >/dev/null; then exec dnf install -y git; elif command -v zypper >/dev/null; then exec zypper --non-interactive install git; elif command -v pacman >/dev/null; then exec pacman -S --noconfirm git; fi; echo 'Could not find a package manager to install Git with.' >&2; exit 1",
         ]);
-        command
-    };
+        let done = run_installer(app, command, "Git")?;
+        refresh_user_path();
+        Ok(done)
+    }
+    // Git installed while Lite runs is not on the PATH Lite started with, so its usual folder counts too.
     #[cfg(windows)]
-    let command = {
-        if executable_exists("git") {
+    {
+        if executable_exists("git")
+            || std::env::var_os("ProgramFiles")
+                .is_some_and(|folder| Path::new(&folder).join(r"Git\cmd\git.exe").is_file())
+        {
             return Ok(true);
         }
-        installer_shell(
+        let command = installer_shell(
             "if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'Install Git for Windows from https://git-scm.com, then try again.' }; winget install --id Git.Git --exact --source winget --silent --accept-package-agreements --accept-source-agreements; if ($LASTEXITCODE) { throw 'Could not install Git for Windows.' }",
-        )?
-    };
-    let done = run_installer(app, command, "Git")?;
-    refresh_user_path();
-    Ok(done)
+        )?;
+        let done = run_installer(app, command, "Git")?;
+        refresh_user_path();
+        Ok(done)
+    }
 }
 
 // Lite lists and clones repositories through the GitHub CLI's own sign-in, and its clones run Git, so
@@ -4822,9 +4859,11 @@ fn install_git(app: &AppHandle) -> Result<bool, String> {
 // administrator needed. False means it was cancelled.
 #[tauri::command]
 async fn prepare_github(app: AppHandle) -> Result<bool, String> {
-    let handle = app.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        if !install_git(&app)? {
+    tauri::async_runtime::spawn_blocking(move || {
+        let installer = app.state::<Installer>();
+        let _turn = installer.turn()?;
+        // Signing in needs only gh, so a failed Git install leaves it to go ahead; a cancel stops it.
+        if let Ok(false) = install_git(&app) {
             return Ok(false);
         }
         if executable_exists("gh") {
@@ -4853,7 +4892,7 @@ async fn prepare_github(app: AppHandle) -> Result<bool, String> {
         let base = format!("https://github.com/cli/cli/releases/download/v{version}/gh_{version}");
         #[cfg(windows)]
         let command = installer_shell(&format!(
-            r#"$ErrorActionPreference = 'Stop'; $d = Join-Path $env:TEMP ([guid]::NewGuid()); Invoke-WebRequest '{base}_windows_{arch}.zip' -OutFile "$d.zip" -UseBasicParsing; Expand-Archive "$d.zip" $d; New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Move-Item -Force "$d\bin\gh.exe" "$HOME\.local\bin\gh.exe"; Remove-Item -Recurse -Force $d, "$d.zip""#
+            r#"$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $d = Join-Path $env:TEMP ([guid]::NewGuid()); Invoke-WebRequest '{base}_windows_{arch}.zip' -OutFile "$d.zip" -UseBasicParsing; Expand-Archive "$d.zip" $d; New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Move-Item -Force "$d\bin\gh.exe" "$HOME\.local\bin\gh.exe"; Remove-Item -Recurse -Force $d, "$d.zip""#
         ))?;
         #[cfg(unix)]
         let command = installer_shell(&format!(
@@ -4867,11 +4906,7 @@ async fn prepare_github(app: AppHandle) -> Result<bool, String> {
         run_installer(&app, command, "GitHub CLI")
     })
     .await
-    .map_err(|error| format!("Could not set up GitHub: {error}"))?;
-    if let Ok(mut slot) = handle.state::<Installer>().0.lock() {
-        *slot = InstallSlot::Idle;
-    }
-    result
+    .map_err(|error| format!("Could not set up GitHub: {error}"))?
 }
 
 #[tauri::command]
