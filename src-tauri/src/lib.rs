@@ -3477,7 +3477,10 @@ fn user_path() -> Option<String> {
     let path = path_cache().lock().ok().and_then(|path| path.clone());
     #[cfg(windows)]
     let path = path.or_else(|| std::env::var("PATH").ok());
-    let mut directories: Vec<_> = std::env::split_paths(&path?).collect();
+    // An empty entry means the current folder, which must never supply a CLI.
+    let mut directories: Vec<_> = std::env::split_paths(&path?)
+        .filter(|directory| !directory.as_os_str().is_empty())
+        .collect();
     if let Some(local) = std::env::home_dir().map(|home| home.join(".local").join("bin"))
         && !directories.contains(&local)
     {
