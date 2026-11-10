@@ -80,7 +80,7 @@ Install the provider CLIs you want to use:
 - [Claude Code](https://code.claude.com/docs/en/setup)
 - [Codex](https://learn.chatgpt.com/docs/codex/cli)
 - [Antigravity CLI](https://antigravity.google/docs/getting-started?tab=cli)
-- [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) — Windows also needs Git for Windows
+- [Kimi Code](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html) — on Windows, Lite also installs the Git for Windows it needs
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/)
 
 Open each provider in Lite and complete its normal sign-in once. Every CLI keeps credentials in its own local store, so later Lite sessions reuse the same authentication. Lite never reads or copies those stores. The new-session dialog installs a missing CLI for you.
