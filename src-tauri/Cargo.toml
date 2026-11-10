@@ -2,7 +2,7 @@
 
 [package]
 name = "lite"
-version = "0.0.94"
+version = "0.0.95"
 description = "A fast, local workspace for AI coding agents."
 authors = ["Ultralytics"]
 edition = "2024"
