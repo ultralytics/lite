@@ -7968,8 +7968,72 @@ async fn check_update(app: AppHandle) -> Result<Option<ReleaseInfo>, String> {
         .map_err(|error| error.to_string())
 }
 
+// macOS runs a downloaded app that Finder never moved from a read-only copy, which no update can replace.
+// Lite copies itself where dragging it would have put it and lifts the download mark, so the copy opens in
+// place, as apps that offer to move themselves to Applications do. A Lite already there is opened instead,
+// so nothing the user has is replaced; it can update itself.
+#[cfg(target_os = "macos")]
+fn move_to_applications(bundle: &Path) -> Result<PathBuf, String> {
+    let name = bundle.file_name().ok_or("Could not read Lite's location")?;
+    let unquarantine = |target: &Path| {
+        Command::new("/usr/bin/xattr")
+            .args(["-dr", "com.apple.quarantine"])
+            .arg(target)
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    let mut folders = vec![PathBuf::from("/Applications")];
+    folders.extend(std::env::home_dir().map(|home| home.join("Applications")));
+    for folder in folders {
+        let target = folder.join(name);
+        if target.exists() {
+            unquarantine(&target);
+            return Ok(target);
+        }
+        let _ = fs::create_dir_all(&folder);
+        if Command::new("/usr/bin/ditto")
+            .arg(bundle)
+            .arg(&target)
+            .status()
+            .is_ok_and(|status| status.success())
+            && unquarantine(&target)
+        {
+            return Ok(target);
+        }
+        let _ = fs::remove_dir_all(&target);
+    }
+    Err("Drag Lite into your Applications folder, open it from there, and update again".into())
+}
+
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<(), String> {
+    // Lite reopens from where it can be updated, and the update is offered there again.
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.ancestors().nth(3).map(Path::to_path_buf))
+        .filter(|bundle| bundle.to_string_lossy().contains("/AppTranslocation/"))
+    {
+        tauri::async_runtime::spawn_blocking(move || {
+            let moved = move_to_applications(&bundle)?;
+            if Command::new("/usr/bin/open")
+                .arg("-n")
+                .arg(&moved)
+                .status()
+                .is_ok_and(|status| status.success())
+            {
+                return Ok(());
+            }
+            Err(format!(
+                "Lite is in {}, but could not open it there. Open it from that folder and update again",
+                path_text(&moved)
+            ))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
+        app.exit(0);
+        return Ok(());
+    }
     let cleanup_app = app.clone();
     let update = app
         .updater_builder()
