@@ -4438,13 +4438,7 @@ async fn agent_availability(
         "claude" => "Install the Claude Code CLI, then sign in with `claude`.",
         "codex" => "Install the Codex CLI, then sign in with `codex login`.",
         "gemini" => "Install Antigravity CLI, then run `agy` to sign in.",
-        "kimi" => {
-            if cfg!(windows) {
-                "Install Git for Windows, then run `irm https://code.kimi.com/kimi-code/install.ps1 | iex` in PowerShell."
-            } else {
-                "Install Kimi Code with `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`."
-            }
-        }
+        "kimi" => "Install Kimi Code, then run `kimi`.",
         "qwen" => "Install Qwen Code, then run `qwen`.",
         "shell" => {
             return Ok(Availability {
@@ -4611,6 +4605,13 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 } else {
                     ""
                 };
+                // Kimi runs its shell commands through Git Bash, which a new Windows computer lacks.
+                #[cfg(windows)]
+                let git = if agent == "kimi" {
+                    r#"if (-not (Get-Command git -ErrorAction SilentlyContinue) -and -not (Test-Path "$env:ProgramFiles\Git\bin\bash.exe")) { if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'Kimi Code needs Git for Windows. Install it from https://git-scm.com, then try again.' }; winget install --id Git.Git --exact --source winget --silent --accept-package-agreements --accept-source-agreements; if ($LASTEXITCODE) { throw 'Could not install Git for Windows, which Kimi Code needs.' } }; "#
+                } else {
+                    ""
+                };
                 #[cfg(windows)]
                 let mut command = {
                     let powershell = resolve_executable("powershell")
@@ -4619,19 +4620,20 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                     command
                         .args(["-NoProfile", "-Command"])
                         .arg(if argument.is_empty() {
-                            format!("irm {url}.ps1 | iex")
+                            format!("{git}irm {url}.ps1 | iex")
                         } else {
-                            format!("& ([scriptblock]::Create((irm {url}.ps1))) '{argument}'")
+                            format!("{git}& ([scriptblock]::Create((irm {url}.ps1))) '{argument}'")
                         });
                     command
                 };
                 // A pipe reports only bash's status, and bash given nothing succeeds, so the script
-                // is downloaded first and a failed download fails the install.
+                // is downloaded first and a failed download fails the install. A new Linux computer
+                // can have wget without curl.
                 #[cfg(unix)]
                 let mut command = {
                     let mut command = Command::new("/bin/sh");
                     command.arg("-c").arg(format!(
-                        "script=$(curl -fsSL {url}.sh) && printf '%s\\n' \"$script\" | bash -s -- {argument}"
+                        "fetch='curl -fsSL'; command -v curl >/dev/null || fetch='wget -qO-'; script=$($fetch {url}.sh) && printf '%s\\n' \"$script\" | bash -s -- {argument}"
                     ));
                     command
                 };
