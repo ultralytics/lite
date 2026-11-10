@@ -4531,8 +4531,11 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
         let executable = agent_executable(&agent).ok_or("Unknown session type")?;
         // An update goes through whoever owns the installed CLI: an install script refuses to replace
         // a Homebrew link, or leaves a Homebrew or npm copy shadowing the new one, so each upgrades its own.
-        let owner = resolve_executable(executable).and_then(|path| fs::canonicalize(path).ok());
-        let homebrew = owner.as_ref().and_then(|path| {
+        let installed = resolve_executable(executable);
+        let homebrew = installed
+            .as_ref()
+            .and_then(|path| fs::canonicalize(path).ok())
+            .and_then(|path| {
                 let parts: Vec<_> = path.iter().collect();
                 let room = parts
                     .iter()
@@ -4544,18 +4547,29 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                     parts.get(room + 1)?.to_os_string(),
                 ))
             });
-        // npm keeps a package under node_modules, which on Windows sits beside the command shim.
+        // A script links its CLI from its own folder. Any other Codex or Qwen came from npm, often through
+        // a version manager's shim, so it updates in place there; a fresh install needs no Node.js.
+        #[cfg(unix)]
+        let script = std::env::home_dir().map(|home| home.join(".local").join("bin"));
+        #[cfg(windows)]
+        let script = std::env::var_os("LOCALAPPDATA").map(|local| {
+            PathBuf::from(local).join(if agent == "codex" {
+                r"Programs\OpenAI\Codex\bin"
+            } else {
+                r"qwen-code\bin"
+            })
+        });
         let npm = match agent.as_str() {
             "codex" => Some("@openai/codex"),
             "qwen" => Some("@qwen-code/qwen-code"),
             _ => None,
         }
         .filter(|_| {
-            owner.as_ref().is_some_and(|path| {
-                path.iter().any(|part| part == "node_modules")
-                    || path.with_file_name("node_modules").is_dir()
-            })
-        });
+            installed
+                .as_ref()
+                .is_some_and(|path| path.parent() != script.as_deref())
+        })
+        .zip(resolve_executable("npm"));
         // Installs the given version, or the latest without one. False means it was cancelled.
         let install = |version: Option<&str>| -> Result<bool, String> {
             let mut command = if let Some((brew, cask, name)) = &homebrew {
@@ -4570,9 +4584,7 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 let mut command = Command::new(agy);
                 command.arg("update");
                 command
-            } else if let Some(package) = npm {
-                let npm = resolve_executable("npm")
-                    .ok_or("Could not find npm, which installed this CLI")?;
+            } else if let Some((package, npm)) = &npm {
                 let mut command = Command::new(npm);
                 command.args([
                     "install",
