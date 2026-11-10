@@ -4445,9 +4445,7 @@ async fn agent_availability(
                 "Install Kimi Code with `curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash`."
             }
         }
-        "qwen" => {
-            "Install Qwen Code with `npm install -g @qwen-code/qwen-code@latest`, then run `qwen`."
-        }
+        "qwen" => "Install Qwen Code, then run `qwen`.",
         "shell" => {
             return Ok(Availability {
                 available: true,
@@ -4531,11 +4529,10 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
     let handle = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let executable = agent_executable(&agent).ok_or("Unknown session type")?;
-        // An update goes through whoever owns the installed CLI: npm or an install script refuses to
-        // replace a Homebrew link, or leaves it shadowing the new copy, so Homebrew upgrades its own.
-        let homebrew = resolve_executable(executable)
-            .and_then(|path| fs::canonicalize(path).ok())
-            .and_then(|path| {
+        // An update goes through whoever owns the installed CLI: an install script refuses to replace
+        // a Homebrew link, or leaves a Homebrew or npm copy shadowing the new one, so each upgrades its own.
+        let owner = resolve_executable(executable).and_then(|path| fs::canonicalize(path).ok());
+        let homebrew = owner.as_ref().and_then(|path| {
                 let parts: Vec<_> = path.iter().collect();
                 let room = parts
                     .iter()
@@ -4547,6 +4544,18 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                     parts.get(room + 1)?.to_os_string(),
                 ))
             });
+        // npm keeps a package under node_modules, which on Windows sits beside the command shim.
+        let npm = match agent.as_str() {
+            "codex" => Some("@openai/codex"),
+            "qwen" => Some("@qwen-code/qwen-code"),
+            _ => None,
+        }
+        .filter(|_| {
+            owner.as_ref().is_some_and(|path| {
+                path.iter().any(|part| part == "node_modules")
+                    || path.with_file_name("node_modules").is_dir()
+            })
+        });
         // Installs the given version, or the latest without one. False means it was cancelled.
         let install = |version: Option<&str>| -> Result<bool, String> {
             let mut command = if let Some((brew, cask, name)) = &homebrew {
@@ -4561,13 +4570,28 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 let mut command = Command::new(agy);
                 command.arg("update");
                 command
-            } else if agent == "kimi" || agent == "claude" || agent == "gemini" {
+            } else if let Some(package) = npm {
+                let npm = resolve_executable("npm")
+                    .ok_or("Could not find npm, which installed this CLI")?;
+                let mut command = Command::new(npm);
+                command.args([
+                    "install",
+                    "-g",
+                    &format!("{package}@{}", version.unwrap_or("latest")),
+                ]);
+                command
+            } else {
+                // Each official script installs a self-contained CLI, so a new user needs no Node.js.
                 let url = match agent.as_str() {
                     "kimi" => "https://code.kimi.com/kimi-code/install",
                     "gemini" => "https://antigravity.google/cli/install",
+                    "codex" => "https://chatgpt.com/codex/install",
+                    "qwen" => {
+                        "https://qwen-code-assets.oss-cn-hangzhou.aliyuncs.com/installation/install-qwen-standalone"
+                    }
                     _ => "https://claude.ai/install",
                 };
-                // Claude's script takes its version as an argument and Kimi's from the environment.
+                // Claude's script takes its version as an argument and the others from the environment.
                 let argument = if agent == "claude" {
                     version.unwrap_or_default()
                 } else {
@@ -4597,25 +4621,19 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                     ));
                     command
                 };
-                if agent == "kimi"
-                    && let Some(version) = version
-                {
-                    command.env("KIMI_VERSION", version);
-                }
-                command
-            } else {
-                let package = match agent.as_str() {
-                    "codex" => "@openai/codex",
-                    "qwen" => "@qwen-code/qwen-code",
-                    _ => return Err("This session type cannot be installed automatically".into()),
+                let variable = match agent.as_str() {
+                    "kimi" => Some("KIMI_VERSION"),
+                    "codex" => Some("CODEX_RELEASE"),
+                    "qwen" => Some("QWEN_INSTALL_VERSION"),
+                    _ => None,
                 };
-                let npm = resolve_executable("npm").ok_or("Install Node.js and npm first")?;
-                let mut command = Command::new(npm);
-                command.args([
-                    "install",
-                    "-g",
-                    &format!("{package}@{}", version.unwrap_or("latest")),
-                ]);
+                if let (Some(variable), Some(version)) = (variable, version) {
+                    command.env(variable, version);
+                }
+                // Codex offers to start itself, and reading the terminal would stop this process group.
+                if agent == "codex" {
+                    command.env("CODEX_NON_INTERACTIVE", "1");
+                }
                 command
             };
             if let Some(path) = user_path() {
