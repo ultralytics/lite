@@ -87,30 +87,14 @@ enum InstallSlot {
 struct Installer(Mutex<InstallSlot>, Mutex<()>);
 
 impl Installer {
-    fn turn(&self) -> Result<InstallTurn<'_>, String> {
-        let running = self
+    // A turn starts from an idle slot, so a cancel that landed after the last turn cannot stop this one.
+    fn turn(&self) -> Result<std::sync::MutexGuard<'_, ()>, String> {
+        let turn = self
             .1
             .try_lock()
             .map_err(|_| "Wait for the install that is running to finish".to_owned())?;
-        Ok(InstallTurn {
-            installer: self,
-            _running: running,
-        })
-    }
-}
-
-// Ending a turn leaves the slot idle before the next turn can start, so a cancel from this one cannot
-// reach the next.
-struct InstallTurn<'a> {
-    installer: &'a Installer,
-    _running: std::sync::MutexGuard<'a, ()>,
-}
-
-impl Drop for InstallTurn<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut slot) = self.installer.0.lock() {
-            *slot = InstallSlot::Idle;
-        }
+        *self.0.lock().map_err(|error| error.to_string())? = InstallSlot::Idle;
+        Ok(turn)
     }
 }
 
@@ -4830,19 +4814,17 @@ fn install_git(app: &AppHandle) -> Result<bool, String> {
         command.args([
             "/bin/sh",
             "-c",
-            "if command -v apt-get >/dev/null; then apt-get update -qq && exec apt-get install -y git; elif command -v dnf >/dev/null; then exec dnf install -y git; elif command -v zypper >/dev/null; then exec zypper --non-interactive install git; elif command -v pacman >/dev/null; then exec pacman -S --noconfirm git; fi; echo 'Could not find a package manager to install Git with.' >&2; exit 1",
+            "if command -v apt-get >/dev/null; then apt-get update -qq; exec apt-get install -y git; elif command -v dnf >/dev/null; then exec dnf install -y git; elif command -v zypper >/dev/null; then exec zypper --non-interactive install git; elif command -v pacman >/dev/null; then exec pacman -S --noconfirm git; fi; echo 'Could not find a package manager to install Git with.' >&2; exit 1",
         ]);
         let done = run_installer(app, command, "Git")?;
         refresh_user_path();
         Ok(done)
     }
-    // Git installed while Lite runs is not on the PATH Lite started with, so its usual folder counts too.
+    // Git installed while Lite runs is not on the PATH Lite started with, so that PATH is read again.
     #[cfg(windows)]
     {
-        if executable_exists("git")
-            || std::env::var_os("ProgramFiles")
-                .is_some_and(|folder| Path::new(&folder).join(r"Git\cmd\git.exe").is_file())
-        {
+        refresh_user_path();
+        if executable_exists("git") {
             return Ok(true);
         }
         let command = installer_shell(
