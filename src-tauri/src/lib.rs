@@ -8014,20 +8014,23 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
         .and_then(|executable| executable.ancestors().nth(3).map(Path::to_path_buf))
         .filter(|bundle| bundle.to_string_lossy().contains("/AppTranslocation/"))
     {
-        let moved = tauri::async_runtime::spawn_blocking(move || move_to_applications(&bundle))
-            .await
-            .map_err(|error| error.to_string())??;
-        if !Command::new("/usr/bin/open")
-            .arg("-n")
-            .arg(&moved)
-            .status()
-            .is_ok_and(|status| status.success())
-        {
-            return Err(format!(
+        tauri::async_runtime::spawn_blocking(move || {
+            let moved = move_to_applications(&bundle)?;
+            if Command::new("/usr/bin/open")
+                .arg("-n")
+                .arg(&moved)
+                .status()
+                .is_ok_and(|status| status.success())
+            {
+                return Ok(());
+            }
+            Err(format!(
                 "Lite is in {}, but could not open it there. Open it from that folder and update again",
                 path_text(&moved)
-            ));
-        }
+            ))
+        })
+        .await
+        .map_err(|error| error.to_string())??;
         app.exit(0);
         return Ok(());
     }
