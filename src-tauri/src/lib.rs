@@ -4568,8 +4568,7 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
             installed
                 .as_ref()
                 .is_some_and(|path| path.parent() != script.as_deref())
-        })
-        .zip(resolve_executable("npm"));
+        });
         // Installs the given version, or the latest without one. False means it was cancelled.
         let install = |version: Option<&str>| -> Result<bool, String> {
             let mut command = if let Some((brew, cask, name)) = &homebrew {
@@ -4584,7 +4583,10 @@ async fn install_agent(app: AppHandle, agent: String) -> Result<Option<String>, 
                 let mut command = Command::new(agy);
                 command.arg("update");
                 command
-            } else if let Some((package, npm)) = &npm {
+            } else if let Some(package) = npm {
+                let npm = resolve_executable("npm").ok_or_else(|| {
+                    format!("Could not find npm to update {executable}. Update it the way you installed it")
+                })?;
                 let mut command = Command::new(npm);
                 command.args([
                     "install",
