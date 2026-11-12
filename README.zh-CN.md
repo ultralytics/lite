@@ -60,12 +60,14 @@ Lite 刻意保持安静：空闲就是空闲。它不索引你的仓库、不监
 
 ### Linux
 
-下载文件名以 `_linux_amd64.AppImage` 结尾的便携版资源。
+在 Ubuntu、Debian 及其衍生系统上，下载文件名以 `_linux_amd64.deb` 结尾的资源，ARM 电脑则下载以 `_linux_arm64.deb` 结尾的资源。双击即可安装 Lite，然后从应用程序列表中打开 **Lite**。
+
+在其他发行版上，下载文件名以 `_linux_amd64.AppImage` 结尾的便携版资源，ARM 电脑则下载以 `_linux_aarch64.AppImage` 结尾的资源。
 
 ```bash
 # AppImage
-chmod +x Lite_*_linux_amd64.AppImage
-./Lite_*_linux_amd64.AppImage
+chmod +x Lite_*.AppImage
+./Lite_*.AppImage
 ```
 
 安装 Lite 之后，点击顶栏的齿轮打开 **设置**，在“关于”中选择 **Check for Updates**，即可安装带签名的更新并重启 Lite。正式版启动后还会检查一次，并在版本徽标上显示结果；Lite 从不在未经你操作的情况下下载或安装更新。

@@ -4855,19 +4855,19 @@ async fn prepare_github(app: AppHandle) -> Result<bool, String> {
             return Ok(true);
         }
         let _ = rustls::crypto::ring::default_provider().install_default();
+        // The latest release redirects to its tag, which GitHub's API would ration by network address.
         let release = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(10))
-            .user_agent("Lite")
             .build()
             .map_err(|error| error.to_string())?
-            .get("https://api.github.com/repos/cli/cli/releases/latest")
+            .get("https://github.com/cli/cli/releases/latest")
             .send()
             .and_then(reqwest::blocking::Response::error_for_status)
-            .and_then(reqwest::blocking::Response::text)
             .map_err(|error| format!("Could not find the latest GitHub CLI: {error}"))?;
-        let version = serde_json::from_str::<serde_json::Value>(&release)
-            .ok()
-            .and_then(|release| version_number(release.get("tag_name")?.as_str()?.trim_start_matches('v')))
+        let version = release
+            .url()
+            .path_segments()
+            .and_then(|mut tag| version_number(tag.next_back()?.trim_start_matches('v')))
             .ok_or("Could not read the latest GitHub CLI version")?;
         let arch = if cfg!(target_arch = "aarch64") {
             "arm64"
