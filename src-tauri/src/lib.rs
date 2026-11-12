@@ -4709,7 +4709,12 @@ fn installer_shell(script: &str) -> Result<Command, String> {
         let powershell =
             resolve_executable("powershell").ok_or("Could not find PowerShell in your PATH")?;
         let mut command = Command::new(powershell);
-        command.args(["-NoProfile", "-Command", script]);
+        // A new Windows account refuses PowerShell's own script modules, which hash and unpack downloads,
+        // and drawing download progress slows a large download to a crawl.
+        command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]);
+        command.arg(format!(
+            "$ProgressPreference = 'SilentlyContinue'; {script}"
+        ));
         command
     };
     #[cfg(unix)]
@@ -4855,19 +4860,19 @@ async fn prepare_github(app: AppHandle) -> Result<bool, String> {
             return Ok(true);
         }
         let _ = rustls::crypto::ring::default_provider().install_default();
+        // The latest release redirects to its tag, which GitHub's API would ration by network address.
         let release = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(10))
-            .user_agent("Lite")
             .build()
             .map_err(|error| error.to_string())?
-            .get("https://api.github.com/repos/cli/cli/releases/latest")
+            .get("https://github.com/cli/cli/releases/latest")
             .send()
             .and_then(reqwest::blocking::Response::error_for_status)
-            .and_then(reqwest::blocking::Response::text)
             .map_err(|error| format!("Could not find the latest GitHub CLI: {error}"))?;
-        let version = serde_json::from_str::<serde_json::Value>(&release)
-            .ok()
-            .and_then(|release| version_number(release.get("tag_name")?.as_str()?.trim_start_matches('v')))
+        let version = release
+            .url()
+            .path_segments()
+            .and_then(|mut tag| version_number(tag.next_back()?.trim_start_matches('v')))
             .ok_or("Could not read the latest GitHub CLI version")?;
         let arch = if cfg!(target_arch = "aarch64") {
             "arm64"
@@ -4877,7 +4882,7 @@ async fn prepare_github(app: AppHandle) -> Result<bool, String> {
         let base = format!("https://github.com/cli/cli/releases/download/v{version}/gh_{version}");
         #[cfg(windows)]
         let command = installer_shell(&format!(
-            r#"$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $d = Join-Path $env:TEMP ([guid]::NewGuid()); Invoke-WebRequest '{base}_windows_{arch}.zip' -OutFile "$d.zip" -UseBasicParsing; Expand-Archive "$d.zip" $d; New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Move-Item -Force "$d\bin\gh.exe" "$HOME\.local\bin\gh.exe"; Remove-Item -Recurse -Force $d, "$d.zip""#
+            r#"$ErrorActionPreference = 'Stop'; $d = Join-Path $env:TEMP ([guid]::NewGuid()); Invoke-WebRequest '{base}_windows_{arch}.zip' -OutFile "$d.zip" -UseBasicParsing; Expand-Archive "$d.zip" $d; New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Move-Item -Force "$d\bin\gh.exe" "$HOME\.local\bin\gh.exe"; Remove-Item -Recurse -Force $d, "$d.zip""#
         ))?;
         #[cfg(unix)]
         let command = installer_shell(&format!(
