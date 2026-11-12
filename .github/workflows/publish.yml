@@ -73,7 +73,10 @@ jobs:
           # installs it over working copies (an ubuntu-latest/26.04 build needs glibc 2.43). Move when 22.04 retires.
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-            bundles: appimage
+            bundles: appimage,deb
+          - platform: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            bundles: appimage,deb
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             bundles: nsis
@@ -190,11 +193,12 @@ jobs:
           VERSION=${TAG#v}
           NOTES=$(jq -r '.body | capture("<!-- lite-release-notes:start -->\\n(?<notes>[\\s\\S]*?)\\n<!-- lite-release-notes:end -->").notes' <<< "$RELEASE")
           MANIFEST=$(jq -n --arg version "$VERSION" --arg notes "$NOTES" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{version: $version, notes: $notes, pub_date: $date, platforms: {}}')
-          # Each target's updater bundle, and the two names the updater may look it up by.
+          # Each updater bundle, and the names the updater may look it up by. A target that builds two
+          # bundles hands over two signatures, told apart by the bundle's extension.
           while read -r TARGET ASSET PLATFORMS; do
             URL=$(jq -r --arg name "$ASSET" 'map(select(.name == $name)) | first.url // empty' <<< "$ASSETS")
             test -n "$URL"
-            SIGNATURE=$(find "$RUNNER_TEMP/signatures/signature-$TARGET" -name '*.sig' -exec cat {} +)
+            SIGNATURE=$(find "$RUNNER_TEMP/signatures/signature-$TARGET" -name "*.${ASSET##*.}.sig" -exec cat {} +)
             test -n "$SIGNATURE"
             for PLATFORM in ${PLATFORMS//,/ }; do
               MANIFEST=$(jq --arg platform "$PLATFORM" --arg url "$URL" --arg signature "$SIGNATURE" '.platforms[$platform] = {signature: $signature, url: $url}' <<< "$MANIFEST")
@@ -202,6 +206,9 @@ jobs:
           done <<EOF
           aarch64-apple-darwin Lite_${VERSION}_darwin_aarch64.app.tar.gz darwin-aarch64,darwin-aarch64-app
           x86_64-unknown-linux-gnu Lite_${VERSION}_linux_amd64.AppImage linux-x86_64,linux-x86_64-appimage
+          x86_64-unknown-linux-gnu Lite_${VERSION}_linux_amd64.deb linux-x86_64-deb
+          aarch64-unknown-linux-gnu Lite_${VERSION}_linux_aarch64.AppImage linux-aarch64,linux-aarch64-appimage
+          aarch64-unknown-linux-gnu Lite_${VERSION}_linux_arm64.deb linux-aarch64-deb
           x86_64-pc-windows-msvc Lite_${VERSION}_windows_x64-setup.exe windows-x86_64,windows-x86_64-nsis
           EOF
           printf '%s\n' "$MANIFEST" > "$RUNNER_TEMP/latest.json"
@@ -214,12 +221,12 @@ jobs:
         run: |
           ASSETS=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets")
           VERSION=${TAG#v}
-          jq -e --arg version "$VERSION" '([.[].name] | sort) == (["Lite_\($version)_darwin_aarch64.app.tar.gz", "Lite_\($version)_darwin_aarch64.dmg", "Lite_\($version)_linux_amd64.AppImage", "Lite_\($version)_windows_x64-setup.exe", "latest.json", "sbom.spdx.json"] | sort)' <<< "$ASSETS" >/dev/null
+          jq -e --arg version "$VERSION" '([.[].name] | sort) == (["Lite_\($version)_darwin_aarch64.app.tar.gz", "Lite_\($version)_darwin_aarch64.dmg", "Lite_\($version)_linux_amd64.AppImage", "Lite_\($version)_linux_amd64.deb", "Lite_\($version)_linux_aarch64.AppImage", "Lite_\($version)_linux_arm64.deb", "Lite_\($version)_windows_x64-setup.exe", "latest.json", "sbom.spdx.json"] | sort)' <<< "$ASSETS" >/dev/null
           LATEST_ID=$(jq -r 'map(select(.name == "latest.json")) | first.id // empty' <<< "$ASSETS")
           test -n "$LATEST_ID"
           gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$LATEST_ID" > "$RUNNER_TEMP/latest.json"
           jq -e --arg version "$VERSION" '.version == $version and (.notes | type == "string" and length > 0)' "$RUNNER_TEMP/latest.json" >/dev/null
-          for PLATFORM in darwin-aarch64-app linux-x86_64-appimage windows-x86_64-nsis; do
+          for PLATFORM in darwin-aarch64-app linux-x86_64-appimage linux-x86_64-deb linux-aarch64-appimage linux-aarch64-deb windows-x86_64-nsis; do
             jq -e --arg platform "$PLATFORM" '.platforms[$platform] | (.url | type == "string" and length > 0) and (.signature | type == "string" and length > 0)' "$RUNNER_TEMP/latest.json" >/dev/null
             ASSET_ID=$(jq -r --arg platform "$PLATFORM" '.platforms[$platform].url | capture("/assets/(?<id>[0-9]+)$").id' "$RUNNER_TEMP/latest.json")
             jq -e --argjson id "$ASSET_ID" 'any(.id == $id)' <<< "$ASSETS" >/dev/null

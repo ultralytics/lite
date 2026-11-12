@@ -63,12 +63,14 @@ To reopen Lite after restarting your Mac, leave it open and select **Reopen wind
 
 ### Linux
 
-Download the portable asset ending in `_linux_amd64.AppImage`.
+On Ubuntu, Debian, and systems based on them, download the asset ending in `_linux_amd64.deb`, or `_linux_arm64.deb` for an ARM computer. Double-click it to install Lite, then open **Lite** from your applications.
+
+On any other distribution, download the portable asset ending in `_linux_amd64.AppImage`, or `_linux_aarch64.AppImage` for an ARM computer.
 
 ```bash
 # AppImage
-chmod +x Lite_*_linux_amd64.AppImage
-./Lite_*_linux_amd64.AppImage
+chmod +x Lite_*.AppImage
+./Lite_*.AppImage
 ```
 
 After installing Lite, open **Settings** from the gear in the top bar and choose **Check for updates** under About to install signed updates and restart Lite. A release build also checks once after launch and shows the result on the version badge; Lite never downloads or installs an update without you.

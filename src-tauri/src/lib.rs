@@ -4709,12 +4709,7 @@ fn installer_shell(script: &str) -> Result<Command, String> {
         let powershell =
             resolve_executable("powershell").ok_or("Could not find PowerShell in your PATH")?;
         let mut command = Command::new(powershell);
-        // A new Windows account refuses PowerShell's own script modules, which hash and unpack downloads,
-        // and drawing download progress slows a large download to a crawl.
-        command.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command"]);
-        command.arg(format!(
-            "$ProgressPreference = 'SilentlyContinue'; {script}"
-        ));
+        command.args(["-NoProfile", "-Command", script]);
         command
     };
     #[cfg(unix)]
@@ -4882,7 +4877,7 @@ async fn prepare_github(app: AppHandle) -> Result<bool, String> {
         let base = format!("https://github.com/cli/cli/releases/download/v{version}/gh_{version}");
         #[cfg(windows)]
         let command = installer_shell(&format!(
-            r#"$ErrorActionPreference = 'Stop'; $d = Join-Path $env:TEMP ([guid]::NewGuid()); Invoke-WebRequest '{base}_windows_{arch}.zip' -OutFile "$d.zip" -UseBasicParsing; Expand-Archive "$d.zip" $d; New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Move-Item -Force "$d\bin\gh.exe" "$HOME\.local\bin\gh.exe"; Remove-Item -Recurse -Force $d, "$d.zip""#
+            r#"$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue'; $d = Join-Path $env:TEMP ([guid]::NewGuid()); Invoke-WebRequest '{base}_windows_{arch}.zip' -OutFile "$d.zip" -UseBasicParsing; Expand-Archive "$d.zip" $d; New-Item -ItemType Directory -Force "$HOME\.local\bin" | Out-Null; Move-Item -Force "$d\bin\gh.exe" "$HOME\.local\bin\gh.exe"; Remove-Item -Recurse -Force $d, "$d.zip""#
         ))?;
         #[cfg(unix)]
         let command = installer_shell(&format!(
