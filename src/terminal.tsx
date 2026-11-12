@@ -2,7 +2,6 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FitAddon } from "@xterm/addon-fit";
 import { type ISearchOptions, SearchAddon } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
@@ -588,9 +587,6 @@ export function TerminalView({
     };
     const observer = new ResizeObserver(settleResize);
     observer.observe(container);
-    // WebKit can miss the element resize when macOS moves a window onto the built-in display after
-    // an external display disconnects. The native window event reaches the same fit owner.
-    const resized = getCurrentWindow().onResized(settleResize);
     // Files dropped on the window paste their paths into the terminal in view, as a terminal app
     // does, so an agent can pick up a dropped image. Nothing else takes a drop, and the position Tauri
     // reports is in points on macOS and Linux but pixels on Windows, so the drop is not hit-tested.
@@ -667,7 +663,6 @@ export function TerminalView({
       window.clearTimeout(searchRefresh);
       window.clearTimeout(outputRefresh);
       observer.disconnect();
-      void resized.then((unlisten) => unlisten());
       void dropped.then((unlisten) => unlisten());
       searchResults.dispose();
       scroll.dispose();
