@@ -3553,12 +3553,15 @@ function App() {
             <ResizablePanel defaultSize="55%" minSize="38%">
               <section className="flex h-full min-w-0 flex-col">
                 {selected ? (
-                  <div data-terminal-surface className="relative min-h-0 flex-1">
+                  <div data-terminal-surface className="relative min-h-0 flex-1 overflow-clip">
                     <Suspense fallback={<div className="absolute inset-0 bg-background" />}>
                       {/* A background terminal is hidden and moved off the viewport rather than shut: xterm
                           pauses its renderer from an IntersectionObserver, which visibility alone never
                           satisfies, and display:none would hand the fit addon a percentage height to read
-                          as pixels and shrink the child's window. Off screen, output is parsed but not drawn. */}
+                          as pixels and shrink the child's window. Off screen, output is parsed but not drawn, so a
+                          terminal keeps the scrollbar height it was last drawn at. The surface clips it: once the
+                          window shrinks, that height would otherwise give the panel a scroll range, and every
+                          terminal would sit scrolled partway out of view. */}
                       {sessions.map((session) =>
                         session.running ? (
                           <div
