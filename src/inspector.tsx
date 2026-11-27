@@ -2101,7 +2101,7 @@ function UsagePanel({
               </Badge>
             ) : null}
           </div>
-          {error && !session.provider && /\b401\b/.test(error) ? (
+          {error && /\b401\b/.test(error) ? (
             // The CLI still holds a sign-in its provider has revoked or expired; only a new one fixes it.
             <div className="space-y-2">
               <p className="text-sm text-destructive">
