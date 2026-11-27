@@ -379,8 +379,8 @@ export function ClaudeAccountDialog({
             Add Claude Code account
           </DialogTitle>
           <DialogDescription>
-            It shares your Claude Code settings, CLAUDE.md, skills, plugins, MCP servers and history. Only the sign-in
-            is its own, so sessions on different accounts stay signed in side by side.
+            It shares your Claude Code settings, CLAUDE.md, skills, plugins, user MCP servers and history. Only the
+            sign-in is its own, so sessions on different accounts stay signed in side by side.
           </DialogDescription>
         </DialogHeader>
         <form
