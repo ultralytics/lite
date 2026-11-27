@@ -1822,6 +1822,9 @@ function App() {
   const selectedRef = useRef<Session>(undefined);
   const notificationsRef = useRef(notifications);
   const closeRef = useRef<(session: Session) => void>(() => {});
+  const signInRef = useRef<(agent: Session["agent"]) => void>(() => {});
+  // The inspector is memoized, so it gets a stable sign-in that reaches the current one.
+  const inspectorSignIn = useCallback((agent: Session["agent"]) => signInRef.current(agent), []);
   const openRef = useRef<(session: Session) => void>(() => {});
   const recoverRef = useRef<(session: Session) => Promise<void>>(() => Promise.resolve());
   // Stable handlers, so the inspector — which reads nothing of the per-chunk working and attention
@@ -1903,6 +1906,7 @@ function App() {
   selectedRef.current = selected;
   notificationsRef.current = notifications;
   closeRef.current = closeSession;
+  signInRef.current = (agent) => void signIn(agent);
   openRef.current = (session) => {
     // Opening an archived session puts it first in manual order and resumes it like any other.
     if (session.archivedAt) setSessions((current) => changeFirst(current, session.id, { archivedAt: undefined }));
@@ -3726,6 +3730,7 @@ function App() {
                         collapsed={shut.inspector}
                         onExpand={expandInspector}
                         onCollapse={collapseInspector}
+                        onSignIn={inspectorSignIn}
                       />
                     </PanelBoundary>
                   </aside>
