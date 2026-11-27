@@ -80,6 +80,7 @@ import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import { contentZoomStyle } from "@/theme";
 import {
   type Agent,
+  agentLabel,
   type DirectoryCursor,
   type DirectoryListing,
   type FileEntry,
@@ -2017,12 +2018,14 @@ function UsagePanel({
   fontSize,
   active,
   onLoad,
+  onSignIn,
 }: {
   session: Session;
   fromShell: boolean;
   fontSize: number;
   active: boolean;
   onLoad: (tab: InspectorTab) => void;
+  onSignIn: (agent: Agent) => void;
 }) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
@@ -2098,7 +2101,17 @@ function UsagePanel({
               </Badge>
             ) : null}
           </div>
-          {error ? (
+          {error && /\b401\b/.test(error) ? (
+            // The CLI still holds a sign-in its provider has revoked or expired; only a new one fixes it.
+            <div className="space-y-2">
+              <p className="text-sm text-destructive">
+                {agentLabel(session.agent)} rejected its saved sign-in. Sign in again, then restart the session.
+              </p>
+              <Button variant="outline" size="sm" onClick={() => onSignIn(session.agent)}>
+                Sign in again
+              </Button>
+            </div>
+          ) : error ? (
             <p className="text-sm text-destructive">{error}</p>
           ) : usage === undefined ? (
             <Loading label="Reading provider usage…" />
@@ -2222,6 +2235,7 @@ export const Inspector = memo(function Inspector({
   collapsed,
   onExpand,
   onCollapse,
+  onSignIn,
 }: {
   session: Session;
   // The agent a shell session is running, whose usage it reports while it runs.
@@ -2234,6 +2248,7 @@ export const Inspector = memo(function Inspector({
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
+  onSignIn: (agent: Agent) => void;
 }) {
   const [tab, setTab] = useState<InspectorTab>(inspectorTab);
   const fileSearch = useRef<HTMLInputElement>(null);
@@ -2400,12 +2415,14 @@ export const Inspector = memo(function Inspector({
           {visited.has("usage") ? (
             <TabsContent value="usage" keepMounted className="min-h-0 overflow-hidden">
               <UsagePanel
-                key={reload.usage}
+                // A restart reads again, so a new sign-in shows without revisiting the session.
+                key={`${reload.usage}:${session.running}`}
                 session={agent ? { ...session, agent } : session}
                 fromShell={Boolean(agent)}
                 fontSize={fontSize}
                 active={tab === "usage" && !collapsed}
                 onLoad={finishRefresh}
+                onSignIn={onSignIn}
               />
             </TabsContent>
           ) : null}
