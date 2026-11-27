@@ -1098,9 +1098,7 @@ export function NewSessionDialog({
                 <DropdownMenuLabel>Account</DropdownMenuLabel>
                 <DropdownMenuRadioGroup value={account ?? ""} onValueChange={(value) => pickAccount(value as string)}>
                   {["", ...accounts].map((name) => {
-                    const identity = auth?.find(
-                      (entry) => entry.name === "claude" && entry.account === (name || null),
-                    )?.identity;
+                    const status = auth?.find((entry) => entry.name === "claude" && entry.account === (name || null));
                     return (
                       <DropdownMenuRadioItem key={name} value={name}>
                         <span className="flex min-w-0 flex-1 flex-col">
@@ -1108,7 +1106,13 @@ export function NewSessionDialog({
                           {/* The sign-in shown is this computer's; an SSH host keeps its own. */}
                           {remote ? null : (
                             <span className="truncate text-xs text-muted-foreground">
-                              {!auth ? "Checking…" : identity ? identityText(identity) : "Not signed in"}
+                              {!auth
+                                ? "Checking…"
+                                : status?.identity
+                                  ? identityText(status.identity)
+                                  : status?.cliAuthMethod
+                                    ? "Signed in"
+                                    : "Not signed in"}
                             </span>
                           )}
                         </span>
