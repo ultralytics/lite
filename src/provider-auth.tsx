@@ -145,12 +145,13 @@ export interface ClaudeIdentity {
   plan: string | null;
 }
 
-// "you@example.com · Personal · Max", or "you@example.com · Acme · Team": a team or enterprise plan belongs
-// to its organization, while a personal plan's organization only repeats the person's name.
+// "Personal · Max · you@example.com", or "Acme · Team · you@example.com": a team or enterprise plan belongs
+// to its organization, while a personal plan's organization only repeats the person's name. The plan leads,
+// since one email can be on both and a narrow line cuts from the end.
 export function identityText({ email, organization, plan }: ClaudeIdentity): string {
   const tier = plan ? plan[0].toUpperCase() + plan.slice(1) : "";
   const owner = plan === "team" || plan === "enterprise" ? organization : plan ? "Personal" : organization;
-  return [email, owner, tier].filter(Boolean).join(" · ");
+  return [owner, tier, email].filter(Boolean).join(" · ");
 }
 
 // Named Claude Code accounts, each its own config folder (~/.claude-<name>) where Claude keeps that
@@ -207,16 +208,17 @@ export function ProviderAuthDescription({
   if (!status) return "Checking…";
   if (provider.agent === "gemini" && !hint) return "Sign-in managed by Antigravity";
   if (!hint && !status.cliAuthMethod) return "Not set up";
+  const text = hint
+    ? "API key saved in Lite"
+    : status.cliAuthMethod === "apiKey"
+      ? `API key in ${agentLabel(provider.agent)}’s configuration`
+      : status.identity
+        ? `Signed in · ${identityText(status.identity)}`
+        : "Signed in";
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5" title={text}>
       <Check className="size-3.5 shrink-0" />
-      {hint
-        ? "API key saved in Lite"
-        : status.cliAuthMethod === "apiKey"
-          ? `API key in ${agentLabel(provider.agent)}’s configuration`
-          : status.identity
-            ? `Signed in as ${identityText(status.identity)}`
-            : "Signed in"}
+      <span className="truncate">{text}</span>
     </span>
   );
 }

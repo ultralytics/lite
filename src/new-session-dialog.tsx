@@ -45,7 +45,6 @@ import {
   ApiKeyDialog,
   AUTH_PROVIDERS,
   ClaudeAccountDialog,
-  identityText,
   type KeyProvider,
   type ProviderAuth,
   ProviderAuthDescription,
@@ -1106,13 +1105,7 @@ export function NewSessionDialog({
                           {/* The sign-in shown is this computer's; an SSH host keeps its own. */}
                           {remote ? null : (
                             <span className="truncate text-xs text-muted-foreground">
-                              {!auth
-                                ? "Checking…"
-                                : status?.identity
-                                  ? identityText(status.identity)
-                                  : status?.cliAuthMethod
-                                    ? "Signed in"
-                                    : "Not signed in"}
+                              <ProviderAuthDescription provider={AUTH_PROVIDERS.claude} status={status} />
                             </span>
                           )}
                         </span>

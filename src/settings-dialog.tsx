@@ -562,7 +562,7 @@ export function SettingsDialog({
                           ) : signedIn ? (
                             <span className="flex items-center gap-1.5">
                               <Check className="size-3.5 text-success" />
-                              {status.identity ? `Signed in as ${identityText(status.identity)}` : "Signed in"}
+                              {status.identity ? `Signed in · ${identityText(status.identity)}` : "Signed in"}
                             </span>
                           ) : (
                             "Not signed in"
