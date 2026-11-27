@@ -2006,7 +2006,8 @@ function missingUsage(session: Session, fromShell: boolean): string {
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
     return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
-  if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
+  if (session.agent === "claude")
+    return "Account limits appear after any Lite Claude session on this account receives a response.";
   if (fromShell) return SHELL_CONTEXT;
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
@@ -2032,16 +2033,18 @@ function UsagePanel({
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
   // Who the account a Claude session's limits belong to is signed in as, asked each time the panel shows.
-  // A shell's own Claude may run on any account, so only a Claude session is asked.
-  const [identity, setIdentity] = useState<ClaudeIdentity | null>();
+  // The last answer stays up while the next is asked, unless it was about another account. A shell's own
+  // Claude may run on any account, so only a Claude session is asked.
+  const [known, setKnown] = useState<{ account?: string; identity: ClaudeIdentity | null }>();
   const asksIdentity = session.agent === "claude" && !fromShell && !session.host;
+  const identity = asksIdentity && known && known.account === session.account ? known.identity : null;
   useEffect(() => {
-    setIdentity(undefined);
     if (!active || !asksIdentity) return;
     let disposed = false;
-    void invoke<ClaudeIdentity | null>("claude_account", { account: session.account })
+    const account = session.account;
+    void invoke<ClaudeIdentity | null>("claude_account", { account })
       .then((next) => {
-        if (!disposed) setIdentity(next);
+        if (!disposed) setKnown({ account, identity: next });
       })
       .catch(() => {});
     return () => {
@@ -2121,10 +2124,8 @@ function UsagePanel({
               </Badge>
             ) : null}
           </div>
-          {identity !== undefined ? (
-            <p className="-mt-1 mb-3 truncate text-xs text-muted-foreground">
-              {identity ? identityText(identity) : "Not signed in"}
-            </p>
+          {identity ? (
+            <p className="-mt-1 mb-3 truncate text-xs text-muted-foreground">{identityText(identity)}</p>
           ) : null}
           {error && /\b401\b/.test(error) ? (
             // The CLI still holds a sign-in its provider has revoked or expired; only a new one fixes it.

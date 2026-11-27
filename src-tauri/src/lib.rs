@@ -3834,14 +3834,15 @@ fn write_api_keys(app: &AppHandle, keys: &HashMap<String, String>) -> Result<(),
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ClaudeIdentity {
-    email: Option<String>,
+    email: String,
     organization: Option<String>,
     plan: Option<String>,
 }
 
 // Claude Code reports its own sign-in, per config folder, so a named account is asked the same way as
-// the default one and Lite never looks where either keeps its credentials.
-fn claude_identity(app: &AppHandle, account: Option<&str>) -> Option<ClaudeIdentity> {
+// the default one and Lite never looks where either keeps its credentials. Signed in through a key, Claude
+// names no one, so the identity inside is only there for an account sign-in.
+fn claude_identity(app: &AppHandle, account: Option<&str>) -> Option<Option<ClaudeIdentity>> {
     let mut command = Command::new(resolve_executable("claude")?);
     command
         .args(["auth", "status", "--json"])
@@ -3854,10 +3855,12 @@ fn claude_identity(app: &AppHandle, account: Option<&str>) -> Option<ClaudeIdent
     // Signed out exits with an error, still printing the same summary.
     let status: serde_json::Value = serde_json::from_slice(&command.output().ok()?.stdout).ok()?;
     let text = |key: &str| status[key].as_str().map(str::to_owned);
-    (status["loggedIn"] == true).then(|| ClaudeIdentity {
-        email: text("email"),
-        organization: text("orgName"),
-        plan: text("subscriptionType"),
+    (status["loggedIn"] == true).then(|| {
+        Some(ClaudeIdentity {
+            email: text("email")?,
+            organization: text("orgName"),
+            plan: text("subscriptionType"),
+        })
     })
 }
 
@@ -3867,9 +3870,11 @@ async fn claude_account(
     app: AppHandle,
     account: Option<String>,
 ) -> Result<Option<ClaudeIdentity>, String> {
-    tauri::async_runtime::spawn_blocking(move || claude_identity(&app, account.as_deref()))
-        .await
-        .map_err(|error| error.to_string())
+    tauri::async_runtime::spawn_blocking(move || {
+        claude_identity(&app, account.as_deref()).flatten()
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -3951,7 +3956,7 @@ async fn provider_auth(app: AppHandle, accounts: Vec<String>) -> Result<Vec<Prov
                 let identity = claude_identity(&app, account.as_deref());
                 (
                     identity.is_some().then_some(CliAuthMethod::Provider),
-                    identity,
+                    identity.flatten(),
                 )
             } else {
                 (cli_auth(&app, name), None)

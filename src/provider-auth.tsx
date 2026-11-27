@@ -140,7 +140,7 @@ export interface ProviderAuth {
 // Who a Claude Code account is signed in as. One email can be on a personal plan and on a team's, so
 // the plan and organization are what tell two such accounts apart.
 export interface ClaudeIdentity {
-  email: string | null;
+  email: string;
   organization: string | null;
   plan: string | null;
 }

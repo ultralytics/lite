@@ -2233,7 +2233,8 @@ function App() {
       if (
         !name ||
         name === session.name ||
-        name === sessionLabel(session) ||
+        // A program names the window after itself, never after the account it runs on.
+        name === sessionLabel({ agent: session.agent, provider: session.provider }) ||
         name === defaultSessionName(session.cwd)
       ) {
         return current;
