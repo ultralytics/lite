@@ -2,7 +2,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ExternalLink, Eye, EyeOff } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useState, useSyncExternalStore } from "react";
 
 import { ProviderIcon } from "@/brand-icons";
 import { Button } from "@/components/ui/button";
@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { type Agent, agentLabel, type ModelProvider, providerLabel } from "@/types";
@@ -129,8 +130,63 @@ export const KEY_PROVIDERS = Object.values(AUTH_PROVIDERS).filter(
 
 export interface ProviderAuth {
   name: string;
+  // A named Claude Code account's own entry, listed after the default account's.
+  account: string | null;
   keyHint: string | null;
   cliAuthMethod: "provider" | "apiKey" | null;
+  identity: ClaudeIdentity | null;
+}
+
+// Who a Claude Code account is signed in as. One email can be on a personal plan and on a team's, so
+// the plan and organization are what tell two such accounts apart.
+export interface ClaudeIdentity {
+  email: string;
+  organization: string | null;
+  plan: string | null;
+}
+
+// "Personal · Max · you@example.com", or "Acme · Team · you@example.com": a team or enterprise plan belongs
+// to its organization, while a personal plan's organization only repeats the person's name. The plan leads,
+// since one email can be on both and a narrow line cuts from the end.
+export function identityText({ email, organization, plan }: ClaudeIdentity): string {
+  const tier = plan ? plan[0].toUpperCase() + plan.slice(1) : "";
+  const owner = plan === "team" || plan === "enterprise" ? organization : plan ? "Personal" : organization;
+  return [owner, tier, email].filter(Boolean).join(" · ");
+}
+
+// Named Claude Code accounts, each its own config folder (~/.claude-<name>) where Claude keeps that
+// account's sign-in apart from the default one's. Forgetting a name leaves its folder, and the sessions
+// using it, as they are. Rust holds the same rule, since the name becomes a folder there and on SSH hosts.
+const CLAUDE_ACCOUNT_NAME = /^[a-z0-9][a-z0-9_-]{0,31}$/;
+const CLAUDE_ACCOUNTS_KEY = "lite.claudeAccounts.v1";
+const accountListeners = new Set<() => void>();
+let claudeAccounts: string[] = (() => {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(CLAUDE_ACCOUNTS_KEY) ?? "[]");
+    return Array.isArray(stored) ? stored.filter((name) => CLAUDE_ACCOUNT_NAME.test(name)) : [];
+  } catch {
+    return [];
+  }
+})();
+
+export function setClaudeAccounts(accounts: string[]) {
+  claudeAccounts = accounts;
+  localStorage.setItem(CLAUDE_ACCOUNTS_KEY, JSON.stringify(accounts));
+  for (const listener of accountListeners) listener();
+}
+
+function subscribeAccounts(listener: () => void) {
+  accountListeners.add(listener);
+  return () => accountListeners.delete(listener);
+}
+
+export function useClaudeAccounts(): string[] {
+  return useSyncExternalStore(subscribeAccounts, () => claudeAccounts);
+}
+
+// Every provider's sign-in, the named Claude Code accounts' included.
+export function readProviderAuth() {
+  return invoke<ProviderAuth[]>("provider_auth", { accounts: claudeAccounts });
 }
 
 // The vendor a provider belongs to. A Codex provider is named by types.ts, which owns every ModelProvider
@@ -152,14 +208,17 @@ export function ProviderAuthDescription({
   if (!status) return "Checking…";
   if (provider.agent === "gemini" && !hint) return "Sign-in managed by Antigravity";
   if (!hint && !status.cliAuthMethod) return "Not set up";
+  const text = hint
+    ? "API key saved in Lite"
+    : status.cliAuthMethod === "apiKey"
+      ? `API key in ${agentLabel(provider.agent)}’s configuration`
+      : status.identity
+        ? `Signed in · ${identityText(status.identity)}`
+        : "Signed in";
   return (
-    <span className="flex items-center gap-1.5">
+    <span className="flex min-w-0 items-center gap-1.5" title={text}>
       <Check className="size-3.5 shrink-0" />
-      {hint
-        ? "API key saved in Lite"
-        : status.cliAuthMethod === "apiKey"
-          ? `API key in ${agentLabel(provider.agent)}’s configuration`
-          : "Signed in"}
+      <span className="truncate">{text}</span>
     </span>
   );
 }
@@ -276,6 +335,88 @@ export function ApiKeyDialog({
           </DialogFooter>
         </DialogContent>
       ) : null}
+    </Dialog>
+  );
+}
+
+// Naming another Claude Code account. Settings signs it in at once; the new-session dialog picks it, and
+// Claude asks for the sign-in when the account's first session starts.
+export function ClaudeAccountDialog({
+  open,
+  onClose,
+  onAdded,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAdded: (account: string) => void;
+}) {
+  const accounts = useClaudeAccounts();
+  const [name, setName] = useState("");
+  const account = name.trim();
+  const problem = !account
+    ? ""
+    : !CLAUDE_ACCOUNT_NAME.test(account)
+      ? "Use up to 32 lowercase letters, digits, - and _, starting with a letter or digit."
+      : accounts.includes(account)
+        ? "That account is already added."
+        : "";
+  function close() {
+    setName("");
+    onClose();
+  }
+  function add() {
+    if (!account || problem) return;
+    setClaudeAccounts([...accounts, account]);
+    close();
+    onAdded(account);
+  }
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && close()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <ProviderIcon agent="claude" className="size-5" />
+            Add Claude Code account
+          </DialogTitle>
+          <DialogDescription>
+            It shares your Claude Code settings, CLAUDE.md, skills, plugins, user MCP servers and history. Only the
+            sign-in is its own, so sessions on different accounts stay signed in side by side.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="space-y-1.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            add();
+          }}
+        >
+          <Input
+            autoFocus
+            value={name}
+            placeholder="e.g., work"
+            aria-label="Account name"
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setName(event.target.value.toLowerCase())}
+          />
+          <p className={`text-xs ${problem ? "text-destructive" : "text-muted-foreground"}`}>
+            {problem || (
+              <>
+                Claude Code keeps its sign-in in <span className="font-mono">~/.claude-{account || "name"}</span>, on
+                this computer and on SSH hosts.
+              </>
+            )}
+          </p>
+        </form>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={close}>
+            Cancel
+          </Button>
+          <Button type="button" disabled={!account || Boolean(problem)} onClick={add}>
+            Add account
+          </Button>
+        </DialogFooter>
+      </DialogContent>
     </Dialog>
   );
 }

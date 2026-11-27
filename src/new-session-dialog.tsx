@@ -10,6 +10,7 @@ import {
   FolderOpen,
   GitBranch,
   Lock,
+  Plus,
   RefreshCw,
   Server,
   TriangleAlert,
@@ -24,6 +25,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -42,10 +44,13 @@ import { cn } from "@/lib/utils";
 import {
   ApiKeyDialog,
   AUTH_PROVIDERS,
+  ClaudeAccountDialog,
   type KeyProvider,
   type ProviderAuth,
   ProviderAuthDescription,
   providerName,
+  readProviderAuth,
+  useClaudeAccounts,
 } from "@/provider-auth";
 import { IS_MAC } from "@/shortcuts";
 import { type Agent, agentLabel, defaultSessionName, folderName, type Session, sessionLabel, tilde } from "@/types";
@@ -64,6 +69,7 @@ const CODEX_KEY = "lite.newSession.codexProvider.v1";
 const SOURCE_KEY = "lite.newSession.source.v1";
 const WORKTREE_KEY = "lite.newSession.worktree.v1";
 const FLAGS_KEY = "lite.newSession.flags.v1";
+const CLAUDE_ACCOUNT_KEY = "lite.newSession.claudeAccount.v1";
 const SSH_HOST_KEY = "lite.newSession.sshHost.v1";
 // A Codex provider serving several models offers the choice here, remembered per provider so each keeps
 // its own model and thinking level. Rust owns which models and levels exist, because the catalog it hands
@@ -243,6 +249,15 @@ export function NewSessionDialog({
     const stored = localStorage.getItem(CODEX_KEY);
     return CODEX_CHOICES.find((option) => option.id === stored)?.id ?? CODEX_CHOICES[0].id;
   });
+  // The named Claude Code account new Claude sessions sign in with; one since forgotten is the default.
+  const accounts = useClaudeAccounts();
+  const [accountPicked, setAccountPicked] = useState(() => localStorage.getItem(CLAUDE_ACCOUNT_KEY) ?? "");
+  const claudeAccount = accounts.includes(accountPicked) ? accountPicked : undefined;
+  function pickAccount(account: string) {
+    localStorage.setItem(CLAUDE_ACCOUNT_KEY, account);
+    setAccountPicked(account);
+  }
+  const [addingAccount, setAddingAccount] = useState(false);
   const [pickers, setPickers] = useState<CodexPicker[]>([]);
   const [codexChoices, setCodexChoices] = useState<Record<string, string>>({});
   function chooseCodex(key: string, value: string) {
@@ -390,7 +405,7 @@ export function NewSessionDialog({
       .catch((reason) => {
         if (!disposed) setError(String(reason));
       });
-    void invoke<ProviderAuth[]>("provider_auth")
+    void readProviderAuth()
       .then((result) => {
         if (!disposed) setAuth(result);
       })
@@ -709,6 +724,7 @@ export function NewSessionDialog({
         id: crypto.randomUUID(),
         agent: choice.agent,
         provider: choice.provider,
+        account: choice.agent === "claude" ? claudeAccount : undefined,
         model: panel && codexChoices[modelKey(panel.id)],
         reasoningEffort: panel && codexChoices[levelKey(panel.id)],
         flags: sessionFlags,
@@ -899,7 +915,10 @@ export function NewSessionDialog({
     const unsupported = remoteUnsupported(remote, choice);
     const panel = pickers.find((picker) => picker.id === choice.id);
     const authProvider = "signIn" in choice ? choice : undefined;
-    const authStatus = authProvider ? auth?.find((entry) => entry.name === authProvider.id) : undefined;
+    const account = agent === "claude" ? claudeAccount : undefined;
+    const authStatus = authProvider
+      ? auth?.find((entry) => entry.name === authProvider.id && entry.account === (account ?? null))
+      : undefined;
     const update = updates[agent];
     const managed = agent !== "shell" && state && !state.installable;
     // A registry that could not answer knows of no update, so only one it reported is offered.
@@ -947,7 +966,7 @@ export function NewSessionDialog({
           type="button"
           disabled={disabled}
           onClick={() => launch(agent)}
-          aria-label={`Start ${agentLabel(agent)}${placeLabel ? ` in ${placeLabel}` : ""}`}
+          aria-label={`Start ${sessionLabel({ agent, account })}${placeLabel ? ` in ${placeLabel}` : ""}`}
           className="flex h-14 min-w-0 flex-1 items-center gap-3 rounded-xl pl-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed"
         >
           <Tile>
@@ -956,6 +975,11 @@ export function NewSessionDialog({
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="flex items-center gap-2 text-sm font-medium">
               {agentLabel(agent)}
+              {account ? (
+                <span className="rounded-full border border-foreground/20 px-1.5 text-[10px] font-medium">
+                  {account}
+                </span>
+              ) : null}
               {agent === lastAgent ? (
                 <span className="rounded-full border px-1.5 text-[10px] font-medium text-muted-foreground">
                   Last used
@@ -1057,6 +1081,44 @@ export function NewSessionDialog({
                   </DropdownMenuGroup>
                 </>
               ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : agent === "claude" ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button type="button" variant="outline" size="icon-sm" aria-label="Claude Code account" disabled={busy}>
+                  <ChevronDown aria-hidden="true" />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="w-72">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Account</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={account ?? ""} onValueChange={(value) => pickAccount(value as string)}>
+                  {["", ...accounts].map((name) => {
+                    const status = auth?.find((entry) => entry.name === "claude" && entry.account === (name || null));
+                    return (
+                      <DropdownMenuRadioItem key={name} value={name}>
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span>{name || "Default"}</span>
+                          {/* The sign-in shown is this computer's; an SSH host keeps its own. */}
+                          {remote ? null : (
+                            <span className="truncate text-xs text-muted-foreground">
+                              <ProviderAuthDescription provider={AUTH_PROVIDERS.claude} status={status} />
+                            </span>
+                          )}
+                        </span>
+                      </DropdownMenuRadioItem>
+                    );
+                  })}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setAddingAccount(true)}>
+                <Plus aria-hidden="true" />
+                Add account…
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
@@ -1631,6 +1693,14 @@ export function NewSessionDialog({
             ) : null}
           </div>
         ) : null}
+        <ClaudeAccountDialog
+          open={addingAccount}
+          onClose={() => setAddingAccount(false)}
+          onAdded={(account) => {
+            pickAccount(account);
+            void readProviderAuth().then(setAuth, (reason) => setError(String(reason)));
+          }}
+        />
         <ApiKeyDialog
           provider={keyFor}
           replacing={false}

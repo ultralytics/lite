@@ -76,6 +76,7 @@ import {
   subscribeNotifications,
   subscribeTerminalOutput,
 } from "@/output-store";
+import { type ClaudeIdentity, identityText } from "@/provider-auth";
 import { IS_MAC, matchesShortcut } from "@/shortcuts";
 import { contentZoomStyle } from "@/theme";
 import {
@@ -89,6 +90,7 @@ import {
   providerLabel,
   repoName,
   type Session,
+  type SignInTarget,
   sessionLabel,
   tilde,
 } from "@/types";
@@ -2004,7 +2006,8 @@ function missingUsage(session: Session, fromShell: boolean): string {
   if (session.agent === "shell") return "Shell sessions report no provider usage.";
   if (session.agent === "codex" && session.provider && session.provider !== "openai")
     return `${providerLabel(session.provider)} publishes no account limits locally. Session context appears after the first response.`;
-  if (session.agent === "claude") return "Account limits appear after any Lite Claude session receives a response.";
+  if (session.agent === "claude")
+    return "Account limits appear after any Lite Claude session on this account receives a response.";
   if (fromShell) return SHELL_CONTEXT;
   return `${sessionLabel(session)} reports session context after its first response.`;
 }
@@ -2025,10 +2028,29 @@ function UsagePanel({
   fontSize: number;
   active: boolean;
   onLoad: (tab: InspectorTab) => void;
-  onSignIn: (agent: Agent) => void;
+  onSignIn: (target: SignInTarget) => void;
 }) {
   const [usage, setUsage] = useState<UsageSnapshot | null | undefined>(() => usageCache.get(session.id));
   const [error, setError] = useState("");
+  // Who the account a Claude session's limits belong to is signed in as, asked each time the panel shows.
+  // The last answer stays up while the next is asked, unless it was about another account. A shell's own
+  // Claude may run on any account, so only a Claude session is asked.
+  const [known, setKnown] = useState<{ account?: string; identity: ClaudeIdentity | null }>();
+  const asksIdentity = session.agent === "claude" && !fromShell && !session.host;
+  const identity = asksIdentity && known && known.account === session.account ? known.identity : null;
+  useEffect(() => {
+    if (!active || !asksIdentity) return;
+    let disposed = false;
+    const account = session.account;
+    void invoke<ClaudeIdentity | null>("claude_account", { account })
+      .then((next) => {
+        if (!disposed) setKnown({ account, identity: next });
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, [active, asksIdentity, session.account]);
 
   // Usage is read while it is visible, and again a second after each turn ends, when the harness has
   // written it. Claude can also switch models mid-turn, and its status line rewrites the local snapshot
@@ -2044,6 +2066,7 @@ function UsagePanel({
       void invoke<UsageSnapshot | null>("read_usage", {
         agent: session.agent,
         provider: session.provider,
+        account: session.account,
         sessionId: session.id,
         host: session.host,
       })
@@ -2074,7 +2097,7 @@ function UsagePanel({
       window.clearTimeout(settle);
       unsubscribe();
     };
-  }, [active, onLoad, session.agent, session.provider, session.id, session.host]);
+  }, [active, onLoad, session.agent, session.provider, session.account, session.id, session.host]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -2101,13 +2124,16 @@ function UsagePanel({
               </Badge>
             ) : null}
           </div>
+          {identity ? (
+            <p className="-mt-1 mb-3 truncate text-xs text-muted-foreground">{identityText(identity)}</p>
+          ) : null}
           {error && /\b401\b/.test(error) ? (
             // The CLI still holds a sign-in its provider has revoked or expired; only a new one fixes it.
             <div className="space-y-2">
               <p className="text-sm text-destructive">
                 {agentLabel(session.agent)} rejected its saved sign-in. Sign in again, then restart the session.
               </p>
-              <Button variant="outline" size="sm" onClick={() => onSignIn(session.agent)}>
+              <Button variant="outline" size="sm" onClick={() => onSignIn(session)}>
                 Sign in again
               </Button>
             </div>
@@ -2248,7 +2274,7 @@ export const Inspector = memo(function Inspector({
   collapsed: boolean;
   onExpand: () => void;
   onCollapse: () => void;
-  onSignIn: (agent: Agent) => void;
+  onSignIn: (target: SignInTarget) => void;
 }) {
   const [tab, setTab] = useState<InspectorTab>(inspectorTab);
   const fileSearch = useRef<HTMLInputElement>(null);

@@ -1580,24 +1580,29 @@ enum RemoteSessionState {
 fn ssh_native_session_state(
     root: &SshRoot,
     agent: &str,
+    account: Option<&str>,
     id: &str,
 ) -> Result<RemoteSessionState, String> {
     if !is_provider_session_id(id) {
         return Ok(RemoteSessionState::Missing);
     }
     let (variable, fallback) = provider_home_parts(agent).ok_or("Unknown session type")?;
+    let home = match account {
+        Some(account) => format!("home=\"$HOME/{}\"", claude_account_folder(account)?),
+        None => format!("home=${{{variable}:-$HOME/{fallback}}}"),
+    };
     let script = match agent {
         "claude" => format!(
-            "home=${{{variable}:-$HOME/{fallback}}}; file=$(find \"$home/projects\" -type f -name {} -print -quit 2>/dev/null); if test -z \"$file\"; then printf 0; elif grep -m 1 -E -q -- '\"type\"[[:space:]]*:[[:space:]]*\"(user|assistant|system)\"' \"$file\"; then printf 2; else printf 1; fi",
+            "{home}; file=$(find -H \"$home/projects\" -type f -name {} -print -quit 2>/dev/null); if test -z \"$file\"; then printf 0; elif grep -m 1 -E -q -- '\"type\"[[:space:]]*:[[:space:]]*\"(user|assistant|system)\"' \"$file\"; then printf 2; else printf 1; fi",
             posix_quote(&format!("{id}.jsonl")),
         ),
         "qwen" => format!(
-            "home=${{{variable}:-$HOME/{fallback}}}; find \"$home/projects\" -type f -path {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
+            "{home}; find \"$home/projects\" -type f -path {} -print -quit 2>/dev/null | grep -q . && printf 1 || printf 0",
             posix_quote(&format!("*/chats/{id}.jsonl")),
         ),
         // A rollout holds a conversation once a turn starts, or in older ones, once the assistant replies.
         "codex" => format!(
-            "home=${{{variable}:-$HOME/{fallback}}}; file=$(find \"$home/sessions\" -type f -name {} -print -quit 2>/dev/null); test -n \"$file\" && grep -m 1 -E -q '\"type\":\"turn_context\"|\"role\":\"assistant\"' \"$file\" && printf 1 || printf 0",
+            "{home}; file=$(find \"$home/sessions\" -type f -name {} -print -quit 2>/dev/null); test -n \"$file\" && grep -m 1 -E -q '\"type\":\"turn_context\"|\"role\":\"assistant\"' \"$file\" && printf 1 || printf 0",
             posix_quote(&format!("rollout-*-{id}.jsonl")),
         ),
         _ => return Ok(RemoteSessionState::Missing),
@@ -1848,6 +1853,96 @@ fn provider_home(app: &AppHandle, agent: &str) -> Result<PathBuf, String> {
         )
 }
 
+// A named Claude Code account is a config folder of its own in the home folder, `.claude-<name>`, where
+// Claude keeps that account's sign-in, settings and history apart from the default account's. The name
+// becomes a path here and on SSH hosts, so only characters safe in both are accepted.
+fn claude_account_folder(account: &str) -> Result<String, String> {
+    let mut characters = account.chars();
+    if account.len() <= 32
+        && characters
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
+        && characters.all(|character| {
+            character.is_ascii_lowercase() || character.is_ascii_digit() || "-_".contains(character)
+        })
+    {
+        Ok(format!(".claude-{account}"))
+    } else {
+        Err("An account name uses lowercase letters, digits, - and _".into())
+    }
+}
+
+fn claude_home(app: &AppHandle, account: Option<&str>) -> Result<PathBuf, String> {
+    let Some(account) = account else {
+        return provider_home(app, "claude");
+    };
+    let folder = claude_account_folder(account)?;
+    app.path()
+        .home_dir()
+        .map(|home| home.join(folder))
+        .map_err(|error| error.to_string())
+}
+
+// What a named account shares with the default one: the user's configuration and history, so switching
+// accounts is like signing in again where they already work. The sign-in, the identity in `.claude.json`
+// and an organization's managed settings stay the account's own.
+const CLAUDE_SHARED: [&str; 14] = [
+    "settings.json",
+    "CLAUDE.md",
+    "rules",
+    "keybindings.json",
+    "agents",
+    "commands",
+    "skills",
+    "output-styles",
+    "plugins",
+    "projects",
+    "history.jsonl",
+    "file-history",
+    "plans",
+    "todos",
+];
+
+// A named account's folder, with the default folder's shared entries linked in, so one setup serves every
+// account. Claude writes through a link, so a change made on either account reaches both. An entry the
+// account already has is its own and is left alone.
+fn claude_account_home(app: &AppHandle, account: &str) -> Result<PathBuf, String> {
+    let home = claude_home(app, Some(account))?;
+    let shared = claude_home(app, None)?;
+    fs::create_dir_all(&home).map_err(|error| error.to_string())?;
+    for name in CLAUDE_SHARED {
+        let (source, link) = (shared.join(name), home.join(name));
+        if !source.exists() || fs::symlink_metadata(&link).is_ok() {
+            continue;
+        }
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink(&source, &link);
+        // Windows links a folder as a junction, which needs no privilege. A file symlink needs Developer
+        // Mode, so without it the account gets a hard link, shared until Claude next saves that file.
+        #[cfg(windows)]
+        let _ = if source.is_dir() {
+            junction::create(&source, &link)
+        } else {
+            std::os::windows::fs::symlink_file(&source, &link)
+                .or_else(|_| fs::hard_link(&source, &link))
+        };
+    }
+    Ok(home)
+}
+
+// The default account's `.claude.json`, which holds its user MCP servers beside its identity. It cannot
+// be linked, so a named account's session is pointed at it and Claude reads only those servers. Claude
+// refuses the file when it has none, which is until the first user server is added.
+fn claude_global_config(app: &AppHandle) -> Option<PathBuf> {
+    let path = match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|home| !home.is_empty()) {
+        Some(home) => PathBuf::from(home),
+        None => app.path().home_dir().ok()?,
+    }
+    .join(".claude.json");
+    let config: serde_json::Value = serde_json::from_slice(&fs::read(&path).ok()?).ok()?;
+    config["mcpServers"].is_object().then_some(path)
+}
+
 fn claude_transcript_lines(path: &Path) -> impl Iterator<Item = String> {
     fs::File::open(path)
         .map(|file| BufReader::new(file).lines().map_while(Result::ok))
@@ -1878,9 +1973,9 @@ fn claude_transcript_has_messages(path: &Path) -> bool {
 
 // `/resume` leaves the launched id as a marker holding no message and stamps the turns that follow into
 // the conversation it moved to. Returns the id to launch and whether it names one to resume.
-fn claude_launch_id(app: &AppHandle, session_id: &str) -> (String, bool) {
+fn claude_launch_id(app: &AppHandle, account: Option<&str>, session_id: &str) -> (String, bool) {
     let transcript = format!("{session_id}.jsonl");
-    let Some(project) = provider_home(app, "claude")
+    let Some(project) = claude_home(app, account)
         .ok()
         .and_then(|home| fs::read_dir(home.join("projects")).ok())
         .and_then(|projects| {
@@ -1907,13 +2002,35 @@ fn claude_launch_id(app: &AppHandle, session_id: &str) -> (String, bool) {
         .unwrap_or_else(|| (uuid::Uuid::new_v4().to_string(), false))
 }
 
-fn claude_settings(app: &AppHandle, session_id: &str, run_id: &str) -> Result<PathBuf, String> {
+// Claude's limits are account-wide and `read_usage` merges them across every snapshot in one folder, so
+// each named account's sessions report into a folder of its own and two accounts never mix.
+fn usage_directory(app: &AppHandle, account: Option<&str>) -> Result<PathBuf, String> {
+    let directory = app
+        .path()
+        .app_data_dir()
+        .map_err(|error| error.to_string())?;
+    match account {
+        Some(account) => Ok(directory
+            .join("accounts")
+            .join(claude_account_folder(account)?)),
+        None => Ok(directory),
+    }
+}
+
+fn claude_settings(
+    app: &AppHandle,
+    account: Option<&str>,
+    session_id: &str,
+    run_id: &str,
+) -> Result<PathBuf, String> {
     let directory = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
     let settings_path = directory.join(format!("claude-{session_id}.json"));
-    let usage_path = directory.join(format!("usage-{session_id}.json"));
+    let usage_directory = usage_directory(app, account)?;
+    fs::create_dir_all(&usage_directory).map_err(|error| error.to_string())?;
+    let usage_path = usage_directory.join(format!("usage-{session_id}.json"));
     let activity_directory = directory.join(format!("activity-{session_id}"));
     if activity_directory.exists() {
         fs::remove_dir_all(&activity_directory).map_err(|error| error.to_string())?;
@@ -3380,6 +3497,7 @@ async fn fork_source(
     app: AppHandle,
     session_id: String,
     agent: String,
+    account: Option<String>,
     root_id: String,
 ) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -3393,13 +3511,17 @@ async fn fork_source(
             .cloned();
         let saved = match (agent.as_str(), remote) {
             ("claude", None) => {
-                let (id, saved) = claude_launch_id(&app, known.as_deref().unwrap_or(&session_id));
+                let (id, saved) = claude_launch_id(
+                    &app,
+                    account.as_deref(),
+                    known.as_deref().unwrap_or(&session_id),
+                );
                 saved.then_some(id)
             }
             ("claude" | "codex", Some(root)) => {
                 let id = known.unwrap_or(session_id);
                 matches!(
-                    ssh_native_session_state(&root, &agent, &id)?,
+                    ssh_native_session_state(&root, &agent, account.as_deref(), &id)?,
                     RemoteSessionState::Ready
                 )
                 .then_some(id)
@@ -3767,25 +3889,52 @@ fn write_api_keys(app: &AppHandle, keys: &HashMap<String, String>) -> Result<(),
         .map_err(|error| error.to_string())
 }
 
-// macOS keeps Claude Code's credentials in the login keychain; other platforms write a file. Presence is
-// all that is read here, never the credential itself.
-fn claude_signed_in(app: &AppHandle) -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        let _ = app;
-        Command::new("security")
-            .args(["find-generic-password", "-s", "Claude Code-credentials"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
+// Who a Claude Code account is signed in as. One email can belong to a personal plan and to a team's,
+// so the organization and plan are what tell two such accounts apart.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeIdentity {
+    email: String,
+    organization: Option<String>,
+    plan: Option<String>,
+}
+
+// Claude Code reports its own sign-in, per config folder, so a named account is asked the same way as
+// the default one and Lite never looks where either keeps its credentials. Signed in through a key, Claude
+// names no one, so the identity inside is only there for an account sign-in.
+fn claude_identity(app: &AppHandle, account: Option<&str>) -> Option<Option<ClaudeIdentity>> {
+    let mut command = Command::new(resolve_executable("claude")?);
+    command
+        .args(["auth", "status", "--json"])
+        .env("PATH", user_path()?)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(account) = account {
+        command.env("CLAUDE_CONFIG_DIR", claude_home(app, Some(account)).ok()?);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        app.path()
-            .home_dir()
-            .is_ok_and(|home| home.join(".claude").join(".credentials.json").is_file())
-    }
+    // Signed out exits with an error, still printing the same summary.
+    let status: serde_json::Value = serde_json::from_slice(&command.output().ok()?.stdout).ok()?;
+    let text = |key: &str| status[key].as_str().map(str::to_owned);
+    (status["loggedIn"] == true).then(|| {
+        Some(ClaudeIdentity {
+            email: text("email")?,
+            organization: text("orgName"),
+            plan: text("subscriptionType"),
+        })
+    })
+}
+
+// The usage panel names the account a session's limits belong to.
+#[tauri::command]
+async fn claude_account(
+    app: AppHandle,
+    account: Option<String>,
+) -> Result<Option<ClaudeIdentity>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        claude_identity(&app, account.as_deref()).flatten()
+    })
+    .await
+    .map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -3829,7 +3978,6 @@ fn kimi_auth(app: &AppHandle) -> Option<CliAuthMethod> {
 
 fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
     match name {
-        "claude" => claude_signed_in(app).then_some(CliAuthMethod::Provider),
         "codex" => codex_home(app)
             .is_ok_and(|home| home.join("auth.json").is_file())
             .then_some(CliAuthMethod::Provider),
@@ -3851,28 +3999,63 @@ fn cli_auth(app: &AppHandle, name: &str) -> Option<CliAuthMethod> {
 #[serde(rename_all = "camelCase")]
 struct ProviderAuth {
     name: String,
+    // A named Claude Code account's own entry, after the default account's.
+    account: Option<String>,
     key_hint: Option<String>,
     cli_auth_method: Option<CliAuthMethod>,
+    // Who Claude Code is signed in as, so accounts can be told apart.
+    identity: Option<ClaudeIdentity>,
 }
 
 #[tauri::command]
-async fn provider_auth(app: AppHandle) -> Result<Vec<ProviderAuth>, String> {
+async fn provider_auth(app: AppHandle, accounts: Vec<String>) -> Result<Vec<ProviderAuth>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let keys = load_api_keys(&app);
-        Ok(SUPPORTED_KEYS
-            .iter()
-            .copied()
-            .chain(["qwen"])
-            .map(|name| {
-                let cli_auth = cli_auth(&app, name);
-                ProviderAuth {
-                    name: name.to_owned(),
-                    // Only the key's first characters travel to the interface.
-                    key_hint: keys.get(name).map(|key| key_hint(key)),
-                    cli_auth_method: cli_auth,
-                }
-            })
-            .collect())
+        let entry = |name: &'static str, account: Option<String>| {
+            let (cli_auth_method, identity) = if name == "claude" {
+                let identity = claude_identity(&app, account.as_deref());
+                (
+                    identity.is_some().then_some(CliAuthMethod::Provider),
+                    identity.flatten(),
+                )
+            } else {
+                (cli_auth(&app, name), None)
+            };
+            ProviderAuth {
+                name: name.to_owned(),
+                // Only the key's first characters travel to the interface, and never for a named
+                // account, which does not use the key.
+                key_hint: keys
+                    .get(name)
+                    .filter(|_| account.is_none())
+                    .map(|key| key_hint(key)),
+                account,
+                cli_auth_method,
+                identity,
+            }
+        };
+        // Several of these ask a CLI, so they run side by side.
+        thread::scope(|scope| {
+            SUPPORTED_KEYS
+                .iter()
+                .copied()
+                .chain(["qwen"])
+                .map(|name| (name, None))
+                .chain(
+                    accounts
+                        .into_iter()
+                        .map(|account| ("claude", Some(account))),
+                )
+                .map(|(name, account)| scope.spawn(|| entry(name, account)))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|check| {
+                    check
+                        .join()
+                        .map_err(|_| "Could not check sign-ins".to_owned())
+                })
+                .collect()
+        })
     })
     .await
     .map_err(|error| error.to_string())?
@@ -4260,6 +4443,8 @@ fn kimi_session_ids(app: &AppHandle, cwd: &Path) -> HashSet<String> {
 struct SessionCommand<'a> {
     agent: &'a str,
     provider: Option<&'a str>,
+    // The named Claude Code account the session signs in with; the default account has none.
+    account: Option<&'a str>,
     model: Option<&'a str>,
     reasoning_effort: Option<&'a str>,
     flags: &'a [String],
@@ -4395,7 +4580,16 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
     if let Some(path) = user_path() {
         command.env("PATH", path);
     }
+    // A named account is there for its own sign-in, so the key Lite holds stays with the default account.
+    if let Some(account) = launch.account {
+        command.env("CLAUDE_CONFIG_DIR", claude_account_home(app, account)?);
+        // Lite's `--settings` always follows, ending this option's list of files.
+        if let Some(config) = claude_global_config(app) {
+            command.args(["--mcp-config", &path_text(&config)]);
+        }
+    }
     let key = api_key_env(agent, provider)
+        .filter(|_| launch.account.is_none())
         .and_then(|(_, variable)| saved_api_key(app, agent, provider).map(|key| (variable, key)));
     if agent == "gemini" {
         let executable = std::env::current_exe().map_err(|error| error.to_string())?;
@@ -4421,7 +4615,11 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
 
 // Each CLI owns its sign-in and opens the browser itself, so Lite only runs the command and shows it.
 // A shell sign-in is GitHub's: the GitHub CLI owns the sign-in Lite's repository list and clones use.
-fn login_command(agent: &str) -> Result<CommandBuilder, String> {
+fn login_command(
+    app: &AppHandle,
+    agent: &str,
+    account: Option<&str>,
+) -> Result<CommandBuilder, String> {
     let mut command = match agent {
         "shell" => {
             CommandBuilder::new(resolve_executable("gh").ok_or("Could not find gh in your PATH")?)
@@ -4436,6 +4634,9 @@ fn login_command(agent: &str) -> Result<CommandBuilder, String> {
     });
     if let Some(path) = user_path() {
         command.env("PATH", path);
+    }
+    if let Some(account) = account {
+        command.env("CLAUDE_CONFIG_DIR", claude_account_home(app, account)?);
     }
     Ok(command)
 }
@@ -5175,15 +5376,30 @@ fn ssh_session_command(
             }
         }
         args.extend_from_slice(launch.flags);
-        let command = args
+        let mut command = args
             .iter()
             .map(|argument| posix_quote(argument))
-            .collect::<Vec<_>>()
-            .join(" ");
+            .collect::<Vec<_>>();
+        // The host shares the account's entries as `claude_account_home` does, and passes the default
+        // account's MCP servers through "$@" when its `.claude.json` has them: Claude writes top-level
+        // keys two spaces in, and a file written otherwise only goes unshared. It runs after the login
+        // shell's own startup files, so a profile that sets the variable names the default folder and
+        // cannot override the account.
+        let account = match launch.account {
+            Some(account) => {
+                command.insert(1, "\"$@\"".into());
+                format!(
+                    "d=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"; g=\"${{CLAUDE_CONFIG_DIR:-$HOME}}/.claude.json\"; a=\"$HOME/{}\"; mkdir -p \"$a\"; for n in {}; do [ -e \"$d/$n\" ] && ! [ -e \"$a/$n\" ] && ! [ -L \"$a/$n\" ] && ln -s \"$d/$n\" \"$a/$n\"; done; export CLAUDE_CONFIG_DIR=\"$a\"; set --; grep -q '^  \"mcpServers\": {{' \"$g\" 2>/dev/null && set -- --mcp-config \"$g\"; ",
+                    claude_account_folder(account)?,
+                    CLAUDE_SHARED.join(" ")
+                )
+            }
+            None => String::new(),
+        };
         format!(
             "cd {} && exec \"${{SHELL:-/bin/sh}}\" -lc {}",
             posix_quote(&root.path),
-            posix_quote(&format!("exec {command}"))
+            posix_quote(&format!("{account}exec {}", command.join(" ")))
         )
     };
     // SSH does not forward the local PTY environment to the remote shell.
@@ -5211,6 +5427,7 @@ struct SessionLaunch {
     provider_session_id: Option<String>,
     agent: String,
     provider: Option<String>,
+    account: Option<String>,
     model: Option<String>,
     reasoning_effort: Option<String>,
     flags: Option<String>,
@@ -5243,6 +5460,7 @@ async fn spawn_session(
         mut provider_session_id,
         agent,
         provider,
+        account,
         model,
         reasoning_effort,
         flags,
@@ -5300,8 +5518,13 @@ async fn spawn_session(
     // A sign-in runs the provider's own login command and owns no session of its own.
     let signing_in = mode.as_deref() == Some("login");
     // A tab whose provider history was removed starts again instead of becoming permanently unusable.
-    let claude_launch = (resume && !signing_in && agent == "claude" && ssh.is_none())
-        .then(|| claude_launch_id(&app, provider_session_id.as_deref().unwrap_or(&session_id)));
+    let claude_launch = (resume && !signing_in && agent == "claude" && ssh.is_none()).then(|| {
+        claude_launch_id(
+            &app,
+            account.as_deref(),
+            provider_session_id.as_deref().unwrap_or(&session_id),
+        )
+    });
     let mut resume = resume
         && match agent.as_str() {
             "claude" if ssh.is_none() => claude_launch.as_ref().is_some_and(|(_, resume)| *resume),
@@ -5313,12 +5536,13 @@ async fn spawn_session(
         && matches!(agent.as_str(), "claude" | "qwen")
     {
         let remote_agent = agent.clone();
+        let remote_account = account.clone();
         let remote_id = provider_session_id
             .as_deref()
             .unwrap_or(&session_id)
             .to_owned();
         if let Ok(Ok(state)) = tauri::async_runtime::spawn_blocking(move || {
-            ssh_native_session_state(&root, &remote_agent, &remote_id)
+            ssh_native_session_state(&root, &remote_agent, remote_account.as_deref(), &remote_id)
         })
         .await
         {
@@ -5456,6 +5680,7 @@ async fn spawn_session(
     let launch = SessionCommand {
         agent: &agent,
         provider: provider.as_deref(),
+        account: account.as_deref(),
         model: model.as_deref(),
         reasoning_effort: reasoning_effort.as_deref(),
         flags: &flags,
@@ -5467,7 +5692,7 @@ async fn spawn_session(
     let mut command = if let Some(root) = ssh.as_ref() {
         ssh_session_command(root, &launch, initial_prompt.as_deref())?
     } else if signing_in {
-        login_command(&agent)?
+        login_command(&app, &agent, account.as_deref())?
     } else if mode.as_deref() == Some("rebuild") {
         #[cfg(unix)]
         let mut command = {
@@ -5491,7 +5716,7 @@ async fn spawn_session(
         agent_command(&app, &launch)?
     };
     if ssh.is_none() && !signing_in && agent == "claude" {
-        let settings = claude_settings(&app, &session_id, &run_id)?;
+        let settings = claude_settings(&app, account.as_deref(), &session_id, &run_id)?;
         command.args(["--settings", &path_text(&settings)]);
         if let Some(prompt) = initial_prompt {
             command.arg(prompt);
@@ -5922,17 +6147,18 @@ fn delete_session_data(
     app: AppHandle,
     provider_sessions: State<ProviderSessions>,
     session_id: String,
+    account: Option<String>,
 ) -> Result<(), String> {
     uuid::Uuid::parse_str(&session_id).map_err(|_| "Invalid session ID")?;
     let directory = app
         .path()
         .app_data_dir()
         .map_err(|error| error.to_string())?;
-    for name in [
-        format!("claude-{session_id}.json"),
-        format!("usage-{session_id}.json"),
+    for path in [
+        directory.join(format!("claude-{session_id}.json")),
+        usage_directory(&app, account.as_deref())?.join(format!("usage-{session_id}.json")),
     ] {
-        match fs::remove_file(directory.join(name)) {
+        match fs::remove_file(path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.to_string()),
@@ -7760,6 +7986,7 @@ async fn read_usage(
     provider_sessions: State<'_, ProviderSessions>,
     agent: String,
     provider: Option<String>,
+    account: Option<String>,
     session_id: String,
     host: Option<String>,
 ) -> Result<Option<UsageSnapshot>, String> {
@@ -7779,10 +8006,7 @@ async fn read_usage(
     tauri::async_runtime::spawn_blocking(move || {
         match agent.as_str() {
             "claude" | "gemini" => {
-                let directory = app
-                    .path()
-                    .app_data_dir()
-                    .map_err(|error| error.to_string())?;
+                let directory = usage_directory(&app, account.as_deref())?;
                 let path = directory.join(format!("usage-{session_id}.json"));
                 let mut usage = match fs::read(path) {
                     Ok(bytes) => {
@@ -8285,6 +8509,7 @@ pub fn run() {
             open_directory,
             reveal_entry,
             provider_auth,
+            claude_account,
             save_api_key,
             delete_api_key,
             notifications_supported,
@@ -8320,6 +8545,7 @@ mod tests {
         let mut launch = SessionCommand {
             agent: "gemini",
             provider: None,
+            account: None,
             model: None,
             reasoning_effort: None,
             flags: &[],
@@ -8414,6 +8640,18 @@ mod tests {
         assert_eq!(github_name("lite.js-2_x"), Ok("lite.js-2_x"));
         for name in ["", ".", "..", "a/b", "a\\b", "~", "name with space"] {
             assert!(github_name(name).is_err(), "{name:?} passed");
+        }
+    }
+
+    // An account name lands in paths and in the shell scripts SSH runs, so nothing else may get through.
+    #[test]
+    fn claude_account_names_stay_one_plain_folder() {
+        assert_eq!(
+            claude_account_folder("work-2_x"),
+            Ok(".claude-work-2_x".into())
+        );
+        for name in ["", "-x", "Work", "a/b", "..", "$(id)", "a b", "a\"b"] {
+            assert!(claude_account_folder(name).is_err(), "{name:?} passed");
         }
     }
 
