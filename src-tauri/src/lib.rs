@@ -5380,37 +5380,27 @@ fn ssh_session_command(
             .iter()
             .map(|argument| posix_quote(argument))
             .collect::<Vec<_>>();
-        let login = |script: &str| {
-            format!(
-                "cd {} && exec \"${{SHELL:-/bin/sh}}\" -lc {}",
-                posix_quote(&root.path),
-                posix_quote(script)
-            )
-        };
-        match launch.account {
-            None => login(&format!("exec {}", command.join(" "))),
+        // The host shares the account's entries as `claude_account_home` does, and passes the default
+        // account's MCP servers through "$@" when its `.claude.json` has them: Claude writes top-level
+        // keys two spaces in, and a file written otherwise only goes unshared. It runs after the login
+        // shell's own startup files, so a profile that sets the variable names the default folder and
+        // cannot override the account.
+        let account = match launch.account {
             Some(account) => {
-                // The host shares the account's entries as `claude_account_home` does, and passes the
-                // default account's MCP servers through "$@" when its `.claude.json` has them: Claude
-                // writes top-level keys two spaces in, and a file written otherwise only goes unshared.
-                // It runs after the login shell's own startup files, so a profile that sets the variable
-                // names the default folder and cannot override the account.
                 command.insert(1, "\"$@\"".into());
-                let script = format!(
-                    "unset LITE_ACCOUNT_SCRIPT; d=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"; g=\"${{CLAUDE_CONFIG_DIR:-$HOME}}/.claude.json\"; a=\"$HOME/{}\"; mkdir -p \"$a\"; for n in {}; do [ -e \"$d/$n\" ] && ! [ -e \"$a/$n\" ] && ! [ -L \"$a/$n\" ] && ln -s \"$d/$n\" \"$a/$n\"; done; export CLAUDE_CONFIG_DIR=\"$a\"; set --; grep -q '^  \"mcpServers\": {{' \"$g\" 2>/dev/null && set -- --mcp-config \"$g\"; exec {}",
-                    claude_account_folder(account)?,
-                    CLAUDE_SHARED.join(" "),
-                    command.join(" ")
-                );
-                // The script is POSIX, which a login shell such as fish cannot parse, so it reaches sh
-                // through the environment and the login shell only expands one variable.
                 format!(
-                    "export LITE_ACCOUNT_SCRIPT={}; {}",
-                    posix_quote(&script),
-                    login("exec /bin/sh -c \"$LITE_ACCOUNT_SCRIPT\"")
+                    "d=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"; g=\"${{CLAUDE_CONFIG_DIR:-$HOME}}/.claude.json\"; a=\"$HOME/{}\"; mkdir -p \"$a\"; for n in {}; do [ -e \"$d/$n\" ] && ! [ -e \"$a/$n\" ] && ! [ -L \"$a/$n\" ] && ln -s \"$d/$n\" \"$a/$n\"; done; export CLAUDE_CONFIG_DIR=\"$a\"; set --; grep -q '^  \"mcpServers\": {{' \"$g\" 2>/dev/null && set -- --mcp-config \"$g\"; ",
+                    claude_account_folder(account)?,
+                    CLAUDE_SHARED.join(" ")
                 )
             }
-        }
+            None => String::new(),
+        };
+        format!(
+            "cd {} && exec \"${{SHELL:-/bin/sh}}\" -lc {}",
+            posix_quote(&root.path),
+            posix_quote(&format!("{account}exec {}", command.join(" ")))
+        )
     };
     // SSH does not forward the local PTY environment to the remote shell.
     let remote = ssh_script(&format!(
