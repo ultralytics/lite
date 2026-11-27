@@ -56,4 +56,5 @@ gtk = "0.18"
 webkit2gtk = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
+junction = "2.1.0"
 windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_Threading"] }

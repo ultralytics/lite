@@ -379,8 +379,8 @@ export function ClaudeAccountDialog({
             Add Claude Code account
           </DialogTitle>
           <DialogDescription>
-            Each account has its own sign-in, settings and history, so sessions on different accounts stay signed in
-            side by side.
+            It shares your Claude Code settings, CLAUDE.md, skills, plugins, MCP servers and history. Only the sign-in
+            is its own, so sessions on different accounts stay signed in side by side.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -402,8 +402,8 @@ export function ClaudeAccountDialog({
           <p className={`text-xs ${problem ? "text-destructive" : "text-muted-foreground"}`}>
             {problem || (
               <>
-                Claude Code keeps it in <span className="font-mono">~/.claude-{account || "name"}</span>, on this
-                computer and on SSH hosts.
+                Claude Code keeps its sign-in in <span className="font-mono">~/.claude-{account || "name"}</span>, on
+                this computer and on SSH hosts.
               </>
             )}
           </p>

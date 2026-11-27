@@ -1883,6 +1883,63 @@ fn claude_home(app: &AppHandle, account: Option<&str>) -> Result<PathBuf, String
         .map_err(|error| error.to_string())
 }
 
+// What a named account shares with the default one: the user's configuration and history, so switching
+// accounts is like signing in again where they already work. The sign-in, the identity in `.claude.json`
+// and an organization's managed settings stay the account's own.
+const CLAUDE_SHARED: [&str; 13] = [
+    "settings.json",
+    "CLAUDE.md",
+    "keybindings.json",
+    "agents",
+    "commands",
+    "skills",
+    "output-styles",
+    "plugins",
+    "projects",
+    "history.jsonl",
+    "file-history",
+    "plans",
+    "todos",
+];
+
+// A named account's folder, with the default folder's shared entries linked in, so one setup serves every
+// account. Claude writes through a link, so a change made on either account reaches both. An entry the
+// account already has is its own and is left alone.
+fn claude_account_home(app: &AppHandle, account: &str) -> Result<PathBuf, String> {
+    let home = claude_home(app, Some(account))?;
+    let shared = claude_home(app, None)?;
+    fs::create_dir_all(&home).map_err(|error| error.to_string())?;
+    for name in CLAUDE_SHARED {
+        let (source, link) = (shared.join(name), home.join(name));
+        if !source.exists() || fs::symlink_metadata(&link).is_ok() {
+            continue;
+        }
+        #[cfg(unix)]
+        let _ = std::os::unix::fs::symlink(&source, &link);
+        // Windows links a folder as a junction, which needs no privilege. A file symlink needs Developer
+        // Mode, so without it the account gets a hard link, shared until Claude next saves that file.
+        #[cfg(windows)]
+        let _ = if source.is_dir() {
+            junction::create(&source, &link)
+        } else {
+            std::os::windows::fs::symlink_file(&source, &link)
+                .or_else(|_| fs::hard_link(&source, &link))
+        };
+    }
+    Ok(home)
+}
+
+// The default account's `.claude.json`, which holds its user MCP servers beside its identity. It cannot
+// be linked, so a named account's session is pointed at it and Claude reads only those servers.
+fn claude_global_config(app: &AppHandle) -> Option<PathBuf> {
+    let path = match std::env::var_os("CLAUDE_CONFIG_DIR").filter(|home| !home.is_empty()) {
+        Some(home) => PathBuf::from(home),
+        None => app.path().home_dir().ok()?,
+    }
+    .join(".claude.json");
+    path.is_file().then_some(path)
+}
+
 fn claude_transcript_lines(path: &Path) -> impl Iterator<Item = String> {
     fs::File::open(path)
         .map(|file| BufReader::new(file).lines().map_while(Result::ok))
@@ -4522,7 +4579,11 @@ fn agent_command(app: &AppHandle, launch: &SessionCommand<'_>) -> Result<Command
     }
     // A named account is there for its own sign-in, so the key Lite holds stays with the default account.
     if let Some(account) = launch.account {
-        command.env("CLAUDE_CONFIG_DIR", claude_home(app, Some(account))?);
+        command.env("CLAUDE_CONFIG_DIR", claude_account_home(app, account)?);
+        // Lite's `--settings` always follows, ending this option's list of files.
+        if let Some(config) = claude_global_config(app) {
+            command.args(["--mcp-config", &path_text(&config)]);
+        }
     }
     let key = api_key_env(agent, provider)
         .filter(|_| launch.account.is_none())
@@ -4572,7 +4633,7 @@ fn login_command(
         command.env("PATH", path);
     }
     if let Some(account) = account {
-        command.env("CLAUDE_CONFIG_DIR", claude_home(app, Some(account))?);
+        command.env("CLAUDE_CONFIG_DIR", claude_account_home(app, account)?);
     }
     Ok(command)
 }
@@ -5312,24 +5373,28 @@ fn ssh_session_command(
             }
         }
         args.extend_from_slice(launch.flags);
-        let command = args
+        let mut command = args
             .iter()
             .map(|argument| posix_quote(argument))
-            .collect::<Vec<_>>()
-            .join(" ");
-        // Set after the login shell's own startup files, so a profile that sets the variable cannot
-        // put the session back on the default account.
+            .collect::<Vec<_>>();
+        // The host shares the account's entries as `claude_account_home` does, and passes the default
+        // account's MCP servers through "$@". It runs after the login shell's own startup files, so a
+        // profile that sets the variable names the default folder and cannot override the account.
         let account = match launch.account {
-            Some(account) => format!(
-                "export CLAUDE_CONFIG_DIR=\"$HOME/{}\"; ",
-                claude_account_folder(account)?
-            ),
+            Some(account) => {
+                command.insert(1, "\"$@\"".into());
+                format!(
+                    "d=\"${{CLAUDE_CONFIG_DIR:-$HOME/.claude}}\"; g=\"${{CLAUDE_CONFIG_DIR:-$HOME}}/.claude.json\"; a=\"$HOME/{}\"; mkdir -p \"$a\"; for n in {}; do [ -e \"$d/$n\" ] && ! [ -e \"$a/$n\" ] && ! [ -L \"$a/$n\" ] && ln -s \"$d/$n\" \"$a/$n\"; done; export CLAUDE_CONFIG_DIR=\"$a\"; set --; [ -f \"$g\" ] && set -- --mcp-config \"$g\"; ",
+                    claude_account_folder(account)?,
+                    CLAUDE_SHARED.join(" ")
+                )
+            }
             None => String::new(),
         };
         format!(
             "cd {} && exec \"${{SHELL:-/bin/sh}}\" -lc {}",
             posix_quote(&root.path),
-            posix_quote(&format!("{account}exec {command}"))
+            posix_quote(&format!("{account}exec {}", command.join(" ")))
         )
     };
     // SSH does not forward the local PTY environment to the remote shell.
