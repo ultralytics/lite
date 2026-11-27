@@ -46,10 +46,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   ApiKeyDialog,
   AUTH_PROVIDERS,
+  ClaudeAccountDialog,
+  identityText,
   KEY_PROVIDERS,
   type KeyProvider,
   type ProviderAuth,
   providerName,
+  readProviderAuth,
+  setClaudeAccounts,
+  useClaudeAccounts,
 } from "@/provider-auth";
 import {
   eventCombo,
@@ -65,7 +70,7 @@ import {
   useShortcutKeys,
 } from "@/shortcuts";
 import type { Theme } from "@/theme";
-import { type Agent, agentLabel, tilde } from "@/types";
+import { agentLabel, type SignInTarget, sessionLabel, tilde } from "@/types";
 
 // A row inside a section's list: the list draws the frame, each row only the line above it.
 const ROW = "rounded-none border-x-0 border-b-0 first:border-t-0";
@@ -226,7 +231,7 @@ export function SettingsDialog({
   // The tab the dialog opens on.
   tab?: string;
   onOpenChange: (open: boolean) => void;
-  onSignIn: (agent: Agent) => void;
+  onSignIn: (target: SignInTarget) => void;
   notifications: boolean;
   onNotificationsChange: (enabled: boolean) => Promise<void>;
   keepAwake: boolean;
@@ -250,6 +255,8 @@ export function SettingsDialog({
   const [fonts, setFonts] = useState<string[]>([]);
   // The vendor whose key is being added or replaced.
   const [keying, setKeying] = useState<KeyProvider>();
+  const [addingAccount, setAddingAccount] = useState(false);
+  const accounts = useClaudeAccounts();
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [notificationsSupported, setNotificationsSupported] = useState<boolean>();
@@ -262,7 +269,7 @@ export function SettingsDialog({
   });
 
   const read = useCallback(async () => {
-    setAuth(await invoke<ProviderAuth[]>("provider_auth"));
+    setAuth(await readProviderAuth());
   }, []);
 
   useEffect(() => {
@@ -529,36 +536,63 @@ export function SettingsDialog({
               <Section
                 title="Sign-ins"
                 description="Each CLI keeps its own sign-in. Lite runs the sign-in and never reads it."
+                action={
+                  <Button size="sm" variant="outline" className="shrink-0" onClick={() => setAddingAccount(true)}>
+                    <Plus />
+                    Add Claude account
+                  </Button>
+                }
               >
-                {SIGN_INS.map((option) => {
-                  const signedIn = auth?.find((entry) => entry.name === option.id)?.cliAuthMethod === "provider";
-                  return (
-                    <Setting
-                      key={option.id}
-                      media={<ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />}
-                      title={agentLabel(option.agent)}
-                      description={
-                        !auth ? (
-                          "Checking…"
-                        ) : option.agent === "gemini" ? (
-                          "Managed by Antigravity"
-                        ) : signedIn ? (
-                          <span className="flex items-center gap-1.5">
-                            <Check className="size-3.5 text-success" />
-                            Signed in
-                          </span>
-                        ) : (
-                          "Not signed in"
-                        )
-                      }
-                    >
-                      <Button variant="outline" size="sm" onClick={() => onSignIn(option.agent)}>
-                        {option.agent === "gemini" ? "Open" : signedIn ? "Sign in again" : "Sign in"}
-                      </Button>
-                    </Setting>
-                  );
-                })}
+                {SIGN_INS.flatMap((option) =>
+                  [undefined, ...(option.agent === "claude" ? accounts : [])].map((account) => {
+                    const status = auth?.find(
+                      (entry) => entry.name === option.id && entry.account === (account ?? null),
+                    );
+                    const signedIn = status?.cliAuthMethod === "provider";
+                    return (
+                      <Setting
+                        key={account ? `${option.id}-${account}` : option.id}
+                        media={<ProviderIcon agent={option.agent} provider={option.provider} className="size-5" />}
+                        title={sessionLabel({ agent: option.agent, account })}
+                        description={
+                          !auth ? (
+                            "Checking…"
+                          ) : option.agent === "gemini" ? (
+                            "Managed by Antigravity"
+                          ) : signedIn ? (
+                            <span className="flex items-center gap-1.5">
+                              <Check className="size-3.5 text-success" />
+                              {status.identity ? `Signed in as ${identityText(status.identity)}` : "Signed in"}
+                            </span>
+                          ) : (
+                            "Not signed in"
+                          )
+                        }
+                      >
+                        <Button variant="outline" size="sm" onClick={() => onSignIn({ agent: option.agent, account })}>
+                          {option.agent === "gemini" ? "Open" : signedIn ? "Sign in again" : "Sign in"}
+                        </Button>
+                        {account ? (
+                          <ActionIconButton
+                            size="icon-sm"
+                            className="hover:text-destructive"
+                            tooltip={`Forget this account. ~/.claude-${account} stays as it is.`}
+                            aria-label={`Forget the ${account} Claude Code account`}
+                            onClick={() => setClaudeAccounts(accounts.filter((name) => name !== account))}
+                          >
+                            <Trash2 />
+                          </ActionIconButton>
+                        ) : null}
+                      </Setting>
+                    );
+                  }),
+                )}
               </Section>
+              <ClaudeAccountDialog
+                open={addingAccount}
+                onClose={() => setAddingAccount(false)}
+                onAdded={(account) => onSignIn({ agent: "claude", account })}
+              />
               <ApiKeyDialog
                 provider={keying}
                 replacing={saved.some(({ option }) => option.id === keying?.id)}

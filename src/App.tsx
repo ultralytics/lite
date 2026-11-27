@@ -125,7 +125,15 @@ import {
   shortcutText,
 } from "@/shortcuts";
 import { applyTheme, contentZoomStyle, initialTheme, storedFontSize, type Theme, zoomedFontSize } from "@/theme";
-import { type Agent, defaultSessionName, folderName, repoName, type Session, sessionLabel } from "@/types";
+import {
+  type Agent,
+  defaultSessionName,
+  folderName,
+  repoName,
+  type Session,
+  type SignInTarget,
+  sessionLabel,
+} from "@/types";
 import "./App.css";
 
 const STORAGE_KEY = "lite.sessions.v1";
@@ -1822,9 +1830,9 @@ function App() {
   const selectedRef = useRef<Session>(undefined);
   const notificationsRef = useRef(notifications);
   const closeRef = useRef<(session: Session) => void>(() => {});
-  const signInRef = useRef<(agent: Session["agent"]) => void>(() => {});
+  const signInRef = useRef<(target: SignInTarget) => void>(() => {});
   // The inspector is memoized, so it gets a stable sign-in that reaches the current one.
-  const inspectorSignIn = useCallback((agent: Session["agent"]) => signInRef.current(agent), []);
+  const inspectorSignIn = useCallback((target: SignInTarget) => signInRef.current(target), []);
   const openRef = useRef<(session: Session) => void>(() => {});
   const recoverRef = useRef<(session: Session) => Promise<void>>(() => Promise.resolve());
   // Stable handlers, so the inspector — which reads nothing of the per-chunk working and attention
@@ -1906,7 +1914,7 @@ function App() {
   selectedRef.current = selected;
   notificationsRef.current = notifications;
   closeRef.current = closeSession;
-  signInRef.current = (agent) => void signIn(agent);
+  signInRef.current = (target) => void signIn(target);
   openRef.current = (session) => {
     // Opening an archived session puts it first in manual order and resumes it like any other.
     if (session.archivedAt) setSessions((current) => changeFirst(current, session.id, { archivedAt: undefined }));
@@ -2442,6 +2450,7 @@ function App() {
           providerSessionId: session.providerSessionId,
           agent: session.agent,
           provider: session.provider,
+          account: session.account,
           model: session.model,
           reasoningEffort: session.reasoningEffort,
           flags: session.flags,
@@ -2585,7 +2594,7 @@ function App() {
     };
   }, [rootId]);
 
-  async function signIn(agent: Session["agent"]) {
+  async function signIn({ agent, account }: SignInTarget) {
     setSettingsOpen(false);
     try {
       if (agent === "shell") {
@@ -2613,11 +2622,12 @@ function App() {
       createSession({
         id: crypto.randomUUID(),
         agent,
+        account,
         mode: "login",
         cwd: grant.path,
         rootId: grant.id,
         // A shell sign-in is the GitHub CLI's, which the new-session dialog lists repositories through.
-        name: `Sign in · ${agent === "shell" ? "GitHub" : sessionLabel({ agent })}`,
+        name: `Sign in · ${agent === "shell" ? "GitHub" : sessionLabel({ agent, account })}`,
         running: false,
       });
     } catch (reason) {
@@ -2641,6 +2651,7 @@ function App() {
     const source = await invoke<string>("fork_source", {
       sessionId: session.id,
       agent: session.agent,
+      account: session.account,
       rootId: session.rootId,
     }).catch((reason) => void setError(String(reason)));
     if (!source) return;
@@ -2842,7 +2853,7 @@ function App() {
       return { error, restorable };
     }
     try {
-      await invoke("delete_session_data", { sessionId: session.id });
+      await invoke("delete_session_data", { sessionId: session.id, account: session.account });
     } catch (reason) {
       error ||= String(reason);
     }
@@ -4077,7 +4088,7 @@ function App() {
               }
             }}
             onCreate={createSession}
-            onGitHubSignIn={() => void signIn("shell")}
+            onGitHubSignIn={() => void signIn({ agent: "shell" })}
             onApiKeys={() => {
               setSettingsTab("accounts");
               setSettingsOpen(true);

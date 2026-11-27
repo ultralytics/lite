@@ -11,6 +11,9 @@ export interface Session {
   createdAt?: number;
   agent: Agent;
   provider?: ModelProvider;
+  // The named Claude Code account the session signs in with, which keeps its own config folder; absent
+  // for the default account. Fixed at creation, since the conversation lives in that account's folder.
+  account?: string;
   // Provider model chosen when the session was created; absent for providers that own model choice.
   model?: string;
   reasoningEffort?: string;
@@ -38,6 +41,9 @@ export interface Session {
   archivedAt?: number;
 }
 
+// Whose sign-in to run: a harness, and for Claude Code the named account, if any.
+export type SignInTarget = Pick<Session, "agent" | "account">;
+
 const agentLabels: Record<Agent, string> = {
   claude: "Claude Code",
   codex: "Codex",
@@ -63,9 +69,9 @@ export function providerLabel(provider: ModelProvider): string {
   return providerLabels[provider];
 }
 
-export function sessionLabel({ agent, provider }: Pick<Session, "agent" | "provider">): string {
+export function sessionLabel({ agent, provider, account }: Pick<Session, "agent" | "provider" | "account">): string {
   if (agent === "codex" && provider && provider !== "openai") return `Codex · ${providerLabels[provider]}`;
-  return agentLabels[agent];
+  return account ? `${agentLabels[agent]} · ${account}` : agentLabels[agent];
 }
 
 // The last real segment of a path, on either separator; empty when the path has none.
